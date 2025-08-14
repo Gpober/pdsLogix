@@ -474,7 +474,7 @@ export default function FinancialsPage() {
 
     // EXPENSE ACCOUNTS - Based on account_type
     const isExpenseAccount =
-      typeLower === "expense" ||
+      typeLower === "expenses" ||
       typeLower === "other expense" ||
       typeLower === "cost of goods sold" ||
       typeLower.includes("expense");
