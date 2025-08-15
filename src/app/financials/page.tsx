@@ -529,7 +529,7 @@ export default function FinancialsPage() {
 
       // Apply property filter
       if (selectedProperty !== "All Properties") {
-        query = query.eq("class", selectedProperty);
+        query = query.eq("customer", selectedProperty);
       }
 
       const { data: allTransactions, error } = await query;
