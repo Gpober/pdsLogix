@@ -698,15 +698,15 @@ export default function CashFlowPage() {
       // Fetch customers from 'customer' field
       const { data: propertyData, error: propertyError } = await supabase
         .from("journal_entry_lines")
-        .select("class")
+        .select("customer")
         // .not("customer", "is", null)
 
       if (propertyError) throw propertyError
 
       const properties = new Set<string>()
       propertyData.forEach((row: any) => {
-        if (row.customer) properties.add(row.customer)
-      })
+  if (row.customer) properties.add(row.customer)  // ← Now row.customer will exist
+})
 
       setAvailableProperties(["All Customers", ...Array.from(properties).sort()])
 
