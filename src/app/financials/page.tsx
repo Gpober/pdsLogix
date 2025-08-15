@@ -1749,20 +1749,20 @@ export default function FinancialsPage() {
               >
                 Detail
               </button>
-              <button
-                onClick={() => setViewMode("Class")}
-                className={`px-4 py-2 text-sm font-medium rounded-r-lg border-l border-gray-300 ${
-                  viewMode === "Class"
-                    ? "text-white"
-                    : "text-gray-700 hover:bg-gray-50"
-                }`}
-                style={{
-                  backgroundColor:
-                    viewMode === "Class" ? BRAND_COLORS.primary : undefined,
-                }}
-              >
-                Class
-              </button>
+<button
+  onClick={() => setViewMode("Customer")}
+  className={`px-4 py-2 text-sm font-medium rounded-r-lg border-l border-gray-300 ${
+    viewMode === "Customer"
+      ? "text-white"
+      : "text-gray-700 hover:bg-gray-50"
+  }`}
+  style={{
+    backgroundColor:
+      viewMode === "Customer" ? BRAND_COLORS.primary : undefined,  // ← Changed from "Class" to "Customer"
+  }}
+>
+  Customer  {/* ← Changed from "Class" to "Customer" */}
+</button>
             </div>
 
             {/* Custom Date Range */}
