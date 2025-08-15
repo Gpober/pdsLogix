@@ -222,52 +222,55 @@ export default function EnhancedMobileDashboard() {
 
   // Enhanced classification function
   const classifyTransaction = (
-    accountType: string | null,
-    reportCategory: string | null,
-  ) => {
-    const typeLower = accountType?.toLowerCase() || "";
-    
-    if (reportCategory === "transfer") {
-      return "transfer";
-    }
+  accountType: string | null,
+  reportCategory: string | null,
+) => {
+  const typeLower = accountType?.toLowerCase() || "";
+  
+  if (reportCategory === "transfer") {
+    return "transfer";
+  }
 
-    const isReceivable =
-      typeLower.includes("accounts receivable") || typeLower.includes("a/r");
-    const isPayable =
-      typeLower.includes("accounts payable") || typeLower.includes("a/p");
+  // Operating activities - Income and Expenses
+  const isReceivable =
+    typeLower.includes("accounts receivable") || typeLower.includes("a/r");
+  const isPayable =
+    typeLower.includes("accounts payable") || typeLower.includes("a/p");
 
-    if (
-      typeLower === "income" ||
-      typeLower === "other income" ||
-      typeLower === "expenses" ||
-      typeLower === "expense" ||
-      typeLower === "cost of goods sold" ||
-      isReceivable ||
-      isPayable
-    ) {
-      return "operating";
-    }
+  if (
+    typeLower === "income" ||
+    typeLower === "other income" ||
+    typeLower === "expenses" ||
+    typeLower === "expense" ||
+    typeLower === "cost of goods sold" ||
+    isReceivable ||
+    isPayable
+  ) {
+    return "operating";
+  }
 
-    if (
-      typeLower === "fixed assets" ||
-      typeLower === "other assets" ||
-      typeLower === "property, plant & equipment"
-    ) {
-      return "investing";
-    }
+  // Investing activities - Fixed Assets and Other Assets
+  if (
+    typeLower === "fixed assets" ||
+    typeLower === "other assets" ||
+    typeLower === "property, plant & equipment"
+  ) {
+    return "investing";
+  }
 
-    if (
-      typeLower === "long term liabilities" ||
-      typeLower === "equity" ||
-      typeLower === "credit card" ||
-      typeLower === "other current liabilities" ||
-      typeLower === "line of credit"
-    ) {
-      return "financing";
-    }
+  // Financing activities - Liabilities, Equity, Credit Cards
+  if (
+    typeLower === "long term liabilities" ||
+    typeLower === "equity" ||
+    typeLower === "credit card" ||
+    typeLower === "other current liabilities" ||
+    typeLower === "line of credit"
+  ) {
+    return "financing";
+  }
 
-    return "other";
-  };
+  return "other";
+};
 
   const getDateRange = useCallback(() => {
     const y = year;
