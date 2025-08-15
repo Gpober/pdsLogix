@@ -33,6 +33,7 @@ const BRAND_COLORS = {
 interface CustomerSummary {
   name: string;
   revenue?: number;
+  cogs?: number;
   expenses?: number;
   netIncome?: number;
   operating?: number;
@@ -199,7 +200,7 @@ export default function EnhancedMobileDashboard() {
       cogs,
       expenses,
       otherExpenses,
-      net: income + otherIncome + cogs + expenses + otherExpenses,
+      net: income + otherIncome - cogs - expenses - otherExpenses,
     };
   }, [cfData]);
 
@@ -309,6 +310,7 @@ export default function EnhancedMobileDashboard() {
           map[cust] = {
             name: cust,
             revenue: 0,
+            cogs: 0,
             expenses: 0,
             netIncome: 0,
             operating: 0,
@@ -324,7 +326,11 @@ export default function EnhancedMobileDashboard() {
           if (t.includes("income") || t.includes("revenue")) {
             map[cust].revenue = (map[cust].revenue || 0) + (credit - debit);
             map[cust].netIncome = (map[cust].netIncome || 0) + (credit - debit);
-          } else if (t.includes("expense") || t.includes("cogs")) {
+          } else if (t.includes("cost of goods sold") || t.includes("cogs")) {
+            const amt = debit - credit;
+            map[cust].cogs = (map[cust].cogs || 0) + amt;
+            map[cust].netIncome = (map[cust].netIncome || 0) - amt;
+          } else if (t.includes("expense")) {
             const amt = debit - credit;
             map[cust].expenses = (map[cust].expenses || 0) + amt;
             map[cust].netIncome = (map[cust].netIncome || 0) - amt;
@@ -402,6 +408,7 @@ export default function EnhancedMobileDashboard() {
     (acc, p) => {
       if (reportType === "pl") {
         acc.revenue += p.revenue || 0;
+        acc.cogs += p.cogs || 0;
         acc.expenses += p.expenses || 0;
         acc.net += p.netIncome || 0;
       } else {
@@ -412,7 +419,15 @@ export default function EnhancedMobileDashboard() {
       }
       return acc;
     },
-    { revenue: 0, expenses: 0, net: 0, operating: 0, financing: 0, investing: 0 },
+    {
+      revenue: 0,
+      cogs: 0,
+      expenses: 0,
+      net: 0,
+      operating: 0,
+      financing: 0,
+      investing: 0,
+    },
   );
 
   const formatCurrency = (n: number) =>
@@ -535,7 +550,7 @@ export default function EnhancedMobileDashboard() {
         otherInc[row.account] = (otherInc[row.account] || 0) + (credit - debit);
       } else if (t.includes("income") || t.includes("revenue")) {
         inc[row.account] = (inc[row.account] || 0) + (credit - debit);
-      } else if (t.includes("cogs")) {
+      } else if (t.includes("cost of goods sold") || t.includes("cogs")) {
         cogs[row.account] = (cogs[row.account] || 0) + (debit - credit);
       } else if (t.includes("other expense")) {
         otherExp[row.account] = (otherExp[row.account] || 0) + (debit - credit);
@@ -588,7 +603,7 @@ export default function EnhancedMobileDashboard() {
         otherInc[row.account] = (otherInc[row.account] || 0) + cashImpact;
       } else if (t.includes("income") || t.includes("revenue")) {
         inc[row.account] = (inc[row.account] || 0) + cashImpact;
-      } else if (t.includes("cogs")) {
+      } else if (t.includes("cost of goods sold") || t.includes("cogs")) {
         cogs[row.account] = (cogs[row.account] || 0) + cashImpact;
       } else if (t.includes("other expense")) {
         otherExp[row.account] = (otherExp[row.account] || 0) + cashImpact;
@@ -780,12 +795,18 @@ export default function EnhancedMobileDashboard() {
           </div>
           
           {reportType === "pl" ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px', textAlign: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px', textAlign: 'center' }}>
               <div>
                 <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
                   {formatCompactCurrency(companyTotals.revenue)}
                 </div>
                 <div style={{ fontSize: '12px', opacity: 0.8 }}>Revenue</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.cogs)}
+                </div>
+                <div style={{ fontSize: '12px', opacity: 0.8 }}>COGS</div>
               </div>
               <div>
                 <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
@@ -1322,8 +1343,8 @@ export default function EnhancedMobileDashboard() {
                   
                   {reportType === "pl" ? (
                     <div style={{ display: 'grid', gap: '8px' }}>
-                      <div style={{ 
-                        display: 'flex', 
+                      <div style={{
+                        display: 'flex',
                         justifyContent: 'space-between',
                         padding: '8px 12px',
                         background: `${BRAND_COLORS.success}08`,
@@ -1331,8 +1352,8 @@ export default function EnhancedMobileDashboard() {
                         border: `1px solid ${BRAND_COLORS.success}20`
                       }}>
                         <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Revenue</span>
-                        <span style={{ 
-                          fontSize: '13px', 
+                        <span style={{
+                          fontSize: '13px',
                           fontWeight: '700',
                           color: BRAND_COLORS.success,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
@@ -1340,28 +1361,47 @@ export default function EnhancedMobileDashboard() {
                           {formatCompactCurrency(p.revenue || 0)}
                         </span>
                       </div>
-                      
-                      <div style={{ 
-                        display: 'flex', 
+
+                      <div style={{
+                        display: 'flex',
                         justifyContent: 'space-between',
                         padding: '8px 12px',
                         background: `${BRAND_COLORS.warning}08`,
                         borderRadius: '8px',
                         border: `1px solid ${BRAND_COLORS.warning}20`
                       }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Expenses</span>
-                        <span style={{ 
-                          fontSize: '13px', 
+                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>COGS</span>
+                        <span style={{
+                          fontSize: '13px',
                           fontWeight: '700',
                           color: BRAND_COLORS.warning,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.cogs || 0)}
+                        </span>
+                      </div>
+
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        background: `${BRAND_COLORS.danger}08`,
+                        borderRadius: '8px',
+                        border: `1px solid ${BRAND_COLORS.danger}20`
+                      }}>
+                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Expenses</span>
+                        <span style={{
+                          fontSize: '13px',
+                          fontWeight: '700',
+                          color: BRAND_COLORS.danger,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
                         }}>
                           {formatCompactCurrency(p.expenses || 0)}
                         </span>
                       </div>
-                      
-                      <div style={{ 
-                        display: 'flex', 
+
+                      <div style={{
+                        display: 'flex',
                         justifyContent: 'space-between',
                         padding: '12px',
                         background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
@@ -1370,8 +1410,8 @@ export default function EnhancedMobileDashboard() {
                         boxShadow: `0 4px 12px ${BRAND_COLORS.primary}20`
                       }}>
                         <span style={{ fontSize: '14px', fontWeight: '700', color: BRAND_COLORS.accent }}>Net Income</span>
-                        <span style={{ 
-                          fontSize: '16px', 
+                        <span style={{
+                          fontSize: '16px',
                           fontWeight: '800',
                           color: (p.netIncome || 0) >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
                           textShadow: '0 1px 3px rgba(0,0,0,0.2)'
@@ -1870,178 +1910,69 @@ export default function EnhancedMobileDashboard() {
           ) : (
             <>
               <div style={{ display: 'grid', gap: '16px' }}>
-                <div style={{
-                  background: 'white',
-                  borderRadius: '12px',
-                  padding: '20px',
-                  border: `1px solid ${BRAND_COLORS.gray[200]}`
-                }}>
-                <h3 style={{ 
-                  fontSize: '18px', 
-                  fontWeight: '600', 
-                  marginBottom: '16px',
-                  color: BRAND_COLORS.primary,
-                  borderBottom: `2px solid ${BRAND_COLORS.primary}`,
-                  paddingBottom: '8px'
-                }}>
-                  Operating Activities
-                </h3>
-                {cfData.operating.map((cat) => (
-                  <div
-                    key={cat.name}
-                    onClick={() => handleCategory(cat.name, "operating")}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '12px',
-                      marginBottom: '8px',
-                      background: BRAND_COLORS.gray[50],
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.background = '#f0f9ff';
-                      e.currentTarget.style.borderColor = BRAND_COLORS.primary;
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                    }}
-                  >
-                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                    <span style={{ 
-                      fontSize: '14px', 
-                      fontWeight: '600', 
-                      color: cat.total >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
-                    }}>
-                      {formatCurrency(cat.total)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                {/* Income */}
+                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.success, borderBottom: `2px solid ${BRAND_COLORS.success}`, paddingBottom: '8px' }}>Income</h3>
+                  {cfData.income.map((cat) => (
+                    <div key={cat.name} onClick={() => handleCategory(cat.name, "income")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f0fdf4'; e.currentTarget.style.borderColor = BRAND_COLORS.success; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
+                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.success }}>{formatCurrency(cat.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.success }}>Total Income: {formatCurrency(cfTotals.income)}</div>
+                </div>
 
-              <div style={{
-                background: 'white',
-                borderRadius: '12px',
-                padding: '20px',
-                border: `1px solid ${BRAND_COLORS.gray[200]}`
-              }}>
-                <h3 style={{ 
-                  fontSize: '18px', 
-                  fontWeight: '600', 
-                  marginBottom: '16px',
-                  color: BRAND_COLORS.secondary,
-                  borderBottom: `2px solid ${BRAND_COLORS.secondary}`,
-                  paddingBottom: '8px'
-                }}>
-                  Financing Activities
-                </h3>
-                {cfData.financing.map((cat) => (
-                  <div
-                    key={cat.name}
-                    onClick={() => handleCategory(cat.name, "financing")}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '12px',
-                      marginBottom: '8px',
-                      background: BRAND_COLORS.gray[50],
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.background = '#f8fafc';
-                      e.currentTarget.style.borderColor = BRAND_COLORS.secondary;
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                    }}
-                  >
-                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                    <span style={{ 
-                      fontSize: '14px', 
-                      fontWeight: '600', 
-                      color: cat.total >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
-                    }}>
-                      {formatCurrency(cat.total)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                {/* Other Income */}
+                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.primary, borderBottom: `2px solid ${BRAND_COLORS.primary}`, paddingBottom: '8px' }}>Other Income</h3>
+                  {cfData.otherIncome.map((cat) => (
+                    <div key={cat.name} onClick={() => handleCategory(cat.name, "otherIncome")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f0f9ff'; e.currentTarget.style.borderColor = BRAND_COLORS.primary; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
+                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.primary }}>{formatCurrency(cat.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.primary }}>Total Other Income: {formatCurrency(cfTotals.otherIncome)}</div>
+                </div>
 
-              {/* Investing Activities Section */}
-              <div style={{
-                background: 'white',
-                borderRadius: '12px',
-                padding: '20px',
-                border: `1px solid ${BRAND_COLORS.gray[200]}`
-              }}>
-                <h3 style={{ 
-                  fontSize: '18px', 
-                  fontWeight: '600', 
-                  marginBottom: '16px',
-                  color: BRAND_COLORS.warning,
-                  borderBottom: `2px solid ${BRAND_COLORS.warning}`,
-                  paddingBottom: '8px'
-                }}>
-                  Investing Activities
-                </h3>
-                {cfData.investing.map((cat) => (
-                  <div
-                    key={cat.name}
-                    onClick={() => handleCategory(cat.name, "investing")}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '12px',
-                      marginBottom: '8px',
-                      background: BRAND_COLORS.gray[50],
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.background = '#fff7ed';
-                      e.currentTarget.style.borderColor = BRAND_COLORS.warning;
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                    }}
-                  >
-                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                    <span style={{ 
-                      fontSize: '14px', 
-                      fontWeight: '600', 
-                      color: cat.total >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
-                    }}>
-                      {formatCurrency(cat.total)}
-                    </span>
-                  </div>
-                ))}
+                {/* COGS */}
+                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.warning, borderBottom: `2px solid ${BRAND_COLORS.warning}`, paddingBottom: '8px' }}>COGS</h3>
+                  {cfData.cogs.map((cat) => (
+                    <div key={cat.name} onClick={() => handleCategory(cat.name, "cogs")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fff7ed'; e.currentTarget.style.borderColor = BRAND_COLORS.warning; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
+                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>{formatCurrency(cat.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.warning }}>Total COGS: {formatCurrency(cfTotals.cogs)}</div>
+                </div>
+
+                {/* Expenses */}
+                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.danger, borderBottom: `2px solid ${BRAND_COLORS.danger}`, paddingBottom: '8px' }}>Expenses</h3>
+                  {cfData.expenses.map((cat) => (
+                    <div key={cat.name} onClick={() => handleCategory(cat.name, "expense")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.borderColor = BRAND_COLORS.danger; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
+                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>{formatCurrency(cat.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.danger }}>Total Expenses: {formatCurrency(cfTotals.expenses)}</div>
+                </div>
+
+                {/* Other Expenses */}
+                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.danger, borderBottom: `2px solid ${BRAND_COLORS.danger}`, paddingBottom: '8px' }}>Other Expenses</h3>
+                  {cfData.otherExpenses.map((cat) => (
+                    <div key={cat.name} onClick={() => handleCategory(cat.name, "otherExpense")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.borderColor = BRAND_COLORS.danger; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
+                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>{formatCurrency(cat.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.danger }}>Total Other Expenses: {formatCurrency(cfTotals.otherExpenses)}</div>
+                </div>
               </div>
-            </div>
-            <div
-              style={{
-                marginTop: '8px',
-                textAlign: 'right',
-                fontSize: '16px',
-                fontWeight: '600',
-                color:
-                  cfTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
-              }}
-            >
-              Net Cash Flow: {formatCurrency(cfTotals.net)}
-            </div>
+              <div style={{ marginTop: '8px', textAlign: 'right', fontSize: '16px', fontWeight: '600', color: cfTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger }}>
+                Net Cash Flow: {formatCurrency(cfTotals.net)}
+              </div>
             </>
           )}
         </div>
