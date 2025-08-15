@@ -9,7 +9,7 @@ const nextConfig = {
     ignoreBuildErrors: true,
   },
   images: {
-    domains: ["ijeuusvwqcnljctkvjdi.supabase.co", "lh3.googleusercontent.com"],
+    domains: ["bdtmsfbhaztukqppnhdk.supabase.co", "lh3.googleusercontent.com"],
   },
   // Ensure build outputs go to correct locations
   distDir: ".next",

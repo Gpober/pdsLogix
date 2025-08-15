@@ -1,16 +1,16 @@
--- Verify the financial_transactions table structure and data
+-- Verify the journal_entry_lines table structure and data
 SELECT 
     COUNT(*) as total_records,
     MIN(date) as earliest_date,
     MAX(date) as latest_date
-FROM financial_transactions;
+FROM journal_entry_lines;
 
 -- Check unique account types
 SELECT 
     account_type,
     COUNT(*) as count,
     SUM(CAST(amount AS DECIMAL)) as total_amount
-FROM financial_transactions 
+FROM journal_entry_lines 
 WHERE account_type IS NOT NULL
 GROUP BY account_type
 ORDER BY count DESC;
@@ -19,7 +19,7 @@ ORDER BY count DESC;
 SELECT 
     detail_type,
     COUNT(*) as count
-FROM financial_transactions 
+FROM journal_entry_lines 
 WHERE detail_type IS NOT NULL
 GROUP BY detail_type
 ORDER BY count DESC;
@@ -32,7 +32,7 @@ SELECT
     amount,
     date,
     class
-FROM financial_transactions 
+FROM journal_entry_lines 
 ORDER BY date DESC 
 LIMIT 20;
 
@@ -43,7 +43,7 @@ SELECT DISTINCT
     detail_type,
     COUNT(*) as transaction_count,
     SUM(CAST(amount AS DECIMAL)) as total_amount
-FROM financial_transactions 
+FROM journal_entry_lines 
 WHERE LOWER(account_type) LIKE '%income%' 
    OR LOWER(account_type) LIKE '%revenue%'
    OR LOWER(account_type) LIKE '%rev%'
@@ -57,7 +57,7 @@ SELECT DISTINCT
     detail_type,
     COUNT(*) as transaction_count,
     SUM(CAST(amount AS DECIMAL)) as total_amount
-FROM financial_transactions 
+FROM journal_entry_lines 
 WHERE LOWER(account_type) LIKE '%expense%'
    OR LOWER(account_type) LIKE '%cost%'
 GROUP BY account, account_type, detail_type
