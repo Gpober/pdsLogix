@@ -329,7 +329,12 @@ export default function EnhancedMobileDashboard() {
       const { data } = await query;
       const map: Record<string, CustomerSummary> = {};
       ((data as JournalRow[]) || []).forEach((row) => {
-        const cust = row.customer || "General";
+  // Skip transfers at customer level - they're bank-to-bank movements
+  if (row.report_category === "transfer") {
+    return;
+  }
+  
+  const cust = row.customer || "Corporate";
         if (!map[cust]) {
           map[cust] = {
             name: cust,
@@ -651,62 +656,76 @@ export default function EnhancedMobileDashboard() {
     });
   };
 
-  const handleCategory = async (
-    account: string,
-    type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
-  ) => {
-    const { start, end } = getDateRange();
-    const selectColumns = hasInvoiceNumber
-      ? `${baseSelectColumns}, invoice_number`
-      : baseSelectColumns;
+ const handleCategory = async (
+  account: string,
+  type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
+) => {
+  const { start, end } = getDateRange();
+  const selectColumns = hasInvoiceNumber
+    ? `${baseSelectColumns}, invoice_number`
+    : baseSelectColumns;
+    
   let query = supabase
     .from("journal_entry_lines")
     .select(selectColumns)
     .eq("account", account)
-      .gte("date", start)
-      .lte("date", end);
-    if (selectedCustomer) {
-      query =
-        selectedCustomer === "General"
-          ? query.is("customer", null)
-          : query.eq("customer", selectedCustomer);
-    }
-    const { data } = await query;
-    const list: Transaction[] = ((data as JournalRow[]) || [])
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => {
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-        let amount = 0;
-        if (reportType === "pl") {
-          amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
-        } else {
-          // Enhanced cash flow calculation for transactions
-          amount = row.report_category === "transfer"
-            ? debit - credit
-            : row.normal_balance || credit - debit;
-        }
-        return {
-          date: row.date,
-          amount,
-          running: 0,
-          payee: row.customer || row.vendor || row.name,
-          memo: row.memo,
-          customer: row.customer,
-          entryNumber: row.entry_number,
-          invoiceNumber: row.invoice_number,
-        };
-      });
-    let run = 0;
-    list.forEach((t) => {
-      run += t.amount;
-      t.running = run;
+    .gte("date", start)
+    .lte("date", end);
+    
+  if (selectedCustomer) {
+    query =
+      selectedCustomer === "General"
+        ? query.is("customer", null)
+        : query.eq("customer", selectedCustomer);
+  }
+  
+  const { data } = await query;
+  const list: Transaction[] = ((data as JournalRow[]) || [])
+    .filter((row) => {
+      // Skip transfers at customer level (same as main logic)
+      if (row.report_category === "transfer") {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((row) => {
+      const debit = Number(row.debit) || 0;
+      const credit = Number(row.credit) || 0;
+      let amount = 0;
+      
+      if (reportType === "pl") {
+        // P&L logic - same as before
+        amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
+      } else {
+        // FIXED: Use the same cash flow logic as main page
+        amount = row.report_category === "transfer"
+          ? debit - credit  // Reverse for transfers (though we filter these out)
+          : row.normal_balance || credit - debit;  // Normal for others
+      }
+      
+      return {
+        date: row.date,
+        amount,
+        running: 0,
+        payee: row.customer || row.vendor || row.name,
+        memo: row.memo,
+        customer: row.customer,
+        entryNumber: row.entry_number,
+        invoiceNumber: row.invoice_number,
+      };
     });
-    setTransactions(list);
-    setSelectedCategory(account);
-    setView("detail");
-  };
-
+    
+  let run = 0;
+  list.forEach((t) => {
+    run += t.amount;
+    t.running = run;
+  });
+  
+  setTransactions(list);
+  setSelectedCategory(account);
+  setView("detail");
+};
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return;
     const { data, error } = await supabase
