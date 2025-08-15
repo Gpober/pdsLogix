@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
-const supabaseDomain = process.env.NEXT_PUBLIC_SUPABASE_URL
-  ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
+const supabaseUrlEnv =
+  process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
+const supabaseDomain = supabaseUrlEnv
+  ? new URL(supabaseUrlEnv).hostname
   : undefined
 
 const nextConfig = {
