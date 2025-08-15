@@ -187,8 +187,101 @@ export default function EnhancedMobileDashboard() {
     };
   }, [cfData]);
 
-  // Enhanced classification function to mirror cash flow component
-  const classifyTransaction = (
+  // Intelligent customer assignment for cash transactions (especially payroll)
+  const assignCustomerForCashTransaction = (row: JournalRow): string => {
+    const account = (row.account || "").toLowerCase();
+    const memo = (row.memo || "").toLowerCase();
+    const accountType = (row.account_type || "").toLowerCase();
+    
+    // If we already have a customer, use it
+    if (row.customer) {
+      return row.customer;
+    }
+    
+    // Check for payroll-related keywords in account name or memo
+    const isPayroll = account.includes("payroll") || 
+                     account.includes("salary") || 
+                     account.includes("wages") || 
+                     memo.includes("payroll") || 
+                     memo.includes("salary") || 
+                     memo.includes("wages") ||
+                     accountType.includes("payroll");
+    
+    if (isPayroll) {
+      // Look for customer/property names in memo or account
+      // You can customize these patterns based on your naming conventions
+      const customerPatterns = [
+        /property[:\s]*([a-zA-Z0-9\s]+)/i,
+        /customer[:\s]*([a-zA-Z0-9\s]+)/i,
+        /site[:\s]*([a-zA-Z0-9\s]+)/i,
+        /location[:\s]*([a-zA-Z0-9\s]+)/i,
+        // Add more patterns as needed
+      ];
+      
+      const textToSearch = `${row.account} ${row.memo}`.toLowerCase();
+      
+      for (const pattern of customerPatterns) {
+        const match = textToSearch.match(pattern);
+        if (match && match[1]) {
+          return match[1].trim();
+        }
+      }
+      
+      // Look for specific customer names in the text
+      // This would ideally be populated from your customer list
+      const knownCustomers = [
+        "Cox Automotive Corporate",
+        "Dent Wizard International", 
+        "North Fort Lauderdale",
+        // Add your actual customer names here
+      ];
+      
+      for (const customer of knownCustomers) {
+        if (textToSearch.includes(customer.toLowerCase())) {
+          return customer;
+        }
+      }
+      
+      // If payroll but no specific customer found, you could:
+      // 1. Use a default like "Corporate Payroll"
+      // 2. Parse location from memo
+      // 3. Use vendor name if available
+      if (row.vendor) {
+        return `${row.vendor} Payroll`;
+      }
+      
+      return "Corporate Payroll"; // Default for unassigned payroll
+    }
+    
+    // For other cash transactions, try to extract customer from memo/description
+    if (memo || row.vendor || row.name) {
+      const textToSearch = `${memo} ${row.vendor || ''} ${row.name || ''}`.toLowerCase();
+      
+      // Look for customer indicators in the text
+      const customerIndicators = [
+        /for[:\s]*([a-zA-Z0-9\s]+)(?:\s|$)/i,
+        /client[:\s]*([a-zA-Z0-9\s]+)(?:\s|$)/i,
+        /project[:\s]*([a-zA-Z0-9\s]+)(?:\s|$)/i,
+      ];
+      
+      for (const pattern of customerIndicators) {
+        const match = textToSearch.match(pattern);
+        if (match && match[1] && match[1].trim().length > 2) {
+          return match[1].trim();
+        }
+      }
+      
+      // Use vendor/name as fallback customer
+      if (row.vendor && row.vendor.length > 2) {
+        return row.vendor;
+      }
+      if (row.name && row.name.length > 2) {
+        return row.name;
+      }
+    }
+    
+    return "General";
+  };
     accountType: string | null,
     reportCategory: string | null,
   ) => {
@@ -446,6 +539,11 @@ export default function EnhancedMobileDashboard() {
       return `${(n / 1000).toFixed(1)}K`;
     }
     return formatCurrency(n);
+  };
+
+  // Simple date formatter using only the date part (no timezone conversion)
+  const formatDate = (dateString: string) => {
+    return formatDateSafe(dateString);
   };
 
   const rankingLabels: Record<RankingMetric, string> = {
@@ -2201,11 +2299,15 @@ export default function EnhancedMobileDashboard() {
                   {journalEntryLines.map((line, idx) => (
                     <tr key={idx} style={{ borderTop: `1px solid ${BRAND_COLORS.gray[100]}` }}>
                       <td style={{ padding: '8px', fontSize: '12px', color: '#0f172a' }}>
-                        {new Date(line.date).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
+                        {(() => {
+                          const { year, month, day } = getDateParts(line.date);
+                          const date = new Date(year, month - 1, day);
+                          return date.toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          });
+                        })()}
                       </td>
                       <td style={{ padding: '8px', fontSize: '12px', color: '#0f172a' }}>{line.account}</td>
                       <td style={{ padding: '8px', fontSize: '12px', color: '#475569' }}>{line.memo || ''}</td>
