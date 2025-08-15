@@ -588,7 +588,7 @@ const fetchTimeSeriesData = async (property = "All Customers", monthYear, timePe
       // FIXED: For by-property view, NEVER filter by customer - we need ALL customer data
       // Only filter by customer for non-by-property views
       if (viewMode !== "by-property" && property !== "All Customers") {
-        url += `&class=eq.${encodeURIComponent(property)}`
+        url += `&customer=eq.${encodeURIComponent(property)}`
       }
 
       smartLog(`🔍 FETCHING URL for ${viewMode} view:`, url)
