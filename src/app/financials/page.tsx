@@ -95,7 +95,7 @@ interface JournalEntryLine {
 }
 
 type TimePeriod = "Monthly" | "Quarterly" | "YTD" | "Trailing 12" | "Custom";
-type ViewMode = "Total" | "Detail" | "Class";
+type ViewMode = "Total" | "Detail" | "Customer";
 type NotificationState = {
   show: boolean;
   message: string;
