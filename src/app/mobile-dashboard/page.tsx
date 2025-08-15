@@ -694,6 +694,12 @@ export default function EnhancedMobileDashboard() {
       .eq("account", account)
       .gte("date", start)
       .lte("date", end);
+
+    if (reportType === "cf") {
+      query = query
+        .not("entry_bank_account", "is", null)
+        .eq("is_bank_account", false);
+    }
       
     if (selectedCustomer) {
       query =
