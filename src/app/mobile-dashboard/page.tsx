@@ -71,6 +71,7 @@ interface JournalRow {
   name?: string | null;
   entry_number?: string;
   invoice_number?: string | null;
+  entry_bank_account?: string | null;
 }
 
 interface JournalEntryLine {
@@ -222,55 +223,56 @@ export default function EnhancedMobileDashboard() {
 
   // Enhanced classification function
   const classifyTransaction = (
-  accountType: string | null,
-  reportCategory: string | null,
-) => {
-  const typeLower = accountType?.toLowerCase() || "";
-  
-  if (reportCategory === "transfer") {
-    return "transfer";
-  }
+    accountType: string | null,
+    reportCategory: string | null,
+  ) => {
+    const typeLower = accountType?.toLowerCase() || "";
+    
+    // Skip transfers entirely at customer level - they're bank-to-bank movements
+    if (reportCategory === "transfer") {
+      return "other"; // or "skip" - these won't appear in customer-level analysis
+    }
 
-  // Operating activities - Income and Expenses
-  const isReceivable =
-    typeLower.includes("accounts receivable") || typeLower.includes("a/r");
-  const isPayable =
-    typeLower.includes("accounts payable") || typeLower.includes("a/p");
+    // Operating activities - Income and Expenses
+    const isReceivable =
+      typeLower.includes("accounts receivable") || typeLower.includes("a/r");
+    const isPayable =
+      typeLower.includes("accounts payable") || typeLower.includes("a/p");
 
-  if (
-    typeLower === "income" ||
-    typeLower === "other income" ||
-    typeLower === "expenses" ||
-    typeLower === "expense" ||
-    typeLower === "cost of goods sold" ||
-    isReceivable ||
-    isPayable
-  ) {
-    return "operating";
-  }
+    if (
+      typeLower === "income" ||
+      typeLower === "other income" ||
+      typeLower === "expenses" ||
+      typeLower === "expense" ||
+      typeLower === "cost of goods sold" ||
+      isReceivable ||
+      isPayable
+    ) {
+      return "operating";
+    }
 
-  // Investing activities - Fixed Assets and Other Assets
-  if (
-    typeLower === "fixed assets" ||
-    typeLower === "other assets" ||
-    typeLower === "property, plant & equipment"
-  ) {
-    return "investing";
-  }
+    // Investing activities - Fixed Assets and Other Assets
+    if (
+      typeLower === "fixed assets" ||
+      typeLower === "other assets" ||
+      typeLower === "property, plant & equipment"
+    ) {
+      return "investing";
+    }
 
-  // Financing activities - Liabilities, Equity, Credit Cards
-  if (
-    typeLower === "long term liabilities" ||
-    typeLower === "equity" ||
-    typeLower === "credit card" ||
-    typeLower === "other current liabilities" ||
-    typeLower === "line of credit"
-  ) {
-    return "financing";
-  }
+    // Financing activities - Liabilities, Equity, Credit Cards
+    if (
+      typeLower === "long term liabilities" ||
+      typeLower === "equity" ||
+      typeLower === "credit card" ||
+      typeLower === "other current liabilities" ||
+      typeLower === "line of credit"
+    ) {
+      return "financing";
+    }
 
-  return "other";
-};
+    return "other";
+  };
 
   const getDateRange = useCallback(() => {
     const y = year;
@@ -329,12 +331,12 @@ export default function EnhancedMobileDashboard() {
       const { data } = await query;
       const map: Record<string, CustomerSummary> = {};
       ((data as JournalRow[]) || []).forEach((row) => {
-  // Skip transfers at customer level - they're bank-to-bank movements
-  if (row.report_category === "transfer") {
-    return;
-  }
-  
-  const cust = row.customer || "Corporate";
+        // Skip transfers at customer level - they're bank-to-bank movements
+        if (row.report_category === "transfer") {
+          return;
+        }
+        
+        const cust = row.customer || "Corporate";
         if (!map[cust]) {
           map[cust] = {
             name: cust,
@@ -366,10 +368,7 @@ export default function EnhancedMobileDashboard() {
           }
         } else {
           // Enhanced cash flow calculation
-          const cashImpact =
-            row.report_category === "transfer"
-              ? debit - credit
-              : row.normal_balance || credit - debit;
+          const cashImpact = row.normal_balance || credit - debit;
 
           const classification = classifyTransaction(
             row.account_type,
@@ -393,8 +392,8 @@ export default function EnhancedMobileDashboard() {
       });
 
       const finalList =
-        map["General"] && !list.find((p) => p.name === "General")
-          ? [...list, map["General"]]
+        map["Corporate"] && !list.find((p) => p.name === "Corporate")
+          ? [...list, map["Corporate"]]
           : list;
       setCustomers(finalList);
     };
@@ -561,7 +560,7 @@ export default function EnhancedMobileDashboard() {
       .lte("date", end);
     if (customerName) {
       query =
-        customerName === "General"
+        customerName === "Corporate"
           ? query.is("customer", null)
           : query.eq("customer", customerName);
     }
@@ -596,136 +595,157 @@ export default function EnhancedMobileDashboard() {
     });
   };
 
+  // FIXED: Complete rewrite of loadCF to match main cash flow page logic
   const loadCF = async (customerName: string | null = selectedCustomer) => {
     const { start, end } = getDateRange();
     let query = supabase
       .from("journal_entry_lines")
       .select(
-        "account, account_type, report_category, normal_balance, debit, credit, customer, date",
+        "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account"
       )
       .gte("date", start)
-      .lte("date", end);
+      .lte("date", end)
+      .not("entry_bank_account", "is", null); // Only cash transactions
+      
     if (customerName) {
       query =
-        customerName === "General"
+        customerName === "Corporate"
           ? query.is("customer", null)
           : query.eq("customer", customerName);
     }
+    
     const { data } = await query;
-    const inc: Record<string, number> = {};
-    const otherInc: Record<string, number> = {};
-    const cogs: Record<string, number> = {};
-    const exp: Record<string, number> = {};
-    const otherExp: Record<string, number> = {};
+    const operating: Record<string, number> = {};
+    const financing: Record<string, number> = {};
+    const investing: Record<string, number> = {};
+    const other: Record<string, number> = {};
 
     ((data as JournalRow[]) || []).forEach((row) => {
+      // Skip transfers at customer level
+      if (row.report_category === "transfer") {
+        return;
+      }
+
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
 
-      const cashImpact =
-        row.report_category === "transfer"
-          ? debit - credit
-          : row.normal_balance || credit - debit;
+      // Enhanced cash flow calculation matching main page
+      const cashImpact = row.normal_balance || credit - debit;
 
-      const t = (row.account_type || "").toLowerCase();
-      if (t.includes("other income")) {
-        otherInc[row.account] = (otherInc[row.account] || 0) + cashImpact;
-      } else if (t.includes("income") || t.includes("revenue")) {
-        inc[row.account] = (inc[row.account] || 0) + cashImpact;
-      } else if (t.includes("cost of goods sold") || t.includes("cogs")) {
-        cogs[row.account] = (cogs[row.account] || 0) + cashImpact;
-      } else if (t.includes("other expense")) {
-        otherExp[row.account] = (otherExp[row.account] || 0) + cashImpact;
-      } else if (t.includes("expense")) {
-        exp[row.account] = (exp[row.account] || 0) + cashImpact;
+      // Classify by cash flow activity, not account type
+      const classification = classifyTransaction(row.account_type, row.report_category);
+      const account = row.account;
+
+      if (classification === "operating") {
+        operating[account] = (operating[account] || 0) + cashImpact;
+      } else if (classification === "financing") {
+        financing[account] = (financing[account] || 0) + cashImpact;
+      } else if (classification === "investing") {
+        investing[account] = (investing[account] || 0) + cashImpact;
+      } else {
+        other[account] = (other[account] || 0) + cashImpact;
       }
     });
 
-    const incArr = Object.entries(inc).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
-    const otherIncArr = Object.entries(otherInc).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
-    const cogsArr = Object.entries(cogs).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
-    const expArr = Object.entries(exp).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
-    const otherExpArr = Object.entries(otherExp).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total);
+    // Convert to arrays and sort by amount (filter out zero amounts)
+    const operatingArr = Object.entries(operating)
+      .map(([name, total]) => ({ name, total }))
+      .filter(item => item.total !== 0)
+      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+      
+    const financingArr = Object.entries(financing)
+      .map(([name, total]) => ({ name, total }))
+      .filter(item => item.total !== 0)
+      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+      
+    const investingArr = Object.entries(investing)
+      .map(([name, total]) => ({ name, total }))
+      .filter(item => item.total !== 0)
+      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+      
+    const otherArr = Object.entries(other)
+      .map(([name, total]) => ({ name, total }))
+      .filter(item => item.total !== 0)
+      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
 
     setCfData({
-      income: incArr,
-      otherIncome: otherIncArr,
-      cogs: cogsArr,
-      expenses: expArr,
-      otherExpenses: otherExpArr,
+      income: operatingArr,        // Operating activities (was incorrectly using account types)
+      otherIncome: financingArr,   // Financing activities  
+      cogs: investingArr,          // Investing activities
+      expenses: otherArr,          // Other activities
+      otherExpenses: [],           // Not used in cash flow
     });
   };
 
- const handleCategory = async (
-  account: string,
-  type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
-) => {
-  const { start, end } = getDateRange();
-  const selectColumns = hasInvoiceNumber
-    ? `${baseSelectColumns}, invoice_number`
-    : baseSelectColumns;
-    
-  let query = supabase
-    .from("journal_entry_lines")
-    .select(selectColumns)
-    .eq("account", account)
-    .gte("date", start)
-    .lte("date", end);
-    
-  if (selectedCustomer) {
-  query =
-    selectedCustomer === "Corporate"
-      ? query.is("customer", null)
-      : query.eq("customer", selectedCustomer);
-}
-  
-  const { data } = await query;
-  const list: Transaction[] = ((data as JournalRow[]) || [])
-    .filter((row) => {
-      // Skip transfers at customer level (same as main logic)
-      if (row.report_category === "transfer") {
-        return false;
-      }
-      return true;
-    })
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((row) => {
-      const debit = Number(row.debit) || 0;
-      const credit = Number(row.credit) || 0;
-      let amount = 0;
+  const handleCategory = async (
+    account: string,
+    type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
+  ) => {
+    const { start, end } = getDateRange();
+    const selectColumns = hasInvoiceNumber
+      ? `${baseSelectColumns}, invoice_number`
+      : baseSelectColumns;
       
-      if (reportType === "pl") {
-        // P&L logic - same as before
-        amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
-      } else {
-        // FIXED: Use the same cash flow logic as main page
-        amount = row.report_category === "transfer"
-          ? debit - credit  // Reverse for transfers (though we filter these out)
-          : row.normal_balance || credit - debit;  // Normal for others
-      }
+    let query = supabase
+      .from("journal_entry_lines")
+      .select(selectColumns)
+      .eq("account", account)
+      .gte("date", start)
+      .lte("date", end);
       
-      return {
-        date: row.date,
-        amount,
-        running: 0,
-        payee: row.customer || row.vendor || row.name,
-        memo: row.memo,
-        customer: row.customer,
-        entryNumber: row.entry_number,
-        invoiceNumber: row.invoice_number,
-      };
+    if (selectedCustomer) {
+      query =
+        selectedCustomer === "Corporate"
+          ? query.is("customer", null)
+          : query.eq("customer", selectedCustomer);
+    }
+    
+    const { data } = await query;
+    const list: Transaction[] = ((data as JournalRow[]) || [])
+      .filter((row) => {
+        // Skip transfers at customer level (same as main logic)
+        if (row.report_category === "transfer") {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((row) => {
+        const debit = Number(row.debit) || 0;
+        const credit = Number(row.credit) || 0;
+        let amount = 0;
+        
+        if (reportType === "pl") {
+          // P&L logic - same as before
+          amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
+        } else {
+          // FIXED: Use the same cash flow logic as main page
+          amount = row.normal_balance || credit - debit;  // Normal for cash flow
+        }
+        
+        return {
+          date: row.date,
+          amount,
+          running: 0,
+          payee: row.customer || row.vendor || row.name,
+          memo: row.memo,
+          customer: row.customer,
+          entryNumber: row.entry_number,
+          invoiceNumber: row.invoice_number,
+        };
+      });
+      
+    let run = 0;
+    list.forEach((t) => {
+      run += t.amount;
+      t.running = run;
     });
     
-  let run = 0;
-  list.forEach((t) => {
-    run += t.amount;
-    t.running = run;
-  });
-  
-  setTransactions(list);
-  setSelectedCategory(account);
-  setView("detail");
-};
+    setTransactions(list);
+    setSelectedCategory(account);
+    setView("detail");
+  };
+
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return;
     const { data, error } = await supabase
@@ -1392,44 +1412,6 @@ export default function EnhancedMobileDashboard() {
                         display: 'flex',
                         justifyContent: 'space-between',
                         padding: '8px 12px',
-                        background: `${BRAND_COLORS.success}08`,
-                        borderRadius: '8px',
-                        border: `1px solid ${BRAND_COLORS.success}20`
-                      }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Revenue</span>
-                        <span style={{
-                          fontSize: '13px',
-                          fontWeight: '700',
-                          color: BRAND_COLORS.success,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                        }}>
-                          {formatCompactCurrency(p.revenue || 0)}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: `${BRAND_COLORS.warning}08`,
-                        borderRadius: '8px',
-                        border: `1px solid ${BRAND_COLORS.warning}20`
-                      }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>COGS</span>
-                        <span style={{
-                          fontSize: '13px',
-                          fontWeight: '700',
-                          color: BRAND_COLORS.warning,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                        }}>
-                          {formatCompactCurrency(p.cogs || 0)}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
                         background: `${BRAND_COLORS.danger}08`,
                         borderRadius: '8px',
                         border: `1px solid ${BRAND_COLORS.danger}20`
@@ -1955,64 +1937,52 @@ export default function EnhancedMobileDashboard() {
           ) : (
             <>
               <div style={{ display: 'grid', gap: '16px' }}>
-                {/* Income */}
+                {/* Operating Activities */}
                 <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.success, borderBottom: `2px solid ${BRAND_COLORS.success}`, paddingBottom: '8px' }}>Income</h3>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.success, borderBottom: `2px solid ${BRAND_COLORS.success}`, paddingBottom: '8px' }}>Operating Activities</h3>
                   {cfData.income.map((cat) => (
                     <div key={cat.name} onClick={() => handleCategory(cat.name, "income")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f0fdf4'; e.currentTarget.style.borderColor = BRAND_COLORS.success; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
                       <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.success }}>{formatCurrency(cat.total)}</span>
                     </div>
                   ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.success }}>Total Income: {formatCurrency(cfTotals.income)}</div>
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.success }}>Total Operating: {formatCurrency(cfTotals.income)}</div>
                 </div>
 
-                {/* Other Income */}
+                {/* Financing Activities */}
                 <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.primary, borderBottom: `2px solid ${BRAND_COLORS.primary}`, paddingBottom: '8px' }}>Other Income</h3>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.primary, borderBottom: `2px solid ${BRAND_COLORS.primary}`, paddingBottom: '8px' }}>Financing Activities</h3>
                   {cfData.otherIncome.map((cat) => (
                     <div key={cat.name} onClick={() => handleCategory(cat.name, "otherIncome")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f0f9ff'; e.currentTarget.style.borderColor = BRAND_COLORS.primary; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
                       <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.primary }}>{formatCurrency(cat.total)}</span>
                     </div>
                   ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.primary }}>Total Other Income: {formatCurrency(cfTotals.otherIncome)}</div>
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.primary }}>Total Financing: {formatCurrency(cfTotals.otherIncome)}</div>
                 </div>
 
-                {/* COGS */}
+                {/* Investing Activities */}
                 <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.warning, borderBottom: `2px solid ${BRAND_COLORS.warning}`, paddingBottom: '8px' }}>COGS</h3>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.warning, borderBottom: `2px solid ${BRAND_COLORS.warning}`, paddingBottom: '8px' }}>Investing Activities</h3>
                   {cfData.cogs.map((cat) => (
                     <div key={cat.name} onClick={() => handleCategory(cat.name, "cogs")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fff7ed'; e.currentTarget.style.borderColor = BRAND_COLORS.warning; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
                       <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>{formatCurrency(cat.total)}</span>
                     </div>
                   ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.warning }}>Total COGS: {formatCurrency(cfTotals.cogs)}</div>
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.warning }}>Total Investing: {formatCurrency(cfTotals.cogs)}</div>
                 </div>
 
-                {/* Expenses */}
+                {/* Other Activities */}
                 <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.danger, borderBottom: `2px solid ${BRAND_COLORS.danger}`, paddingBottom: '8px' }}>Expenses</h3>
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.danger, borderBottom: `2px solid ${BRAND_COLORS.danger}`, paddingBottom: '8px' }}>Other Activities</h3>
                   {cfData.expenses.map((cat) => (
                     <div key={cat.name} onClick={() => handleCategory(cat.name, "expense")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.borderColor = BRAND_COLORS.danger; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
                       <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
                       <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>{formatCurrency(cat.total)}</span>
                     </div>
                   ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.danger }}>Total Expenses: {formatCurrency(cfTotals.expenses)}</div>
-                </div>
-
-                {/* Other Expenses */}
-                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.danger, borderBottom: `2px solid ${BRAND_COLORS.danger}`, paddingBottom: '8px' }}>Other Expenses</h3>
-                  {cfData.otherExpenses.map((cat) => (
-                    <div key={cat.name} onClick={() => handleCategory(cat.name, "otherExpense")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.borderColor = BRAND_COLORS.danger; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>{formatCurrency(cat.total)}</span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.danger }}>Total Other Expenses: {formatCurrency(cfTotals.otherExpenses)}</div>
+                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.danger }}>Total Other: {formatCurrency(cfTotals.expenses)}</div>
                 </div>
               </div>
               <div style={{ marginTop: '8px', textAlign: 'right', fontSize: '16px', fontWeight: '600', color: cfTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger }}>
@@ -2239,4 +2209,42 @@ export default function EnhancedMobileDashboard() {
       )}
     </div>
   );
-}
+}${BRAND_COLORS.success}08`,
+                        borderRadius: '8px',
+                        border: `1px solid ${BRAND_COLORS.success}20`
+                      }}>
+                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Revenue</span>
+                        <span style={{
+                          fontSize: '13px',
+                          fontWeight: '700',
+                          color: BRAND_COLORS.success,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.revenue || 0)}
+                        </span>
+                      </div>
+
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        background: `${BRAND_COLORS.warning}08`,
+                        borderRadius: '8px',
+                        border: `1px solid ${BRAND_COLORS.warning}20`
+                      }}>
+                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>COGS</span>
+                        <span style={{
+                          fontSize: '13px',
+                          fontWeight: '700',
+                          color: BRAND_COLORS.warning,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.cogs || 0)}
+                        </span>
+                      </div>
+
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        background: `
