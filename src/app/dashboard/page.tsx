@@ -23,6 +23,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Bar,
+  BarChart,
   PieChart as RechartsPieChart,
   Cell,
   Pie,
@@ -949,6 +950,7 @@ export default function MobileResponsiveFinancialsPage() {
   // Data integrity state
   const [dataIntegrityStatus, setDataIntegrityStatus] = useState(null)
   const [propertyChartMetric, setPropertyChartMetric] = useState("income")
+  const [propertyChartView, setPropertyChartView] = useState("pie")
 
   // Debug mode state
   const [debugMode, setDebugMode] = useState(DEBUG_CONFIG.isDebugMode)
@@ -2517,111 +2519,150 @@ export default function MobileResponsiveFinancialsPage() {
           <div className="p-4 border-b border-gray-200">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold text-gray-900">Customer Performance</h3>
-              <div className="flex rounded-lg border border-gray-300 overflow-hidden">
-                <button
-                  onClick={() => setPropertyChartMetric("income")}
-                  className={`px-2 py-1 text-xs transition-colors ${
-                    propertyChartMetric === "income" ? "text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-                  }`}
-                  style={{ backgroundColor: propertyChartMetric === "income" ? BRAND_COLORS.primary : undefined }}
-                >
-                  Revenue
-                </button>
-                <button
-                  onClick={() => setPropertyChartMetric("ni")}
-                  className={`px-2 py-1 text-xs transition-colors ${
-                    propertyChartMetric === "ni" ? "text-white" : "bg-white text-gray-700 hover:bg-gray-50"
-                  }`}
-                  style={{ backgroundColor: propertyChartMetric === "ni" ? BRAND_COLORS.secondary : undefined }}
-                >
-                  Net Income
-                </button>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+                  <button
+                    onClick={() => setPropertyChartMetric("income")}
+                    className={`px-2 py-1 text-xs transition-colors ${
+                      propertyChartMetric === "income" ? "text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                    style={{ backgroundColor: propertyChartMetric === "income" ? BRAND_COLORS.primary : undefined }}
+                  >
+                    Revenue
+                  </button>
+                  <button
+                    onClick={() => setPropertyChartMetric("ni")}
+                    className={`px-2 py-1 text-xs transition-colors ${
+                      propertyChartMetric === "ni" ? "text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                    style={{ backgroundColor: propertyChartMetric === "ni" ? BRAND_COLORS.secondary : undefined }}
+                  >
+                    Net Income
+                  </button>
+                </div>
+                <div className="flex rounded-lg border border-gray-300 overflow-hidden">
+                  <button
+                    onClick={() => setPropertyChartView("pie")}
+                    className={`p-1 ${
+                      propertyChartView === "pie" ? "text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                    style={{ backgroundColor: propertyChartView === "pie" ? BRAND_COLORS.primary : undefined }}
+                  >
+                    <PieChart className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => setPropertyChartView("bar")}
+                    className={`p-1 ${
+                      propertyChartView === "bar" ? "text-white" : "bg-white text-gray-700 hover:bg-gray-50"
+                    }`}
+                    style={{ backgroundColor: propertyChartView === "bar" ? BRAND_COLORS.secondary : undefined }}
+                  >
+                    <BarChart3 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
           <div className="p-2">
             <ResponsiveContainer width="100%" height={250}>
-              <RechartsPieChart>
-                <Pie
-                  data={generateCustomerChartData()}
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={80}
-                  innerRadius={0}
-                  paddingAngle={2}
-                  dataKey="value"
-                  label={({ name, percent }) => (percent > 0.1 ? `${(percent * 100).toFixed(0)}%` : "")}
-                  labelLine={false}
-                >
-                  {generateCustomerChartData().map((entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={COLORS[index % COLORS.length]}
-                      style={{
-                        cursor: "pointer",
-                        filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.1))",
-                      }}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length > 0) {
-                      const data = payload[0].payload
-                      const metricName = propertyChartMetric === "income" ? "Revenue" : "Net Income"
-                      const percentage = payload[0].percent
+              {propertyChartView === "pie" ? (
+                <RechartsPieChart>
+                  <Pie
+                    data={generateCustomerChartData()}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    innerRadius={0}
+                    paddingAngle={2}
+                    dataKey="value"
+                    label={({ name, percent }) => (percent > 0.1 ? `${(percent * 100).toFixed(0)}%` : "")}
+                    labelLine={false}
+                  >
+                    {generateCustomerChartData().map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={COLORS[index % COLORS.length]}
+                        style={{ cursor: "pointer", filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.1))" }}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length > 0) {
+                        const data = payload[0].payload
+                        const metricName = propertyChartMetric === "income" ? "Revenue" : "Net Income"
+                        const percentage = payload[0].percent
 
-                      return (
-                        <div
-                          style={{
-                            backgroundColor: "white",
-                            border: "1px solid #e2e8f0",
-                            borderRadius: "8px",
-                            boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
-                            padding: "12px 16px",
-                            fontSize: "12px",
-                            fontWeight: 500,
-                            maxWidth: "200px",
-                          }}
-                        >
+                        return (
                           <div
                             style={{
-                              fontWeight: "bold",
-                              fontSize: "14px",
-                              color: "#1f2937",
-                              marginBottom: "6px",
-                              borderBottom: "1px solid #e5e7eb",
-                              paddingBottom: "4px",
+                              backgroundColor: "white",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: "8px",
+                              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+                              padding: "12px 16px",
+                              fontSize: "12px",
+                              fontWeight: 500,
+                              maxWidth: "200px",
                             }}
                           >
-                            {data.name}
+                            <div
+                              style={{
+                                fontWeight: "bold",
+                                fontSize: "14px",
+                                color: "#1f2937",
+                                marginBottom: "6px",
+                                borderBottom: "1px solid #e5e7eb",
+                                paddingBottom: "4px",
+                              }}
+                            >
+                              {data.name}
+                            </div>
+                            <div style={{ color: "#374151", marginBottom: "4px" }}>
+                              <strong>{metricName}:</strong> {formatCurrency(data.value)}
+                            </div>
+                            <div style={{ color: "#6b7280", marginBottom: "4px" }}>
+                              <strong>Share:</strong> {(percentage * 100).toFixed(1)}%
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "11px",
+                                color: "#9ca3af",
+                                borderTop: "1px solid #f3f4f6",
+                                paddingTop: "4px",
+                                marginTop: "4px",
+                              }}
+                            >
+                              <div>Revenue: {formatCurrency(data.revenue)}</div>
+                              <div>Net Income: {formatCurrency(data.netIncome)}</div>
+                            </div>
                           </div>
-                          <div style={{ color: "#374151", marginBottom: "4px" }}>
-                            <strong>{metricName}:</strong> {formatCurrency(data.value)}
-                          </div>
-                          <div style={{ color: "#6b7280", marginBottom: "4px" }}>
-                            <strong>Share:</strong> {(percentage * 100).toFixed(1)}%
-                          </div>
-                          <div
-                            style={{
-                              fontSize: "11px",
-                              color: "#9ca3af",
-                              borderTop: "1px solid #f3f4f6",
-                              paddingTop: "4px",
-                              marginTop: "4px",
-                            }}
-                          >
-                            <div>Revenue: {formatCurrency(data.revenue)}</div>
-                            <div>Net Income: {formatCurrency(data.netIncome)}</div>
-                          </div>
-                        </div>
-                      )
-                    }
-                    return null
-                  }}
-                />
-              </RechartsPieChart>
+                        )
+                      }
+                      return null
+                    }}
+                  />
+                </RechartsPieChart>
+              ) : (
+                <BarChart data={generateCustomerChartData()}>
+                  <CartesianGrid strokeDasharray="2 2" stroke="#f1f5f9" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fontSize: 10 }}
+                    angle={-45}
+                    textAnchor="end"
+                    height={60}
+                    interval={0}
+                  />
+                  <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} tick={{ fontSize: 10 }} />
+                  <Tooltip
+                    formatter={(value) => [formatCurrency(value), propertyChartMetric === "income" ? "Revenue" : "Net Income"]}
+                    contentStyle={{ fontSize: "12px" }}
+                  />
+                  <Bar dataKey="value" fill={BRAND_COLORS.primary} />
+                </BarChart>
+              )}
             </ResponsiveContainer>
           </div>
         </div>

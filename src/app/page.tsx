@@ -52,6 +52,17 @@ const BRAND_COLORS = {
   danger: "#E74C3C",
 };
 
+const CHART_COLORS = [
+  BRAND_COLORS.primary,
+  BRAND_COLORS.secondary,
+  BRAND_COLORS.tertiary,
+  BRAND_COLORS.accent,
+  BRAND_COLORS.success,
+  BRAND_COLORS.warning,
+  "#8884d8",
+  "#82ca9d",
+];
+
 // P&L Classification using the same logic as financials page
 const classifyPLAccount = (accountType, reportCategory, accountName) => {
   const typeLower = accountType?.toLowerCase() || "";
@@ -174,6 +185,9 @@ export default function FinancialOverviewPage() {
   const [propertyChartMetric, setPropertyChartMetric] = useState<
     "income" | "gp" | "ni" | "expenses" | "cogs"
   >("income");
+  const [customerChartType, setCustomerChartType] = useState<"pie" | "bar">(
+    "pie",
+  );
   const [loadingTrend, setLoadingTrend] = useState(false);
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
@@ -789,7 +803,7 @@ export default function FinancialOverviewPage() {
     const properties = {};
 
     transactions.forEach((transaction) => {
-      const property = transaction.class || "Unassigned";
+      const property = transaction.customer || "Unassigned";
       const category = classifyPLAccount(
         transaction.account_type,
         transaction.report_category,
@@ -1055,6 +1069,16 @@ export default function FinancialOverviewPage() {
       .filter((p) => p.value > 0)
       .sort((a, b) => b.value - a.value);
   }, [propertyData, propertyChartMetric]);
+
+  const customerLegendPayload = useMemo(
+    () =>
+      propertyChartData.slice(0, 15).map((entry, index) => ({
+        value: entry.name,
+        type: "square",
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      })),
+    [propertyChartData],
+  );
 
   const totalPropertyValue = useMemo(
     () => propertyChartData.reduce((sum, p) => sum + p.value, 0),
@@ -1732,20 +1756,44 @@ export default function FinancialOverviewPage() {
                       Customer Performance
                     </CardTitle>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {metricOptions.map((m) => (
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {metricOptions.map((m) => (
+                        <Button
+                          key={m.key}
+                          className={`h-8 px-2 text-xs ${
+                            propertyChartMetric === m.key
+                              ? ""
+                              : "bg-white text-gray-700 border border-gray-200"
+                          }`}
+                          onClick={() => setPropertyChartMetric(m.key)}
+                        >
+                          {m.label}
+                        </Button>
+                      ))}
+                    </div>
+                    <div className="flex gap-1">
                       <Button
-                        key={m.key}
-                        className={`h-8 px-2 text-xs ${
-                          propertyChartMetric === m.key
+                        className={`h-8 w-8 p-0 ${
+                          customerChartType === "pie"
                             ? ""
                             : "bg-white text-gray-700 border border-gray-200"
                         }`}
-                        onClick={() => setPropertyChartMetric(m.key)}
+                        onClick={() => setCustomerChartType("pie")}
                       >
-                        {m.label}
+                        <PieChart className="h-4 w-4" />
                       </Button>
-                    ))}
+                      <Button
+                        className={`h-8 w-8 p-0 ${
+                          customerChartType === "bar"
+                            ? ""
+                            : "bg-white text-gray-700 border border-gray-200"
+                        }`}
+                        onClick={() => setCustomerChartType("bar")}
+                      >
+                        <BarChart3 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -1772,39 +1820,52 @@ export default function FinancialOverviewPage() {
                   )}
                   {!loadingProperty && propertyChartData.length > 0 && (
                     <ResponsiveContainer width="100%" height={300}>
-                      <RechartsPieChart>
-                        <Pie
-                          data={propertyChartData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={40}
-                          outerRadius={100}
+                      {customerChartType === "pie" ? (
+                        <RechartsPieChart>
+                          <Pie
+                            data={propertyChartData}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={40}
+                            outerRadius={100}
                           paddingAngle={2}
-                        >
-                          {propertyChartData.map((entry, index) => (
-                            <Cell
-                              key={`cell-${index}`}
-                              fill={
-                                [
-                                  BRAND_COLORS.primary,
-                                  BRAND_COLORS.secondary,
-                                  BRAND_COLORS.tertiary,
-                                  BRAND_COLORS.accent,
-                                  BRAND_COLORS.success,
-                                  BRAND_COLORS.warning,
-                                  "#8884d8",
-                                  "#82ca9d",
-                                ][index % 8]
-                              }
-                              stroke="#fff"
-                            />
-                          ))}
-                        </Pie>
-                        <Tooltip content={<PropertyTooltip />} />
-                        <Legend />
-                      </RechartsPieChart>
+                          >
+                            {propertyChartData.map((entry, index) => (
+                              <Cell
+                                key={`cell-${index}`}
+                                fill={
+                                  CHART_COLORS[index % CHART_COLORS.length]
+                                }
+                                stroke="#fff"
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<PropertyTooltip />} />
+                          <Legend payload={customerLegendPayload} />
+                        </RechartsPieChart>
+                      ) : (
+                        <BarChart data={propertyChartData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" />
+                          <YAxis />
+                          <Tooltip
+                            formatter={(value) => formatCurrency(value as number)}
+                          />
+                          <Legend payload={customerLegendPayload} />
+                          <Bar dataKey="value">
+                            {propertyChartData.map((entry, index) => (
+                              <Cell
+                                key={`bar-cell-${index}`}
+                                fill={
+                                  CHART_COLORS[index % CHART_COLORS.length]
+                                }
+                              />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      )}
                     </ResponsiveContainer>
                   )}
                 </CardContent>
