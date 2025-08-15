@@ -12,7 +12,36 @@ import {
   Target,
   type LucideIcon,
 } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+
+// Mock supabase client for demo
+const supabase = {
+  from: (table: string) => ({
+    select: (fields: string) => ({
+      gte: (field: string, value: string) => ({
+        lte: (field: string, value: string) => ({
+          eq: (field: string, value: string) => Promise.resolve({ data: [] }),
+          is: (field: string, value: null) => Promise.resolve({ data: [] })
+        }),
+        eq: (field: string, value: string) => ({
+          order: (field: string) => Promise.resolve({ data: [] })
+        })
+      }),
+      lte: (field: string, value: string) => ({
+        eq: (field: string, value: string) => ({
+          order: (field: string) => Promise.resolve({ data: [] })
+        }),
+        is: (field: string, value: null) => Promise.resolve({ data: [] })
+      }),
+      eq: (field: string, value: string) => ({
+        gte: (field: string, value: string) => ({
+          lte: (field: string, value: string) => ({
+            order: (field: string) => Promise.resolve({ data: [] })
+          })
+        })
+      })
+    })
+  })
+};
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -30,7 +59,7 @@ const BRAND_COLORS = {
   }
 };
 
-interface CustomerSummary {
+interface PropertySummary {
   name: string;
   revenue?: number;
   cogs?: number;
@@ -54,7 +83,6 @@ interface Transaction {
   memo?: string | null;
   customer?: string | null;
   entryNumber?: string;
-  invoiceNumber?: string | null;
 }
 
 interface JournalRow {
@@ -62,21 +90,14 @@ interface JournalRow {
   account_type: string | null;
   debit: number | null;
   credit: number | null;
+  customer: string | null;
   report_category?: string | null;
   normal_balance?: number | null;
   date: string;
   memo?: string | null;
-  customer?: string | null;
   vendor?: string | null;
   name?: string | null;
   entry_number?: string;
-  invoice_number?: string | null;
-  entry_bank_account?: string | null;
-  is_bank_account?: boolean | null;
-}
-
-interface CashJournalRow extends JournalRow {
-  cashFlowImpact: number;
 }
 
 interface JournalEntryLine {
@@ -106,7 +127,8 @@ type RankingMetric =
   | "operating"
   | "netCash"
   | "investing"
-  | "stability";
+  | "stability"
+  | "cogs";
 
 const insights: Insight[] = [
   {
@@ -140,57 +162,28 @@ export default function EnhancedMobileDashboard() {
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
   const [view, setView] = useState<"overview" | "summary" | "report" | "detail">("overview");
-  const [customers, setCustomers] = useState<CustomerSummary[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
-  const [hasInvoiceNumber, setHasInvoiceNumber] = useState(false);
-  const [plData, setPlData] = useState<{
-    income: Category[];
-    cogs: Category[];
-    expenses: Category[];
-    otherIncome: Category[];
-    otherExpenses: Category[];
-  }>({
-    income: [],
+  const [properties, setProperties] = useState<PropertySummary[]>([]);
+  const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
+  const [plData, setPlData] = useState<{ revenue: Category[]; cogs: Category[]; expenses: Category[] }>({
+    revenue: [],
     cogs: [],
     expenses: [],
-    otherIncome: [],
-    otherExpenses: [],
   });
   const [cfData, setCfData] = useState<{
-    income: Category[];
-    otherIncome: Category[];
-    cogs: Category[];
-    expenses: Category[];
-    otherExpenses: Category[];
+    operating: Category[];
+    financing: Category[];
+    investing: Category[];
   }>({
-    income: [],
-    otherIncome: [],
-    cogs: [],
-    expenses: [],
-    otherExpenses: [],
+    operating: [],
+    financing: [],
+    investing: [],
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [cfTransactionData, setCfTransactionData] = useState<
-    Map<string, CashJournalRow[]>
-  >(new Map());
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
-
-  useEffect(() => {
-    const checkInvoiceColumn = async () => {
-      const { data, error } = await supabase.from("journal_entry_lines").select("*").limit(1);
-      if (!error && data && data.length > 0 && "invoice_number" in data[0]) {
-        setHasInvoiceNumber(true);
-      }
-    };
-    checkInvoiceColumn();
-  }, []);
-
-  const baseSelectColumns =
-    "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number";
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -198,34 +191,23 @@ export default function EnhancedMobileDashboard() {
   );
 
   const plTotals = useMemo(() => {
-    const income = plData.income.reduce((sum, c) => sum + c.total, 0);
+    const revenue = plData.revenue.reduce((sum, c) => sum + c.total, 0);
     const cogs = plData.cogs.reduce((sum, c) => sum + c.total, 0);
     const expenses = plData.expenses.reduce((sum, c) => sum + c.total, 0);
-    const otherIncome = plData.otherIncome.reduce((sum, c) => sum + c.total, 0);
-    const otherExpenses = plData.otherExpenses.reduce((sum, c) => sum + c.total, 0);
-    return {
-      income,
-      cogs,
-      expenses,
-      otherIncome,
-      otherExpenses,
-      net: income + otherIncome - cogs - expenses - otherExpenses,
-    };
+    const grossProfit = revenue - cogs;
+    const net = grossProfit - expenses;
+    return { revenue, cogs, grossProfit, expenses, net };
   }, [plData]);
 
   const cfTotals = useMemo(() => {
-    const income = cfData.income.reduce((sum, c) => sum + c.total, 0);
-    const otherIncome = cfData.otherIncome.reduce((sum, c) => sum + c.total, 0);
-    const cogs = cfData.cogs.reduce((sum, c) => sum + c.total, 0);
-    const expenses = cfData.expenses.reduce((sum, c) => sum + c.total, 0);
-    const otherExpenses = cfData.otherExpenses.reduce((sum, c) => sum + c.total, 0);
-    return {
-      income,
-      otherIncome,
-      cogs,
-      expenses,
-      otherExpenses,
-      net: income + otherIncome - cogs - expenses - otherExpenses,
+    const operating = cfData.operating.reduce((sum, c) => sum + c.total, 0);
+    const financing = cfData.financing.reduce((sum, c) => sum + c.total, 0);
+    const investing = cfData.investing.reduce((sum, c) => sum + c.total, 0);
+    return { 
+      operating, 
+      financing, 
+      investing,
+      net: operating + financing + investing
     };
   }, [cfData]);
 
@@ -236,16 +218,9 @@ export default function EnhancedMobileDashboard() {
   ) => {
     const typeLower = accountType?.toLowerCase() || "";
     
-    // Skip transfers entirely at customer level - they're bank-to-bank movements
     if (reportCategory === "transfer") {
-      return "other"; // or "skip" - these won't appear in customer-level analysis
+      return "transfer";
     }
-
-    // Operating activities - Income and Expenses
-    const isReceivable =
-      typeLower.includes("accounts receivable") || typeLower.includes("a/r");
-    const isPayable =
-      typeLower.includes("accounts payable") || typeLower.includes("a/p");
 
     if (
       typeLower === "income" ||
@@ -253,13 +228,12 @@ export default function EnhancedMobileDashboard() {
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      isReceivable ||
-      isPayable
+      typeLower === "accounts receivable" ||
+      typeLower === "accounts payable"
     ) {
       return "operating";
     }
 
-    // Investing activities - Fixed Assets and Other Assets
     if (
       typeLower === "fixed assets" ||
       typeLower === "other assets" ||
@@ -268,7 +242,6 @@ export default function EnhancedMobileDashboard() {
       return "investing";
     }
 
-    // Financing activities - Liabilities, Equity, Credit Cards
     if (
       typeLower === "long term liabilities" ||
       typeLower === "equity" ||
@@ -337,110 +310,112 @@ export default function EnhancedMobileDashboard() {
         .gte("date", start)
         .lte("date", end);
       const { data } = await query;
-      const map: Record<string, CustomerSummary> = {};
+      const map: Record<string, PropertySummary> = {};
       ((data as JournalRow[]) || []).forEach((row) => {
-        // Skip transfers at customer level - they're bank-to-bank movements
-        if (row.report_category === "transfer") {
-          return;
-        }
-        
-        const cust = row.customer || "Corporate";
-        if (!map[cust]) {
-          map[cust] = {
-            name: cust,
-            revenue: 0,
+        const customer = row.customer || "General";
+        if (!map[customer]) {
+          map[customer] = { 
+            name: customer, 
+            revenue: 0, 
             cogs: 0,
-            expenses: 0,
-            netIncome: 0,
-            operating: 0,
+            expenses: 0, 
+            netIncome: 0, 
+            operating: 0, 
             financing: 0,
-            investing: 0,
+            investing: 0
           };
         }
         const debit = Number(row.debit) || 0;
         const credit = Number(row.credit) || 0;
-
+        
         if (reportType === "pl") {
           const t = (row.account_type || "").toLowerCase();
           if (t.includes("income") || t.includes("revenue")) {
-            map[cust].revenue = (map[cust].revenue || 0) + (credit - debit);
-            map[cust].netIncome = (map[cust].netIncome || 0) + (credit - debit);
+            map[customer].revenue = (map[customer].revenue || 0) + (credit - debit);
           } else if (t.includes("cost of goods sold") || t.includes("cogs")) {
             const amt = debit - credit;
-            map[cust].cogs = (map[cust].cogs || 0) + amt;
-            map[cust].netIncome = (map[cust].netIncome || 0) - amt;
+            map[customer].cogs = (map[customer].cogs || 0) + amt;
           } else if (t.includes("expense")) {
             const amt = debit - credit;
-            map[cust].expenses = (map[cust].expenses || 0) + amt;
-            map[cust].netIncome = (map[cust].netIncome || 0) - amt;
+            map[customer].expenses = (map[customer].expenses || 0) + amt;
           }
+          // Calculate net income
+          map[customer].netIncome = (map[customer].revenue || 0) - (map[customer].cogs || 0) - (map[customer].expenses || 0);
         } else {
           // Enhanced cash flow calculation
-          const cashImpact = row.normal_balance || credit - debit;
-
-          const classification = classifyTransaction(
-            row.account_type,
-            row.report_category,
-          );
-
+          const cashImpact = row.report_category === "transfer" 
+            ? debit - credit
+            : row.normal_balance || credit - debit;
+            
+          const classification = classifyTransaction(row.account_type, row.report_category);
+          
           if (classification === "operating") {
-            map[cust].operating = (map[cust].operating || 0) + cashImpact;
+            map[customer].operating = (map[customer].operating || 0) + cashImpact;
           } else if (classification === "financing") {
-            map[cust].financing = (map[cust].financing || 0) + cashImpact;
+            map[customer].financing = (map[customer].financing || 0) + cashImpact;
           } else if (classification === "investing") {
-            map[cust].investing = (map[cust].investing || 0) + cashImpact;
+            map[customer].investing = (map[customer].investing || 0) + cashImpact;
           }
         }
       });
-
+      
       const list = Object.values(map).filter((p) => {
         return reportType === "pl"
-          ? (p.revenue || 0) !== 0 || (p.expenses || 0) !== 0 || (p.netIncome || 0) !== 0
+          ? (p.revenue || 0) !== 0 || (p.cogs || 0) !== 0 || (p.expenses || 0) !== 0 || (p.netIncome || 0) !== 0
           : (p.operating || 0) !== 0 || (p.financing || 0) !== 0 || (p.investing || 0) !== 0;
       });
-
+      
       const finalList =
-        map["Corporate"] && !list.find((p) => p.name === "Corporate")
-          ? [...list, map["Corporate"]]
+        map["General"] && !list.find((p) => p.name === "General")
+          ? [...list, map["General"]]
           : list;
-      setCustomers(finalList);
+      setProperties(finalList);
     };
     load();
   }, [reportType, reportPeriod, month, year, customStart, customEnd, getDateRange]);
 
   const revenueKing = useMemo(() => {
-    if (reportType !== "pl" || !customers.length) return null;
-    return customers.reduce((max, p) =>
+    if (reportType !== "pl" || !properties.length) return null;
+    return properties.reduce((max, p) =>
       (p.revenue || 0) > (max.revenue || 0) ? p : max,
-    customers[0]).name;
-  }, [customers, reportType]);
+    properties[0]).name;
+  }, [properties, reportType]);
 
   const marginMaster = useMemo(() => {
-    if (reportType !== "pl" || !customers.length) return null;
-    return customers.reduce((max, p) => {
+    if (reportType !== "pl" || !properties.length) return null;
+    return properties.reduce((max, p) => {
       const marginP = p.revenue ? (p.netIncome || 0) / p.revenue : 0;
       const marginM = max.revenue ? (max.netIncome || 0) / max.revenue : 0;
       return marginP > marginM ? p : max;
-    }, customers[0]).name;
-  }, [customers, reportType]);
+    }, properties[0]).name;
+  }, [properties, reportType]);
+
+  const cogsChamp = useMemo(() => {
+    if (reportType !== "pl" || !properties.length) return null;
+    return properties.reduce((min, p) => {
+      const cogsRatioP = p.revenue ? (p.cogs || 0) / p.revenue : Infinity;
+      const cogsRatioMin = min.revenue ? (min.cogs || 0) / min.revenue : Infinity;
+      return cogsRatioP < cogsRatioMin ? p : min;
+    }, properties[0]).name;
+  }, [properties, reportType]);
 
   const cashKing = useMemo(() => {
-    if (reportType !== "cf" || !customers.length) return null;
-    return customers.reduce((max, p) =>
+    if (reportType !== "cf" || !properties.length) return null;
+    return properties.reduce((max, p) =>
       (p.operating || 0) > (max.operating || 0) ? p : max,
-    customers[0]).name;
-  }, [customers, reportType]);
+    properties[0]).name;
+  }, [properties, reportType]);
 
   const flowMaster = useMemo(() => {
-    if (reportType !== "cf" || !customers.length) return null;
-    return customers.reduce((max, p) => {
+    if (reportType !== "cf" || !properties.length) return null;
+    return properties.reduce((max, p) => {
       const netP = (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
       const netM = (max.operating || 0) + (max.financing || 0) + (max.investing || 0);
       return netP > netM ? p : max;
-    }, customers[0]).name;
-  }, [customers, reportType]);
+    }, properties[0]).name;
+  }, [properties, reportType]);
 
-  const companyTotals = customers.reduce(
+  const companyTotals = properties.reduce(
     (acc, p) => {
       if (reportType === "pl") {
         acc.revenue += p.revenue || 0;
@@ -455,15 +430,7 @@ export default function EnhancedMobileDashboard() {
       }
       return acc;
     },
-    {
-      revenue: 0,
-      cogs: 0,
-      expenses: 0,
-      net: 0,
-      operating: 0,
-      financing: 0,
-      investing: 0,
-    },
+    { revenue: 0, cogs: 0, expenses: 0, net: 0, operating: 0, financing: 0, investing: 0 },
   );
 
   const formatCurrency = (n: number) =>
@@ -486,6 +453,7 @@ export default function EnhancedMobileDashboard() {
     revenue: "Revenue",
     margin: "Margin",
     netIncome: "Net Income",
+    cogs: "COGS Efficiency",
     growth: "Revenue",
     operating: "Operating Cash",
     netCash: "Net Cash",
@@ -493,9 +461,9 @@ export default function EnhancedMobileDashboard() {
     stability: "Net Cash",
   };
 
-  const rankedCustomers = useMemo(() => {
+  const rankedProperties = useMemo(() => {
     if (!rankingMetric) return [];
-    const arr = [...customers];
+    const arr = [...properties];
     switch (rankingMetric) {
       case "revenue":
         return arr.sort((a, b) => (b.revenue || 0) - (a.revenue || 0));
@@ -504,6 +472,12 @@ export default function EnhancedMobileDashboard() {
           const mA = a.revenue ? (a.netIncome || 0) / (a.revenue || 1) : -Infinity;
           const mB = b.revenue ? (b.netIncome || 0) / (b.revenue || 1) : -Infinity;
           return mB - mA;
+        });
+      case "cogs":
+        return arr.sort((a, b) => {
+          const cogsRatioA = a.revenue ? (a.cogs || 0) / a.revenue : Infinity;
+          const cogsRatioB = b.revenue ? (b.cogs || 0) / b.revenue : Infinity;
+          return cogsRatioA - cogsRatioB; // Lower COGS ratio is better
         });
       case "netIncome":
         return arr.sort((a, b) => (b.netIncome || 0) - (a.netIncome || 0));
@@ -522,13 +496,16 @@ export default function EnhancedMobileDashboard() {
       default:
         return arr;
     }
-  }, [customers, rankingMetric]);
+  }, [properties, rankingMetric]);
 
-  const formatRankingValue = (p: CustomerSummary) => {
+  const formatRankingValue = (p: PropertySummary) => {
     switch (rankingMetric) {
       case "margin":
         const m = p.revenue ? (p.netIncome || 0) / (p.revenue || 1) : 0;
         return `${(m * 100).toFixed(1)}%`;
+      case "cogs":
+        const cogsRatio = p.revenue ? (p.cogs || 0) / p.revenue : 0;
+        return `${(cogsRatio * 100).toFixed(1)}%`;
       case "netCash":
         return formatCompactCurrency(
           (p.operating || 0) + (p.financing || 0) + (p.investing || 0),
@@ -552,226 +529,168 @@ export default function EnhancedMobileDashboard() {
     setView("summary");
   };
 
-  const handleCustomerSelect = async (name: string | null) => {
-    setSelectedCustomer(name);
+  const handlePropertySelect = async (name: string | null) => {
+    setSelectedProperty(name);
     if (reportType === "pl") await loadPL(name);
     else await loadCF(name);
     setView("report");
   };
 
-  const loadPL = async (customerName: string | null = selectedCustomer) => {
+  const loadPL = async (propertyName: string | null = selectedProperty) => {
     const { start, end } = getDateRange();
     let query = supabase
       .from("journal_entry_lines")
       .select("account, account_type, debit, credit, customer, date")
       .gte("date", start)
       .lte("date", end);
-    if (customerName) {
+    if (propertyName) {
       query =
-        customerName === "Corporate"
+        propertyName === "General"
           ? query.is("customer", null)
-          : query.eq("customer", customerName);
+          : query.eq("customer", propertyName);
     }
     const { data } = await query;
-    const inc: Record<string, number> = {};
+    const rev: Record<string, number> = {};
     const cogs: Record<string, number> = {};
     const exp: Record<string, number> = {};
-    const otherInc: Record<string, number> = {};
-    const otherExp: Record<string, number> = {};
     ((data as JournalRow[]) || []).forEach((row) => {
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
       const t = (row.account_type || "").toLowerCase();
-      if (t.includes("other income")) {
-        otherInc[row.account] = (otherInc[row.account] || 0) + (credit - debit);
-      } else if (t.includes("income") || t.includes("revenue")) {
-        inc[row.account] = (inc[row.account] || 0) + (credit - debit);
+      
+      if (t.includes("income") || t.includes("revenue")) {
+        const amount = credit - debit;
+        rev[row.account] = (rev[row.account] || 0) + amount;
       } else if (t.includes("cost of goods sold") || t.includes("cogs")) {
-        cogs[row.account] = (cogs[row.account] || 0) + (debit - credit);
-      } else if (t.includes("other expense")) {
-        otherExp[row.account] = (otherExp[row.account] || 0) + (debit - credit);
+        const cogsAmount = debit - credit;
+        cogs[row.account] = (cogs[row.account] || 0) + cogsAmount;
       } else if (t.includes("expense")) {
-        exp[row.account] = (exp[row.account] || 0) + (debit - credit);
+        const expAmount = debit - credit;
+        exp[row.account] = (exp[row.account] || 0) + expAmount;
       }
     });
     setPlData({
-      income: Object.entries(inc).map(([name, total]) => ({ name, total })),
+      revenue: Object.entries(rev).map(([name, total]) => ({ name, total })),
       cogs: Object.entries(cogs).map(([name, total]) => ({ name, total })),
       expenses: Object.entries(exp).map(([name, total]) => ({ name, total })),
-      otherIncome: Object.entries(otherInc).map(([name, total]) => ({ name, total })),
-      otherExpenses: Object.entries(otherExp).map(([name, total]) => ({ name, total })),
     });
   };
 
-  // FIXED: loadCF function to match cash flow page exactly
-const loadCF = async (customerName: string | null = selectedCustomer) => {
-  const { start, end } = getDateRange();
-
-  // FIXED: Use EXACT same query logic as cash flow page
-  let query = supabase
-    .from("journal_entry_lines")
-    .select("account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account, number") // ✅ Changed to "number"
-    .gte("date", start)
-    .lte("date", end)
-    .not("entry_bank_account", "is", null) // ← ADDED: Must have bank account source
-    .order("date", { ascending: true });
-
-  // FIXED: Use same transfer logic as cash flow page
-  // For mobile, we'll exclude transfers (business activity mode)
-  query = query.eq("is_cash_account", false).neq("report_category", "transfer");
-    
-  if (customerName) {
-    query =
-      customerName === "Corporate"
-        ? query.is("customer", null)
-        : query.eq("customer", customerName);
-  }
-  
-  const { data } = await query;
-  const operating: Record<string, number> = {};
-  const financing: Record<string, number> = {};
-  const investing: Record<string, number> = {};
-  const other: Record<string, number> = {};
-  const accountTransactions = new Map<string, CashJournalRow[]>();
-
-  ((data as JournalRow[]) || []).forEach((row) => {
-    const debit = Number(row.debit) || 0;
-    const credit = Number(row.credit) || 0;
-
-    // FIXED: Use EXACT same cash flow calculation as main page
-    const cashImpact = row.normal_balance || credit - debit;
-
-    // Classify by cash flow activity, not account type
-    const classification = classifyTransaction(row.account_type, row.report_category);
-    const account = row.account;
-
-    // Store detailed transactions for drill-down
-    const list = accountTransactions.get(account) || [];
-    list.push({ ...row, cashFlowImpact: cashImpact });
-    accountTransactions.set(account, list);
-
-    if (classification === "operating") {
-      operating[account] = (operating[account] || 0) + cashImpact;
-    } else if (classification === "financing") {
-      financing[account] = (financing[account] || 0) + cashImpact;
-    } else if (classification === "investing") {
-      investing[account] = (investing[account] || 0) + cashImpact;
-    } else {
-      other[account] = (other[account] || 0) + cashImpact;
+  const loadCF = async (propertyName: string | null = selectedProperty) => {
+    const { start, end } = getDateRange();
+    let query = supabase
+      .from("journal_entry_lines")
+      .select(
+        "account, account_type, report_category, normal_balance, debit, credit, customer, date",
+      )
+      .gte("date", start)
+      .lte("date", end);
+    if (propertyName) {
+      query =
+        propertyName === "General"
+          ? query.is("customer", null)
+          : query.eq("customer", propertyName);
     }
-  });
-
-  // Convert to arrays and sort by amount (filter out zero amounts)
-  const operatingArr = Object.entries(operating)
-    .map(([name, total]) => ({ name, total }))
-    .filter(item => item.total !== 0)
-    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    const { data } = await query;
+    const op: Record<string, number> = {};
+    const fin: Record<string, number> = {};
+    const inv: Record<string, number> = {};
     
-  const financingArr = Object.entries(financing)
-    .map(([name, total]) => ({ name, total }))
-    .filter(item => item.total !== 0)
-    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    ((data as JournalRow[]) || []).forEach((row) => {
+      const debit = Number(row.debit) || 0;
+      const credit = Number(row.credit) || 0;
+      
+      // Enhanced cash impact calculation
+      const cashImpact = row.report_category === "transfer" 
+        ? debit - credit
+        : row.normal_balance || credit - debit;
+        
+      const classification = classifyTransaction(row.account_type, row.report_category);
+      
+      if (classification === "operating") {
+        op[row.account] = (op[row.account] || 0) + cashImpact;
+      } else if (classification === "financing") {
+        fin[row.account] = (fin[row.account] || 0) + cashImpact;
+      } else if (classification === "investing") {
+        inv[row.account] = (inv[row.account] || 0) + cashImpact;
+      }
+    });
     
-  const investingArr = Object.entries(investing)
-    .map(([name, total]) => ({ name, total }))
-    .filter(item => item.total !== 0)
-    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
-    
-  const otherArr = Object.entries(other)
-    .map(([name, total]) => ({ name, total }))
-    .filter(item => item.total !== 0)
-    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    const operatingArr = Object.entries(op)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total);
+    const financingArr = Object.entries(fin)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total);
+    const investingArr = Object.entries(inv)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total);
+      
+    setCfData({ 
+      operating: operatingArr, 
+      financing: financingArr,
+      investing: investingArr 
+    });
+  };
 
-  setCfData({
-    income: operatingArr,        // Operating activities
-    otherIncome: financingArr,   // Financing activities  
-    cogs: investingArr,          // Investing activities
-    expenses: otherArr,          // Other activities
-    otherExpenses: [],           // Not used in cash flow
-  });
-  setCfTransactionData(accountTransactions);
-};
-
-// FIXED: handleCategory function to match cash flow page
-const handleCategory = async (
-  account: string,
-  type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
-) => {
-  if (reportType === "cf") {
-    // Use stored transaction data for cash flow drill-down
-    const rows = cfTransactionData.get(account) || [];
-    const list: Transaction[] = rows
+  const handleCategory = async (
+    account: string,
+    type: "revenue" | "cogs" | "expense" | "operating" | "financing" | "investing",
+  ) => {
+    const { start, end } = getDateRange();
+    let query = supabase
+      .from("journal_entry_lines")
+      .select(
+        "date, debit, credit, account, customer, report_category, normal_balance, memo, vendor, name, entry_number",
+      )
+      .eq("account", account)
+      .gte("date", start)
+      .lte("date", end);
+    if (selectedProperty) {
+      query =
+        selectedProperty === "General"
+          ? query.is("customer", null)
+          : query.eq("customer", selectedProperty);
+    }
+    const { data } = await query;
+    const list: Transaction[] = ((data as JournalRow[]) || [])
       .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => ({
-        date: row.date,
-        amount: row.cashFlowImpact,
-        running: 0,
-        payee: row.customer || row.vendor || row.name || undefined,
-        memo: row.memo,
-        customer: row.customer,
-        entryNumber: row.entry_number,
-        invoiceNumber: row.number, // ✅ Changed to "number"
-      }));
-
+      .map((row) => {
+        const debit = Number(row.debit) || 0;
+        const credit = Number(row.credit) || 0;
+        let amount = 0;
+        if (reportType === "pl") {
+          if (type === "revenue") {
+            amount = credit - debit;
+          } else {
+            amount = debit - credit;
+          }
+        } else {
+          // Enhanced cash flow calculation for transactions
+          amount = row.report_category === "transfer" 
+            ? debit - credit
+            : row.normal_balance || credit - debit;
+        }
+        return {
+          date: row.date,
+          amount,
+          running: 0,
+          payee: row.vendor || row.name,
+          memo: row.memo,
+          customer: row.customer,
+          entryNumber: row.entry_number,
+        };
+      });
     let run = 0;
     list.forEach((t) => {
       run += t.amount;
       t.running = run;
     });
-
     setTransactions(list);
     setSelectedCategory(account);
     setView("detail");
-    return;
-  }
+  };
 
-  // P&L logic remains the same
-  const { start, end } = getDateRange();
-  
-  let query = supabase
-    .from("journal_entry_lines")
-    .select("date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number, number") // ✅ Changed to "number"
-    .eq("account", account)
-    .gte("date", start)
-    .lte("date", end);
-
-  if (selectedCustomer) {
-    query =
-      selectedCustomer === "Corporate"
-        ? query.is("customer", null)
-        : query.eq("customer", selectedCustomer);
-  }
-
-  const { data } = await query;
-  const list: Transaction[] = ((data as JournalRow[]) || [])
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((row) => {
-      const debit = Number(row.debit) || 0;
-      const credit = Number(row.credit) || 0;
-      const amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
-
-      return {
-        date: row.date,
-        amount,
-        running: 0,
-        payee: row.customer || row.vendor || row.name,
-        memo: row.memo,
-        customer: row.customer,
-        entryNumber: row.entry_number,
-        invoiceNumber: row.number, // ✅ Changed to "number"
-      };
-    });
-    
-  let run = 0;
-  list.forEach((t) => {
-    run += t.amount;
-    t.running = run;
-  });
-  
-  setTransactions(list);
-  setSelectedCategory(account);
-  setView("detail");
-};
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return;
     const { data, error } = await supabase
@@ -840,7 +759,7 @@ const handleCategory = async (
             {menuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
           <span
-            onClick={() => handleCustomerSelect(null)}
+            onClick={() => handlePropertySelect(null)}
             style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
           >
             I AM CFO
@@ -853,13 +772,13 @@ const handleCategory = async (
             {reportType === "pl" ? "P&L Dashboard" : "Cash Flow Dashboard"}
           </h1>
           <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {getMonthName(month)} {year} • {customers.length} Customers
+            {getMonthName(month)} {year} • {properties.length} Customers
           </p>
         </div>
 
         {/* Company Total - Enhanced */}
         <div
-          onClick={() => handleCustomerSelect(null)}
+          onClick={() => handlePropertySelect(null)}
           style={{
             background: 'rgba(255, 255, 255, 0.15)',
             borderRadius: '12px',
@@ -886,30 +805,30 @@ const handleCategory = async (
           </div>
           
           {reportType === "pl" ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '16px', textAlign: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
               <div>
-                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
                   {formatCompactCurrency(companyTotals.revenue)}
                 </div>
-                <div style={{ fontSize: '12px', opacity: 0.8 }}>Revenue</div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>Revenue</div>
               </div>
               <div>
-                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
                   {formatCompactCurrency(companyTotals.cogs)}
                 </div>
-                <div style={{ fontSize: '12px', opacity: 0.8 }}>COGS</div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>COGS</div>
               </div>
               <div>
-                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
                   {formatCompactCurrency(companyTotals.expenses)}
                 </div>
-                <div style={{ fontSize: '12px', opacity: 0.8 }}>Expenses</div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>Expenses</div>
               </div>
               <div>
-                <div style={{ fontSize: '18px', fontWeight: 'bold' }}>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
                   {formatCompactCurrency(companyTotals.net)}
                 </div>
-                <div style={{ fontSize: '12px', opacity: 0.8 }}>Net Income</div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Income</div>
               </div>
             </div>
           ) : (
@@ -1102,7 +1021,7 @@ const handleCategory = async (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
               <Target size={20} style={{ color: BRAND_COLORS.accent }} />
               <h3 style={{ fontSize: '18px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-                Portfolio Insights
+                Customer Insights
               </h3>
             </div>
             
@@ -1163,6 +1082,26 @@ const handleCategory = async (
                         </div>
                       </div>
                     </div>
+                    <div onClick={() => showRanking("cogs")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.accent}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>🎯</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.accent, fontWeight: '600' }}>
+                          COGS CHAMP
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {cogsChamp}
+                        </div>
+                      </div>
+                    </div>
                     <div onClick={() => showRanking("netIncome")} style={{
                       background: 'white',
                       borderRadius: '8px',
@@ -1179,27 +1118,7 @@ const handleCategory = async (
                           PROFIT STAR
                         </div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {customers.find(p => (p.netIncome || 0) === Math.max(...customers.map(prop => prop.netIncome || 0)))?.name}
-                        </div>
-                      </div>
-                    </div>
-                    <div onClick={() => showRanking("growth")} style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.tertiary}33`,
-                      cursor: 'pointer'
-                    }}>
-                      <span style={{ fontSize: '20px' }}>🚀</span>
-                      <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.tertiary, fontWeight: '600' }}>
-                          GROWTH HERO
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {customers.length ? customers[Math.floor(Math.random() * customers.length)].name : "N/A"}
+                          {properties.find(p => (p.netIncome || 0) === Math.max(...properties.map(prop => prop.netIncome || 0)))?.name}
                         </div>
                       </div>
                     </div>
@@ -1262,7 +1181,7 @@ const handleCategory = async (
                           EFFICIENCY ACE
                         </div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {customers.find(p => (p.investing || 0) === Math.min(...customers.map(prop => prop.investing || 0)))?.name}
+                          {properties.find(p => (p.investing || 0) === Math.min(...properties.map(prop => prop.investing || 0)))?.name}
                         </div>
                       </div>
                     </div>
@@ -1282,7 +1201,7 @@ const handleCategory = async (
                           STABILITY PRO
                         </div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {customers.length ? customers[Math.floor(Math.random() * customers.length)].name : "N/A"}
+                          {properties.length ? properties[Math.floor(Math.random() * properties.length)].name : "N/A"}
                         </div>
                       </div>
                     </div>
@@ -1325,42 +1244,43 @@ const handleCategory = async (
 
           {/* Enhanced Customer KPI Boxes */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-            {customers.map((p) => {
+            {properties.map((p) => {
               const isRevenueKing = p.name === revenueKing;
               const isMarginMaster = p.name === marginMaster;
+              const isCogsChamp = p.name === cogsChamp;
               const isCashKing = p.name === cashKing;
               const isFlowMaster = p.name === flowMaster;
-
+              
               return (
                 <div
                   key={p.name}
-                  onClick={() => handleCustomerSelect(p.name)}
+                  onClick={() => handlePropertySelect(p.name)}
                   style={{
-                    background: selectedCustomer === p.name
-                      ? `linear-gradient(135deg, ${BRAND_COLORS.primary}15, ${BRAND_COLORS.tertiary}15)`
+                    background: selectedProperty === p.name 
+                      ? `linear-gradient(135deg, ${BRAND_COLORS.primary}15, ${BRAND_COLORS.tertiary}15)` 
                       : 'white',
-                    border: selectedCustomer === p.name
-                      ? `3px solid ${BRAND_COLORS.primary}`
+                    border: selectedProperty === p.name 
+                      ? `3px solid ${BRAND_COLORS.primary}` 
                       : `2px solid ${BRAND_COLORS.gray[200]}`,
                     borderRadius: '16px',
                     padding: '18px',
                     cursor: 'pointer',
                     transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)',
-                    boxShadow: selectedCustomer === p.name
-                      ? `0 8px 32px ${BRAND_COLORS.primary}40, 0 0 0 1px ${BRAND_COLORS.primary}20`
+                    boxShadow: selectedProperty === p.name 
+                      ? `0 8px 32px ${BRAND_COLORS.primary}40, 0 0 0 1px ${BRAND_COLORS.primary}20` 
                       : '0 4px 16px rgba(0, 0, 0, 0.08)',
                     position: 'relative',
                     overflow: 'hidden'
                   }}
                   onMouseOver={(e) => {
-                    if (selectedCustomer !== p.name) {
+                    if (selectedProperty !== p.name) {
                       e.currentTarget.style.borderColor = BRAND_COLORS.tertiary;
                       e.currentTarget.style.transform = 'translateY(-4px) scale(1.02)';
                       e.currentTarget.style.boxShadow = `0 12px 32px ${BRAND_COLORS.tertiary}30`;
                     }
                   }}
                   onMouseOut={(e) => {
-                    if (selectedCustomer !== p.name) {
+                    if (selectedProperty !== p.name) {
                       e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
                       e.currentTarget.style.transform = 'translateY(0) scale(1)';
                       e.currentTarget.style.boxShadow = '0 4px 16px rgba(0, 0, 0, 0.08)';
@@ -1409,6 +1329,16 @@ const handleCategory = async (
                           <span style={{ fontSize: '16px' }}>🏅</span>
                         </div>
                       )}
+                      {reportType === "pl" && isCogsChamp && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.accent}, #0ea5e9)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(14, 165, 233, 0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>🎯</span>
+                        </div>
+                      )}
                       {reportType === "cf" && isCashKing && (
                         <div style={{
                           background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, #0ea5e9)`,
@@ -1433,38 +1363,76 @@ const handleCategory = async (
                   </div>
                   
                   {reportType === "pl" ? (
-                    <div style={{ display: 'grid', gap: '8px' }}>
-                      <div style={{
-                        display: 'flex',
+                    <div style={{ display: 'grid', gap: '6px' }}>
+                      <div style={{ 
+                        display: 'flex', 
                         justifyContent: 'space-between',
-                        padding: '8px 12px',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.success}08`,
+                        borderRadius: '6px',
+                        border: `1px solid ${BRAND_COLORS.success}20`
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Revenue</span>
+                        <span style={{ 
+                          fontSize: '12px', 
+                          fontWeight: '700',
+                          color: BRAND_COLORS.success,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.revenue || 0)}
+                        </span>
+                      </div>
+                      
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
                         background: `${BRAND_COLORS.danger}08`,
-                        borderRadius: '8px',
+                        borderRadius: '6px',
                         border: `1px solid ${BRAND_COLORS.danger}20`
                       }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Expenses</span>
-                        <span style={{
-                          fontSize: '13px',
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>COGS</span>
+                        <span style={{ 
+                          fontSize: '12px', 
                           fontWeight: '700',
                           color: BRAND_COLORS.danger,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.cogs || 0)}
+                        </span>
+                      </div>
+                      
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.warning}08`,
+                        borderRadius: '6px',
+                        border: `1px solid ${BRAND_COLORS.warning}20`
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Expenses</span>
+                        <span style={{ 
+                          fontSize: '12px', 
+                          fontWeight: '700',
+                          color: BRAND_COLORS.warning,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
                         }}>
                           {formatCompactCurrency(p.expenses || 0)}
                         </span>
                       </div>
-
-                      <div style={{
-                        display: 'flex',
+                      
+                      <div style={{ 
+                        display: 'flex', 
                         justifyContent: 'space-between',
-                        padding: '12px',
+                        padding: '10px',
                         background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
-                        borderRadius: '10px',
+                        borderRadius: '8px',
                         border: `2px solid ${BRAND_COLORS.primary}30`,
                         boxShadow: `0 4px 12px ${BRAND_COLORS.primary}20`
                       }}>
-                        <span style={{ fontSize: '14px', fontWeight: '700', color: BRAND_COLORS.accent }}>Net Income</span>
-                        <span style={{
-                          fontSize: '16px',
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: BRAND_COLORS.accent }}>Net Income</span>
+                        <span style={{ 
+                          fontSize: '14px', 
                           fontWeight: '800',
                           color: (p.netIncome || 0) >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
                           textShadow: '0 1px 3px rgba(0,0,0,0.2)'
@@ -1555,7 +1523,7 @@ const handleCategory = async (
             })}
           </div>
           <div
-            onClick={() => handleCustomerSelect(null)}
+            onClick={() => handlePropertySelect(null)}
             style={{
               marginTop: '24px',
               background: 'white',
@@ -1627,7 +1595,7 @@ const handleCategory = async (
           </div>
 
           <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '12px' }}>
-            {rankedCustomers.map((p, idx) => (
+            {rankedProperties.map((p, idx) => (
               <li
                 key={p.name}
                 style={{
@@ -1677,7 +1645,7 @@ const handleCategory = async (
             color: 'white'
           }}>
             <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-              {selectedCustomer || "Company Total"} - {reportType === "pl" ? "P&L Statement" : "Cash Flow Statement"}
+              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : "Cash Flow Statement"}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
               {getMonthName(month)} {year}
@@ -1693,327 +1661,335 @@ const handleCategory = async (
                   padding: '20px',
                   border: `1px solid ${BRAND_COLORS.gray[200]}`
                 }}>
-                  <h3 style={{
-                    fontSize: '18px',
-                    fontWeight: '600',
-                    marginBottom: '16px',
-                    color: BRAND_COLORS.success,
-                    borderBottom: `2px solid ${BRAND_COLORS.success}`,
-                    paddingBottom: '8px'
-                  }}>
-                    Income
-                  </h3>
-                  {plData.income.map((cat) => (
-                    <div
-                      key={cat.name}
-                      onClick={() => handleCategory(cat.name, "income")}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '12px',
-                        marginBottom: '8px',
-                        background: BRAND_COLORS.gray[50],
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.background = '#f0f9ff';
-                        e.currentTarget.style.borderColor = BRAND_COLORS.primary;
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                        e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                      }}
-                    >
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.success }}>
-                        {formatCurrency(cat.total)}
-                      </span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.success }}>
-                    Total Income: {formatCurrency(plTotals.income)}
-                  </div>
-                </div>
-
-                <div style={{
-                  background: 'white',
-                  borderRadius: '12px',
-                  padding: '20px',
-                  border: `1px solid ${BRAND_COLORS.gray[200]}`
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.success,
+                  borderBottom: `2px solid ${BRAND_COLORS.success}`,
+                  paddingBottom: '8px'
                 }}>
-                  <h3 style={{
-                    fontSize: '18px',
-                    fontWeight: '600',
-                    marginBottom: '16px',
-                    color: BRAND_COLORS.primary,
-                    borderBottom: `2px solid ${BRAND_COLORS.primary}`,
-                    paddingBottom: '8px'
-                  }}>
-                    Other Income
-                  </h3>
-                  {plData.otherIncome.map((cat) => (
-                    <div
-                      key={cat.name}
-                      onClick={() => handleCategory(cat.name, "otherIncome")}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '12px',
-                        marginBottom: '8px',
-                        background: BRAND_COLORS.gray[50],
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.background = '#f0f9ff';
-                        e.currentTarget.style.borderColor = BRAND_COLORS.primary;
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                        e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                      }}
-                    >
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.primary }}>
-                        {formatCurrency(cat.total)}
-                      </span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.primary }}>
-                    Total Other Income: {formatCurrency(plTotals.otherIncome)}
+                  Revenue
+                </h3>
+                {plData.revenue.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "revenue")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#f0f9ff';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.primary;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.success }}>
+                      {formatCurrency(cat.total)}
+                    </span>
                   </div>
-                </div>
-
-                <div style={{
-                  background: 'white',
-                  borderRadius: '12px',
-                  padding: '20px',
-                  border: `1px solid ${BRAND_COLORS.gray[200]}`
-                }}>
-                  <h3 style={{
-                    fontSize: '18px',
-                    fontWeight: '600',
-                    marginBottom: '16px',
-                    color: BRAND_COLORS.warning,
-                    borderBottom: `2px solid ${BRAND_COLORS.warning}`,
-                    paddingBottom: '8px'
-                  }}>
-                    COGS
-                  </h3>
-                  {plData.cogs.map((cat) => (
-                    <div
-                      key={cat.name}
-                      onClick={() => handleCategory(cat.name, "cogs")}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '12px',
-                        marginBottom: '8px',
-                        background: BRAND_COLORS.gray[50],
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.background = '#fff7ed';
-                        e.currentTarget.style.borderColor = BRAND_COLORS.warning;
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                        e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                      }}
-                    >
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>
-                        {formatCurrency(cat.total)}
-                      </span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.warning }}>
-                    Total COGS: {formatCurrency(plTotals.cogs)}
-                  </div>
-                </div>
-
-                <div style={{
-                  background: 'white',
-                  borderRadius: '12px',
-                  padding: '20px',
-                  border: `1px solid ${BRAND_COLORS.gray[200]}`
-                }}>
-                  <h3 style={{
-                    fontSize: '18px',
-                    fontWeight: '600',
-                    marginBottom: '16px',
-                    color: BRAND_COLORS.warning,
-                    borderBottom: `2px solid ${BRAND_COLORS.warning}`,
-                    paddingBottom: '8px'
-                  }}>
-                    Expenses
-                  </h3>
-                  {plData.expenses.map((cat) => (
-                    <div
-                      key={cat.name}
-                      onClick={() => handleCategory(cat.name, "expense")}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '12px',
-                        marginBottom: '8px',
-                        background: BRAND_COLORS.gray[50],
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.background = '#fff7ed';
-                        e.currentTarget.style.borderColor = BRAND_COLORS.warning;
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                        e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                      }}
-                    >
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>
-                        {formatCurrency(cat.total)}
-                      </span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.warning }}>
-                    Total Expenses: {formatCurrency(plTotals.expenses)}
-                  </div>
-                </div>
-
-                <div style={{
-                  background: 'white',
-                  borderRadius: '12px',
-                  padding: '20px',
-                  border: `1px solid ${BRAND_COLORS.gray[200]}`
-                }}>
-                  <h3 style={{
-                    fontSize: '18px',
-                    fontWeight: '600',
-                    marginBottom: '16px',
-                    color: BRAND_COLORS.danger,
-                    borderBottom: `2px solid ${BRAND_COLORS.danger}`,
-                    paddingBottom: '8px'
-                  }}>
-                    Other Expenses
-                  </h3>
-                  {plData.otherExpenses.map((cat) => (
-                    <div
-                      key={cat.name}
-                      onClick={() => handleCategory(cat.name, "otherExpense")}
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        padding: '12px',
-                        marginBottom: '8px',
-                        background: BRAND_COLORS.gray[50],
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                        transition: 'all 0.2s ease'
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.background = '#fee2e2';
-                        e.currentTarget.style.borderColor = BRAND_COLORS.danger;
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                        e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                      }}
-                    >
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>
-                        {formatCurrency(cat.total)}
-                      </span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.danger }}>
-                    Total Other Expenses: {formatCurrency(plTotals.otherExpenses)}
-                  </div>
-                </div>
+                ))}
               </div>
-              <div
-                style={{
-                  marginTop: '8px',
-                  textAlign: 'right',
-                  fontSize: '16px',
-                  fontWeight: '600',
-                  color:
-                    plTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
-                }}
-              >
-                Net Income: {formatCurrency(plTotals.net)}
+
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.danger,
+                  borderBottom: `2px solid ${BRAND_COLORS.danger}`,
+                  paddingBottom: '8px'
+                }}>
+                  Cost of Goods Sold
+                </h3>
+                {plData.cogs.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "cogs")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#fef2f2';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.danger;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
               </div>
+
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.warning,
+                  borderBottom: `2px solid ${BRAND_COLORS.warning}`,
+                  paddingBottom: '8px'
+                }}>
+                  Expenses
+                </h3>
+                {plData.expenses.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "expense")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#fff7ed';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.warning;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div
+              style={{
+                marginTop: '8px',
+                textAlign: 'right',
+                fontSize: '16px',
+                fontWeight: '600',
+                color:
+                  plTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
+              }}
+            >
+              Net Income: {formatCurrency(plTotals.net)}
+            </div>
             </>
           ) : (
             <>
               <div style={{ display: 'grid', gap: '16px' }}>
-                {/* Operating Activities */}
-                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.success, borderBottom: `2px solid ${BRAND_COLORS.success}`, paddingBottom: '8px' }}>Operating Activities</h3>
-                  {cfData.income.map((cat) => (
-                    <div key={cat.name} onClick={() => handleCategory(cat.name, "income")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f0fdf4'; e.currentTarget.style.borderColor = BRAND_COLORS.success; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.success }}>{formatCurrency(cat.total)}</span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.success }}>Total Operating: {formatCurrency(cfTotals.income)}</div>
-                </div>
-
-                {/* Financing Activities */}
-                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.primary, borderBottom: `2px solid ${BRAND_COLORS.primary}`, paddingBottom: '8px' }}>Financing Activities</h3>
-                  {cfData.otherIncome.map((cat) => (
-                    <div key={cat.name} onClick={() => handleCategory(cat.name, "otherIncome")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#f0f9ff'; e.currentTarget.style.borderColor = BRAND_COLORS.primary; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.primary }}>{formatCurrency(cat.total)}</span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.primary }}>Total Financing: {formatCurrency(cfTotals.otherIncome)}</div>
-                </div>
-
-                {/* Investing Activities */}
-                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.warning, borderBottom: `2px solid ${BRAND_COLORS.warning}`, paddingBottom: '8px' }}>Investing Activities</h3>
-                  {cfData.cogs.map((cat) => (
-                    <div key={cat.name} onClick={() => handleCategory(cat.name, "cogs")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fff7ed'; e.currentTarget.style.borderColor = BRAND_COLORS.warning; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>{formatCurrency(cat.total)}</span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.warning }}>Total Investing: {formatCurrency(cfTotals.cogs)}</div>
-                </div>
-
-                {/* Other Activities */}
-                <div style={{ background: 'white', borderRadius: '12px', padding: '20px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                  <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: BRAND_COLORS.danger, borderBottom: `2px solid ${BRAND_COLORS.danger}`, paddingBottom: '8px' }}>Other Activities</h3>
-                  {cfData.expenses.map((cat) => (
-                    <div key={cat.name} onClick={() => handleCategory(cat.name, "expense")} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', marginBottom: '8px', background: BRAND_COLORS.gray[50], borderRadius: '8px', cursor: 'pointer', border: `1px solid ${BRAND_COLORS.gray[200]}`, transition: 'all 0.2s ease' }} onMouseOver={(e) => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.borderColor = BRAND_COLORS.danger; }} onMouseOut={(e) => { e.currentTarget.style.background = BRAND_COLORS.gray[50]; e.currentTarget.style.borderColor = BRAND_COLORS.gray[200]; }}>
-                      <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                      <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>{formatCurrency(cat.total)}</span>
-                    </div>
-                  ))}
-                  <div style={{ textAlign: 'right', fontWeight: '600', marginTop: '8px', color: BRAND_COLORS.danger }}>Total Other: {formatCurrency(cfTotals.expenses)}</div>
-                </div>
+                <div style={{
+                  background: 'white',
+                  borderRadius: '12px',
+                  padding: '20px',
+                  border: `1px solid ${BRAND_COLORS.gray[200]}`
+                }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.primary,
+                  borderBottom: `2px solid ${BRAND_COLORS.primary}`,
+                  paddingBottom: '8px'
+                }}>
+                  Operating Activities
+                </h3>
+                {cfData.operating.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "operating")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#f0f9ff';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.primary;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ 
+                      fontSize: '14px', 
+                      fontWeight: '600', 
+                      color: cat.total >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                    }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
               </div>
-              <div style={{ marginTop: '8px', textAlign: 'right', fontSize: '16px', fontWeight: '600', color: cfTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger }}>
-                Net Cash Flow: {formatCurrency(cfTotals.net)}
+
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.secondary,
+                  borderBottom: `2px solid ${BRAND_COLORS.secondary}`,
+                  paddingBottom: '8px'
+                }}>
+                  Financing Activities
+                </h3>
+                {cfData.financing.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "financing")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#f8fafc';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.secondary;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ 
+                      fontSize: '14px', 
+                      fontWeight: '600', 
+                      color: cat.total >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                    }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
               </div>
+
+              {/* Investing Activities Section */}
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.warning,
+                  borderBottom: `2px solid ${BRAND_COLORS.warning}`,
+                  paddingBottom: '8px'
+                }}>
+                  Investing Activities
+                </h3>
+                {cfData.investing.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "investing")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#fff7ed';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.warning;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ 
+                      fontSize: '14px', 
+                      fontWeight: '600', 
+                      color: cat.total >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                    }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div
+              style={{
+                marginTop: '8px',
+                textAlign: 'right',
+                fontSize: '16px',
+                fontWeight: '600',
+                color:
+                  cfTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
+              }}
+            >
+              Net Cash Flow: {formatCurrency(cfTotals.net)}
+            </div>
             </>
           )}
         </div>
@@ -2104,11 +2080,6 @@ const handleCategory = async (
                     )}
                     {t.memo && (
                       <div style={{ fontSize: '12px', color: '#64748b' }}>{t.memo}</div>
-                    )}
-                    {t.invoiceNumber && (
-                      <div style={{ fontSize: '12px', color: '#64748b' }}>
-                        Invoice: {t.invoiceNumber}
-                      </div>
                     )}
                   </div>
                   <span
