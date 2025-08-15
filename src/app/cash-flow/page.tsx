@@ -40,7 +40,6 @@ interface TransactionDetail {
   entryNumber?: string
   customer?: string
   vendor?: string
-  class?: string
   name?: string
   accountType?: string
   reportCategory?: string
@@ -753,7 +752,7 @@ export default function CashFlowPage() {
       let query = supabase
         .from("journal_entry_lines")
         .select(
-          "entry_number, class, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
+          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
         )
         .gte("date", startDate)
         .lte("date", endDate)
@@ -902,7 +901,7 @@ export default function CashFlowPage() {
       let query = supabase
         .from("journal_entry_lines")
         .select(
-          "entry_number, class, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
+          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
         )
         .gte("date", startDate)
         .lte("date", endDate)
@@ -1075,7 +1074,7 @@ export default function CashFlowPage() {
       let query = supabase
         .from("journal_entry_lines")
         .select(
-          "entry_number, class, date, account, account_type, debit, credit, memo, entry_bank_account, normal_balance, report_category",
+          "entry_number, date, account, account_type, debit, credit, memo, entry_bank_account, normal_balance, report_category, customer, vendor, name",
         )
         .gte("date", startDate)
         .lte("date", endDate)
@@ -1408,7 +1407,7 @@ export default function CashFlowPage() {
     if (!entryNumber) return
     const { data, error } = await supabase
       .from("journal_entry_lines")
-      .select("date, account, memo, class, debit, credit")
+      .select("date, account, memo, customer, debit, credit")
       .eq("entry_number", entryNumber)
       .order("line_sequence")
     if (error) {
