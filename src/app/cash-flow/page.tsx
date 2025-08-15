@@ -43,6 +43,7 @@ interface TransactionDetail {
   name?: string
   accountType?: string
   reportCategory?: string
+  invoiceNumber?: string | null
 }
 
 interface JournalEntryLine {
@@ -576,14 +577,19 @@ export default function CashFlowPage() {
     const typeLower = accountType?.toLowerCase() || ""
 
     // Operating activities - Income and Expenses
+    const isReceivable =
+      typeLower.includes("accounts receivable") || typeLower.includes("a/r")
+    const isPayable =
+      typeLower.includes("accounts payable") || typeLower.includes("a/p")
+
     if (
       typeLower === "income" ||
       typeLower === "other income" ||
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable"
+      isReceivable ||
+      isPayable
     ) {
       return "operating"
     }
@@ -752,7 +758,7 @@ export default function CashFlowPage() {
       let query = supabase
         .from("journal_entry_lines")
         .select(
-          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
+          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category, invoice_number",
         )
         .gte("date", startDate)
         .lte("date", endDate)
@@ -901,7 +907,7 @@ export default function CashFlowPage() {
       let query = supabase
         .from("journal_entry_lines")
         .select(
-          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
+          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category, invoice_number",
         )
         .gte("date", startDate)
         .lte("date", endDate)
@@ -1074,7 +1080,7 @@ export default function CashFlowPage() {
       let query = supabase
         .from("journal_entry_lines")
         .select(
-          "entry_number, date, account, account_type, debit, credit, memo, entry_bank_account, normal_balance, report_category, customer, vendor, name",
+          "entry_number, date, account, account_type, debit, credit, memo, entry_bank_account, normal_balance, report_category, customer, vendor, name, invoice_number",
         )
         .gte("date", startDate)
         .lte("date", endDate)
@@ -1200,6 +1206,7 @@ export default function CashFlowPage() {
         credit: Number.parseFloat(tx.credit) || 0,
         impact: tx.cashFlowImpact,
         entryNumber: tx.entry_number,
+        invoiceNumber: tx.invoice_number,
         customer: tx.customer,
         vendor: tx.vendor,
         name: tx.name,
@@ -1241,6 +1248,7 @@ export default function CashFlowPage() {
         credit: Number.parseFloat(tx.credit) || 0,
         impact: tx.cashFlowImpact,
         entryNumber: tx.entry_number,
+        invoiceNumber: tx.invoice_number,
         customer: tx.customer,
         vendor: tx.vendor,
         name: tx.name,
@@ -1394,6 +1402,7 @@ export default function CashFlowPage() {
         customer: row.customer,
         vendor: row.vendor,
         name: row.name,
+        invoiceNumber: row.invoice_number,
       }))
 
       setTransactionDetails(transactionDetails)
@@ -3227,6 +3236,9 @@ export default function CashFlowPage() {
                         Payee/Customer
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Invoice #
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Memo
                       </th>
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -3252,6 +3264,9 @@ export default function CashFlowPage() {
                             transaction.vendor ||
                             transaction.customer ||
                             "N/A"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {transaction.invoiceNumber || "-"}
                         </td>
                         <td
                           className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"

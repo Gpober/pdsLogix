@@ -54,6 +54,7 @@ interface Transaction {
   memo?: string | null;
   customer?: string | null;
   entryNumber?: string;
+  invoiceNumber?: string | null;
 }
 
 interface JournalRow {
@@ -69,6 +70,7 @@ interface JournalRow {
   vendor?: string | null;
   name?: string | null;
   entry_number?: string;
+  invoice_number?: string | null;
 }
 
 interface JournalEntryLine {
@@ -215,14 +217,19 @@ export default function EnhancedMobileDashboard() {
       return "transfer";
     }
 
+    const isReceivable =
+      typeLower.includes("accounts receivable") || typeLower.includes("a/r");
+    const isPayable =
+      typeLower.includes("accounts payable") || typeLower.includes("a/p");
+
     if (
       typeLower === "income" ||
       typeLower === "other income" ||
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable"
+      isReceivable ||
+      isPayable
     ) {
       return "operating";
     }
@@ -632,12 +639,12 @@ export default function EnhancedMobileDashboard() {
     type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
   ) => {
     const { start, end } = getDateRange();
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(
-        "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number",
+  let query = supabase
+    .from("journal_entry_lines")
+    .select(
+        "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number, invoice_number",
       )
-      .eq("account", account)
+    .eq("account", account)
       .gte("date", start)
       .lte("date", end);
     if (selectedCustomer) {
@@ -669,6 +676,7 @@ export default function EnhancedMobileDashboard() {
           memo: row.memo,
           customer: row.customer,
           entryNumber: row.entry_number,
+          invoiceNumber: row.invoice_number,
         };
       });
     let run = 0;
@@ -2063,6 +2071,11 @@ export default function EnhancedMobileDashboard() {
                     )}
                     {t.memo && (
                       <div style={{ fontSize: '12px', color: '#64748b' }}>{t.memo}</div>
+                    )}
+                    {t.invoiceNumber && (
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>
+                        Invoice: {t.invoiceNumber}
+                      </div>
                     )}
                   </div>
                   <span
