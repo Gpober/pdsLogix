@@ -28,6 +28,7 @@ import {
   Pie,
   ComposedChart,
 } from "recharts"
+import { supabase } from "@/lib/supabaseClient"
 import Image from "next/image"
 
 // I AM CFO Brand Colors
@@ -219,10 +220,6 @@ const validateDataIntegrity = (data, source, expectedCount, callback) => {
   return validation
 }
 
-// Updated Supabase Configuration
-const SUPABASE_URL = "https://bdtmsfbhaztukqppnhdk.supabase.co"
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkdG1zZmJoYXp0dWtxcHBuaGRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyMDE0NTQsImV4cCI6MjA3MDc3NzQ1NH0.1nJz_lgeRQNTaiFohC5u6yk3OXEleA4sI5pgwPouRsU"
 
 // P&L ONLY Account Classification - EXCLUDES Balance Sheet accounts
 const classifyAccount = (accountType, accountDetailType, accountName) => {
