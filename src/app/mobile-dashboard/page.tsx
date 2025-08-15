@@ -136,6 +136,7 @@ export default function EnhancedMobileDashboard() {
   const [view, setView] = useState<"overview" | "summary" | "report" | "detail">("overview");
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
+  const [hasInvoiceNumber, setHasInvoiceNumber] = useState(false);
   const [plData, setPlData] = useState<{
     income: Category[];
     cogs: Category[];
@@ -168,6 +169,19 @@ export default function EnhancedMobileDashboard() {
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
+
+  useEffect(() => {
+    const checkInvoiceColumn = async () => {
+      const { data, error } = await supabase.from("journal_entry_lines").select("*").limit(1);
+      if (!error && data && data.length > 0 && "invoice_number" in data[0]) {
+        setHasInvoiceNumber(true);
+      }
+    };
+    checkInvoiceColumn();
+  }, []);
+
+  const baseSelectColumns =
+    "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number";
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -639,11 +653,12 @@ export default function EnhancedMobileDashboard() {
     type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
   ) => {
     const { start, end } = getDateRange();
+    const selectColumns = hasInvoiceNumber
+      ? `${baseSelectColumns}, invoice_number`
+      : baseSelectColumns;
   let query = supabase
     .from("journal_entry_lines")
-    .select(
-        "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number, invoice_number",
-      )
+    .select(selectColumns)
     .eq("account", account)
       .gte("date", start)
       .lte("date", end);

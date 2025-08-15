@@ -140,6 +140,7 @@ export default function CashFlowPage() {
   const [customStartDate, setCustomStartDate] = useState("")
   const [customEndDate, setCustomEndDate] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [hasInvoiceNumber, setHasInvoiceNumber] = useState(false)
 
   // Collapsible sections state
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
@@ -189,6 +190,20 @@ export default function CashFlowPage() {
 
   // Store detailed transaction data for reuse
   const [transactionData, setTransactionData] = useState<Map<string, any[]>>(new Map())
+
+  // Check if invoice_number column exists to avoid query errors
+  useEffect(() => {
+    const checkInvoiceColumn = async () => {
+      const { data, error } = await supabase.from("journal_entry_lines").select("*").limit(1)
+      if (!error && data && data.length > 0 && "invoice_number" in data[0]) {
+        setHasInvoiceNumber(true)
+      }
+    }
+    checkInvoiceColumn()
+  }, [])
+
+  const baseSelectColumns =
+    "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category"
 
   // Extract date parts directly from string
   const getDateParts = (dateString: string) => {
@@ -754,12 +769,14 @@ export default function CashFlowPage() {
       console.log(`🏢 Customer Filter: "${selectedProperty}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
+      const selectColumns = hasInvoiceNumber
+        ? `${baseSelectColumns}, invoice_number`
+        : baseSelectColumns
+
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
         .from("journal_entry_lines")
-        .select(
-          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category, invoice_number",
-        )
+        .select(selectColumns)
         .gte("date", startDate)
         .lte("date", endDate)
         .not("entry_bank_account", "is", null) // Must have bank account source
@@ -903,12 +920,14 @@ export default function CashFlowPage() {
       console.log(`🏦 Bank Account Filter: "${selectedBankAccount}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
+      const selectColumns = hasInvoiceNumber
+        ? `${baseSelectColumns}, invoice_number`
+        : baseSelectColumns
+
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
         .from("journal_entry_lines")
-        .select(
-          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category, invoice_number",
-        )
+        .select(selectColumns)
         .gte("date", startDate)
         .lte("date", endDate)
         .not("entry_bank_account", "is", null) // Must have bank account source
@@ -1076,12 +1095,14 @@ export default function CashFlowPage() {
       console.log(`🏦 Bank Account Filter: "${selectedBankAccount}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
+      const selectColumns = hasInvoiceNumber
+        ? `${baseSelectColumns}, invoice_number`
+        : baseSelectColumns
+
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
         .from("journal_entry_lines")
-        .select(
-          "entry_number, date, account, account_type, debit, credit, memo, entry_bank_account, normal_balance, report_category, customer, vendor, name, invoice_number",
-        )
+        .select(selectColumns)
         .gte("date", startDate)
         .lte("date", endDate)
         .not("entry_bank_account", "is", null) // Must have bank account source
