@@ -150,11 +150,11 @@ export default function FinancialOverviewPage() {
   const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false);
   const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
   const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
-  const [classDropdownOpen, setClassDropdownOpen] = useState(false);
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const timePeriodDropdownRef = useRef<HTMLDivElement>(null);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const yearDropdownRef = useRef<HTMLDivElement>(null);
-  const classDropdownRef = useRef<HTMLDivElement>(null);
+  const customerDropdownRef = useRef<HTMLDivElement>(null);
   const [financialData, setFinancialData] = useState(null);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -192,11 +192,11 @@ export default function FinancialOverviewPage() {
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [propertyError, setPropertyError] = useState<string | null>(null);
-  const [selectedClasses, setSelectedClasses] = useState<Set<string>>(
-    new Set(["All Classes"]),
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
+    new Set(["All Customers"]),
   );
-  const [availableClasses, setAvailableClasses] = useState<string[]>([
-    "All Classes",
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>([
+    "All Customers",
   ]);
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
@@ -354,10 +354,10 @@ export default function FinancialOverviewPage() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
-        classDropdownRef.current &&
-        !classDropdownRef.current.contains(event.target as Node)
+        customerDropdownRef.current &&
+        !customerDropdownRef.current.contains(event.target as Node)
       ) {
-        setClassDropdownOpen(false);
+        setCustomerDropdownOpen(false);
       }
       if (
         timePeriodDropdownRef.current &&
@@ -385,28 +385,28 @@ export default function FinancialOverviewPage() {
     };
   }, []);
 
-  // Load available classes for filter dropdown
-  const fetchAvailableClasses = async () => {
+  // Load available customers for filter dropdown
+  const fetchAvailableCustomers = async () => {
     try {
       const { data, error } = await supabase
         .from("journal_entry_lines")
-        .select("class")
-        .not("class", "is", null);
+        .select("customer")
+        .not("customer", "is", null);
       if (error) throw error;
-      const classes = new Set<string>();
+      const customers = new Set<string>();
       data.forEach((row) => {
-        if (row.class && row.class.trim()) {
-          classes.add(row.class.trim());
+        if (row.customer && row.customer.trim()) {
+          customers.add(row.customer.trim());
         }
       });
-      setAvailableClasses(["All Classes", ...Array.from(classes).sort()]);
+      setAvailableCustomers(["All Customers", ...Array.from(customers).sort()]);
     } catch (err) {
-      console.error("Error fetching classes:", err);
+      console.error("Error fetching customers:", err);
     }
   };
 
   useEffect(() => {
-    fetchAvailableClasses();
+    fetchAvailableCustomers();
   }, []);
 
   // Fetch financial data from Supabase (same connection as other pages)
@@ -418,8 +418,8 @@ export default function FinancialOverviewPage() {
       const { startDate, endDate } = calculateDateRange();
       const monthIndex = monthsList.indexOf(selectedMonth);
       const year = Number.parseInt(selectedYear);
-      const selectedClassList = Array.from(selectedClasses).filter(
-        (c) => c !== "All Classes",
+      const selectedCustomerList = Array.from(selectedCustomers).filter(
+        (c) => c !== "All Customers",
       );
 
       console.log(
@@ -427,10 +427,10 @@ export default function FinancialOverviewPage() {
       );
       console.log(`📅 Date range: ${startDate} to ${endDate}`);
       console.log(
-        `🏢 Class Filter: ${
-          selectedClassList.length > 0
-            ? selectedClassList.join(", ")
-            : "All Classes"
+        `🏢 Customer Filter: ${
+          selectedCustomerList.length > 0
+            ? selectedCustomerList.join(", ")
+            : "All Customers"
         }`,
       );
 
@@ -462,8 +462,8 @@ export default function FinancialOverviewPage() {
         .lte("date", endDate)
         .order("date", { ascending: true });
 
-      if (selectedClassList.length > 0) {
-        currentQuery = currentQuery.in("class", selectedClassList);
+      if (selectedCustomerList.length > 0) {
+        currentQuery = currentQuery.in("customer", selectedCustomerList);
       }
 
       const { data: currentTransactions, error: currentError } =
@@ -521,8 +521,8 @@ export default function FinancialOverviewPage() {
         .lte("date", prevEndDate)
         .order("date", { ascending: true });
 
-      if (selectedClassList.length > 0) {
-        prevQuery = prevQuery.in("class", selectedClassList);
+      if (selectedCustomerList.length > 0) {
+        prevQuery = prevQuery.in("customer", selectedCustomerList);
       }
 
       const { data: prevTransactions, error: prevError } = await prevQuery;
@@ -585,8 +585,8 @@ export default function FinancialOverviewPage() {
           .lte("date", trendEndDate)
           .order("date", { ascending: true });
 
-        if (selectedClassList.length > 0) {
-          monthQuery = monthQuery.in("class", selectedClassList);
+        if (selectedCustomerList.length > 0) {
+          monthQuery = monthQuery.in("customer", selectedCustomerList);
         }
 
         const { data: monthData } = await monthQuery;
@@ -949,15 +949,15 @@ export default function FinancialOverviewPage() {
       setLoadingTrend(true);
       setTrendError(null);
       const endMonth = monthsList.indexOf(selectedMonth) + 1;
-      const selectedClassList = Array.from(selectedClasses).filter(
-        (c) => c !== "All Classes",
+      const selectedCustomerList = Array.from(selectedCustomers).filter(
+        (c) => c !== "All Customers",
       );
-      const classQuery =
-        selectedClassList.length > 0
-          ? `&classId=${encodeURIComponent(selectedClassList.join(","))}`
+      const customerQuery =
+        selectedCustomerList.length > 0
+          ? `&customerId=${encodeURIComponent(selectedCustomerList.join(","))}`
           : "";
       const res = await fetch(
-        `/api/organizations/${orgId}/trend-data?months=12&endMonth=${endMonth}&endYear=${selectedYear}${classQuery}`,
+        `/api/organizations/${orgId}/trend-data?months=12&endMonth=${endMonth}&endYear=${selectedYear}${customerQuery}`,
       );
       if (!res.ok) throw new Error("Failed to fetch trend data");
       const json: { monthlyData: MonthlyPoint[] } = await res.json();
@@ -1018,7 +1018,7 @@ export default function FinancialOverviewPage() {
     timePeriod,
     selectedMonth,
     selectedYear,
-    selectedClasses,
+    selectedCustomers,
     customStartDate,
     customEndDate,
   ]);
@@ -1584,9 +1584,9 @@ export default function FinancialOverviewPage() {
                     </CardTitle>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="relative" ref={classDropdownRef}>
+                    <div className="relative" ref={customerDropdownRef}>
                       <button
-                        onClick={() => setClassDropdownOpen(!classDropdownOpen)}
+                        onClick={() => setCustomerDropdownOpen(!customerDropdownOpen)}
                         className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
                         style={
                           {
@@ -1594,42 +1594,42 @@ export default function FinancialOverviewPage() {
                           } as React.CSSProperties
                         }
                       >
-                        Class: {Array.from(selectedClasses).join(", ")}
+                        Customer: {Array.from(selectedCustomers).join(", ")}
                         <ChevronDown className="w-4 h-4 ml-1" />
                       </button>
 
-                      {classDropdownOpen && (
+                      {customerDropdownOpen && (
                         <div className="absolute right-0 z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                          {availableClasses.map((cls) => (
+                          {availableCustomers.map((cust) => (
                             <label
-                              key={cls}
+                              key={cust}
                               className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
                             >
                               <input
                                 type="checkbox"
-                                checked={selectedClasses.has(cls)}
+                                checked={selectedCustomers.has(cust)}
                                 onChange={(e) => {
-                                  const newSelected = new Set(selectedClasses);
+                                  const newSelected = new Set(selectedCustomers);
                                   if (e.target.checked) {
-                                    if (cls === "All Classes") {
+                                    if (cust === "All Customers") {
                                       newSelected.clear();
-                                      newSelected.add("All Classes");
+                                      newSelected.add("All Customers");
                                     } else {
-                                      newSelected.delete("All Classes");
-                                      newSelected.add(cls);
+                                      newSelected.delete("All Customers");
+                                      newSelected.add(cust);
                                     }
                                   } else {
-                                    newSelected.delete(cls);
+                                    newSelected.delete(cust);
                                     if (newSelected.size === 0) {
-                                      newSelected.add("All Classes");
+                                      newSelected.add("All Customers");
                                     }
                                   }
-                                  setSelectedClasses(newSelected);
+                                  setSelectedCustomers(newSelected);
                                 }}
                                 className="mr-3 rounded"
                                 style={{ accentColor: BRAND_COLORS.primary }}
                               />
-                              {cls}
+                              {cust}
                             </label>
                           ))}
                         </div>

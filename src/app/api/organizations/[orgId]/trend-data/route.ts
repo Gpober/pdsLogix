@@ -40,7 +40,7 @@ interface Entry {
   account_type: string | null
   debit: number | string | null
   credit: number | string | null
-  customer?: string | null  // ← CHANGED from class to customer
+  customer?: string | null
 }
 
 export async function GET(req: Request) {
@@ -48,8 +48,8 @@ export async function GET(req: Request) {
   const months = Number.parseInt(url.searchParams.get("months") || "12", 10)
   const endMonth = Number.parseInt(url.searchParams.get("endMonth") || "1", 10)
   const endYear = Number.parseInt(url.searchParams.get("endYear") || "2024", 10)
-  const customerParam = url.searchParams.get("customerId")  // ← CHANGED from classId
-  const customerIds = customerParam  // ← CHANGED from classIds
+  const customerParam = url.searchParams.get("customerId")
+  const customerIds = customerParam
     ? customerParam
         .split(",")
         .map((c) => c.trim())
@@ -82,12 +82,12 @@ export async function GET(req: Request) {
 
     let query = supabase
       .from("journal_entry_lines")
-      .select("account_type,debit,credit,customer")  // ← CHANGED from class to customer
+      .select("account_type,debit,credit,customer")
       .gte("date", startDate)
       .lte("date", endDate)
 
-    if (customerIds.length > 0) {  // ← CHANGED from classIds
-      query = query.in("customer", customerIds)  // ← CHANGED from class to customer
+    if (customerIds.length > 0) {
+      query = query.in("customer", customerIds)
     }
 
     const { data, error } = await query
