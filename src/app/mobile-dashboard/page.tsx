@@ -70,6 +70,7 @@ interface JournalRow {
   vendor?: string | null;
   name?: string | null;
   entry_number?: string;
+  entry_bank_account?: string | null;
   invoice_number?: string | null;
 }
 
@@ -181,7 +182,7 @@ export default function EnhancedMobileDashboard() {
   }, []);
 
   const baseSelectColumns =
-    "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number";
+    "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number, entry_bank_account";
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -220,21 +221,9 @@ export default function EnhancedMobileDashboard() {
     };
   }, [cfData]);
 
-  // Enhanced classification function
-  const classifyTransaction = (
-    accountType: string | null,
-    reportCategory: string | null,
-  ) => {
+  // Cash flow classification (same logic as desktop)
+  const classifyCashFlowTransaction = (accountType: string | null) => {
     const typeLower = accountType?.toLowerCase() || "";
-    
-    if (reportCategory === "transfer") {
-      return "transfer";
-    }
-
-    const isReceivable =
-      typeLower.includes("accounts receivable") || typeLower.includes("a/r");
-    const isPayable =
-      typeLower.includes("accounts payable") || typeLower.includes("a/p");
 
     if (
       typeLower === "income" ||
@@ -242,8 +231,8 @@ export default function EnhancedMobileDashboard() {
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      isReceivable ||
-      isPayable
+      typeLower === "accounts receivable" ||
+      typeLower === "accounts payable"
     ) {
       return "operating";
     }
@@ -319,13 +308,14 @@ export default function EnhancedMobileDashboard() {
       const query = supabase
         .from("journal_entry_lines")
         .select(
-          "account_type, report_category, normal_balance, debit, credit, customer, date",
+          "account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account",
         )
         .gte("date", start)
         .lte("date", end);
       const { data } = await query;
       const map: Record<string, CustomerSummary> = {};
       ((data as JournalRow[]) || []).forEach((row) => {
+        if (!row.entry_bank_account) return;
         const cust = row.customer || "General";
         if (!map[cust]) {
           map[cust] = {
@@ -363,10 +353,7 @@ export default function EnhancedMobileDashboard() {
               ? debit - credit
               : row.normal_balance || credit - debit;
 
-          const classification = classifyTransaction(
-            row.account_type,
-            row.report_category,
-          );
+          const classification = classifyCashFlowTransaction(row.account_type);
 
           if (classification === "operating") {
             map[cust].operating = (map[cust].operating || 0) + cashImpact;
@@ -593,7 +580,7 @@ export default function EnhancedMobileDashboard() {
     let query = supabase
       .from("journal_entry_lines")
       .select(
-        "account, account_type, report_category, normal_balance, debit, credit, customer, date",
+        "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account",
       )
       .gte("date", start)
       .lte("date", end);
@@ -611,6 +598,7 @@ export default function EnhancedMobileDashboard() {
     const otherExp: Record<string, number> = {};
 
     ((data as JournalRow[]) || []).forEach((row) => {
+      if (!row.entry_bank_account) return;
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
 
@@ -670,6 +658,7 @@ export default function EnhancedMobileDashboard() {
     }
     const { data } = await query;
     const list: Transaction[] = ((data as JournalRow[]) || [])
+      .filter((row) => row.entry_bank_account)
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((row) => {
         const debit = Number(row.debit) || 0;
