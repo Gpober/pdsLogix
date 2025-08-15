@@ -72,6 +72,11 @@ interface JournalRow {
   entry_number?: string;
   invoice_number?: string | null;
   entry_bank_account?: string | null;
+  is_bank_account?: boolean | null;
+}
+
+interface CashJournalRow extends JournalRow {
+  cashFlowImpact: number;
 }
 
 interface JournalEntryLine {
@@ -165,6 +170,9 @@ export default function EnhancedMobileDashboard() {
     otherExpenses: [],
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [cfTransactionData, setCfTransactionData] = useState<
+    Map<string, CashJournalRow[]>
+  >(new Map());
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
@@ -601,11 +609,12 @@ export default function EnhancedMobileDashboard() {
     let query = supabase
       .from("journal_entry_lines")
       .select(
-        "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account"
+        "account, account_type, report_category, normal_balance, debit, credit, customer, date"
       )
       .gte("date", start)
       .lte("date", end)
-      .not("entry_bank_account", "is", null); // Only cash transactions
+      .not("entry_bank_account", "is", null) // Only cash transactions
+      .eq("is_bank_account", false); // Exclude checking accounts
       
     if (customerName) {
       query =
@@ -619,6 +628,7 @@ export default function EnhancedMobileDashboard() {
     const financing: Record<string, number> = {};
     const investing: Record<string, number> = {};
     const other: Record<string, number> = {};
+    const accountTransactions = new Map<string, CashJournalRow[]>();
 
     ((data as JournalRow[]) || []).forEach((row) => {
       // Skip transfers at customer level
@@ -635,6 +645,10 @@ export default function EnhancedMobileDashboard() {
       // Classify by cash flow activity, not account type
       const classification = classifyTransaction(row.account_type, row.report_category);
       const account = row.account;
+
+      const list = accountTransactions.get(account) || [];
+      list.push({ ...row, cashFlowImpact: cashImpact });
+      accountTransactions.set(account, list);
 
       if (classification === "operating") {
         operating[account] = (operating[account] || 0) + cashImpact;
@@ -670,59 +684,72 @@ export default function EnhancedMobileDashboard() {
 
     setCfData({
       income: operatingArr,        // Operating activities (was incorrectly using account types)
-      otherIncome: financingArr,   // Financing activities  
+      otherIncome: financingArr,   // Financing activities
       cogs: investingArr,          // Investing activities
       expenses: otherArr,          // Other activities
       otherExpenses: [],           // Not used in cash flow
     });
+    setCfTransactionData(accountTransactions);
   };
 
   const handleCategory = async (
     account: string,
     type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
   ) => {
+    if (reportType === "cf") {
+      const rows = cfTransactionData.get(account) || [];
+      const list: Transaction[] = rows
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((row) => ({
+          date: row.date,
+          amount: row.cashFlowImpact,
+          running: 0,
+          payee: row.customer || row.vendor || row.name || undefined,
+          memo: row.memo,
+          customer: row.customer,
+          entryNumber: row.entry_number,
+          invoiceNumber: row.invoice_number,
+        }));
+
+      let run = 0;
+      list.forEach((t) => {
+        run += t.amount;
+        t.running = run;
+      });
+
+      setTransactions(list);
+      setSelectedCategory(account);
+      setView("detail");
+      return;
+    }
+
     const { start, end } = getDateRange();
     const selectColumns = hasInvoiceNumber
       ? `${baseSelectColumns}, invoice_number`
       : baseSelectColumns;
-      
+
     let query = supabase
       .from("journal_entry_lines")
       .select(selectColumns)
       .eq("account", account)
       .gte("date", start)
       .lte("date", end);
-      
+
     if (selectedCustomer) {
       query =
         selectedCustomer === "Corporate"
           ? query.is("customer", null)
           : query.eq("customer", selectedCustomer);
     }
-    
+
     const { data } = await query;
     const list: Transaction[] = ((data as JournalRow[]) || [])
-      .filter((row) => {
-        // Skip transfers at customer level (same as main logic)
-        if (row.report_category === "transfer") {
-          return false;
-        }
-        return true;
-      })
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((row) => {
         const debit = Number(row.debit) || 0;
         const credit = Number(row.credit) || 0;
-        let amount = 0;
-        
-        if (reportType === "pl") {
-          // P&L logic - same as before
-          amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
-        } else {
-          // FIXED: Use the same cash flow logic as main page
-          amount = row.normal_balance || credit - debit;  // Normal for cash flow
-        }
-        
+        const amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
+
         return {
           date: row.date,
           amount,
@@ -2209,42 +2236,4 @@ export default function EnhancedMobileDashboard() {
       )}
     </div>
   );
-}${BRAND_COLORS.success}08`,
-                        borderRadius: '8px',
-                        border: `1px solid ${BRAND_COLORS.success}20`
-                      }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Revenue</span>
-                        <span style={{
-                          fontSize: '13px',
-                          fontWeight: '700',
-                          color: BRAND_COLORS.success,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                        }}>
-                          {formatCompactCurrency(p.revenue || 0)}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: `${BRAND_COLORS.warning}08`,
-                        borderRadius: '8px',
-                        border: `1px solid ${BRAND_COLORS.warning}20`
-                      }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>COGS</span>
-                        <span style={{
-                          fontSize: '13px',
-                          fontWeight: '700',
-                          color: BRAND_COLORS.warning,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                        }}>
-                          {formatCompactCurrency(p.cogs || 0)}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: `
+}
