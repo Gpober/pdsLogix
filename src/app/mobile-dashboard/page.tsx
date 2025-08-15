@@ -269,7 +269,7 @@ export default function EnhancedMobileDashboard() {
     const load = async () => {
       const { start, end } = getDateRange();
       const query = supabase
-        .from("financial_transactions")
+        .from("journal_entry_lines")
         .select(
           "account_type, report_category, normal_balance, debit, credit, class, date",
         )
@@ -481,7 +481,7 @@ export default function EnhancedMobileDashboard() {
   const loadPL = async (propertyName: string | null = selectedProperty) => {
     const { start, end } = getDateRange();
     let query = supabase
-      .from("financial_transactions")
+      .from("journal_entry_lines")
       .select("account, account_type, debit, credit, class, date")
       .gte("date", start)
       .lte("date", end);
@@ -515,7 +515,7 @@ export default function EnhancedMobileDashboard() {
   const loadCF = async (propertyName: string | null = selectedProperty) => {
     const { start, end } = getDateRange();
     let query = supabase
-      .from("financial_transactions")
+      .from("journal_entry_lines")
       .select(
         "account, account_type, report_category, normal_balance, debit, credit, class, date",
       )
@@ -575,7 +575,7 @@ export default function EnhancedMobileDashboard() {
   ) => {
     const { start, end } = getDateRange();
     let query = supabase
-      .from("financial_transactions")
+      .from("journal_entry_lines")
       .select(
         "date, debit, credit, account, class, report_category, normal_balance, memo, customer, vendor, name, entry_number",
       )
@@ -626,7 +626,7 @@ export default function EnhancedMobileDashboard() {
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return;
     const { data, error } = await supabase
-      .from("financial_transactions")
+      .from("journal_entry_lines")
       .select("date, account, memo, class, debit, credit")
       .eq("entry_number", entryNumber)
       .order("line_sequence");
