@@ -772,56 +772,6 @@ const handleCategory = async (
   setSelectedCategory(account);
   setView("detail");
 };
-    const { start, end } = getDateRange();
-    const selectColumns = hasInvoiceNumber
-      ? `${baseSelectColumns}, invoice_number`
-      : baseSelectColumns;
-
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(selectColumns)
-      .eq("account", account)
-      .gte("date", start)
-      .lte("date", end);
-
-    if (selectedCustomer) {
-      query =
-        selectedCustomer === "Corporate"
-          ? query.is("customer", null)
-          : query.eq("customer", selectedCustomer);
-    }
-
-    const { data } = await query;
-    const list: Transaction[] = ((data as JournalRow[]) || [])
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => {
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-        const amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
-
-        return {
-          date: row.date,
-          amount,
-          running: 0,
-          payee: row.customer || row.vendor || row.name,
-          memo: row.memo,
-          customer: row.customer,
-          entryNumber: row.entry_number,
-          invoiceNumber: row.invoice_number,
-        };
-      });
-      
-    let run = 0;
-    list.forEach((t) => {
-      run += t.amount;
-      t.running = run;
-    });
-    
-    setTransactions(list);
-    setSelectedCategory(account);
-    setView("detail");
-  };
-
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return;
     const { data, error } = await supabase
