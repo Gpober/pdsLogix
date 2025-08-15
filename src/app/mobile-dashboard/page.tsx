@@ -673,11 +673,11 @@ export default function EnhancedMobileDashboard() {
     .lte("date", end);
     
   if (selectedCustomer) {
-    query =
-      selectedCustomer === "General"
-        ? query.is("customer", null)
-        : query.eq("customer", selectedCustomer);
-  }
+  query =
+    selectedCustomer === "Corporate"
+      ? query.is("customer", null)
+      : query.eq("customer", selectedCustomer);
+}
   
   const { data } = await query;
   const list: Transaction[] = ((data as JournalRow[]) || [])
