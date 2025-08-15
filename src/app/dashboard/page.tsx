@@ -322,33 +322,28 @@ const classifyAccount = (accountType, accountDetailType, accountName) => {
   return null
 }
 
-// Hardcoded customers based on actual database data
-const HARDCODED_CUSTOMERS = [
-  "All Customers",
-  "Cleveland",
-  "Columbus IN",
-  "Detroit",
-  "General",
-  "Hastings MN",
-  "Lisbon",
-  "McHenry IL",
-  "Mokena IL",
-  "Pine Terrace",
-  "Rockford",
-  "Terra2",
-  "Terra3",
-  "Terraview",
-  "Wesley",
-]
+// Fallback list used only when customer queries fail
+// Avoid showing class/property names by default
+const HARDCODED_CUSTOMERS = ["All Customers"]
 
 // Fetch customers
 const fetchCustomers = async () => {
   try {
     // Try to fetch from dedicated Customers table first
-    const { data, error } = await supabase
+    // Table casing can differ between environments; try common variants
+    let { data, error } = await supabase
       .from("Customers")
       .select("display_name")
       .not("display_name", "is", null)
+
+    if ((error || !data || data.length === 0) && supabase) {
+      const lower = await supabase
+        .from("customers")
+        .select("display_name")
+        .not("display_name", "is", null)
+      data = lower.data
+      error = lower.error
+    }
 
     if (!error && data) {
       const customerNames = data
@@ -361,7 +356,7 @@ const fetchCustomers = async () => {
 
     // Fallback to using journal entry lines if Customers table not available
     const { data: fallbackData, error: fallbackError } = await supabase
-      .from("Journal_entry_lines")
+      .from("journal_entry_lines")
       .select("customer")
       .not("customer", "is", null)
 
@@ -1680,30 +1675,37 @@ export default function MobileResponsiveFinancialsPage() {
 
     // For detailed view or multiple periods (time-based trend)
     if (viewMode === "detailed" || timePeriod !== "Monthly" || viewMode !== "total") {
+      const isAllCustomers = selectedProperties.has("All Customers")
       const trendResult = timeSeriesData.periods
         .map((period) => {
           const periodData = timeSeriesData.data[period] || {}
+          const accounts = Object.values(periodData)
 
-          const revenue = Object.values(periodData)
-            .filter((item) => item.category === "Revenue")
-            .reduce((sum, item) => sum + item.total, 0)
+          const sumByCategory = (category) =>
+            accounts
+              .filter((item) => item.category === category)
+              .reduce((sum, item) => {
+                let amount = item.total
+                if (!isAllCustomers && item.entries) {
+                  amount = item.entries
+                    .filter((e) => selectedProperties.has(e.customer))
+                    .reduce((s, e) => s + (e.amount || 0), 0)
+                }
+                if (
+                  category === "COGS" ||
+                  category === "Operating Expenses" ||
+                  category === "Other Expenses"
+                ) {
+                  return sum + Math.abs(amount)
+                }
+                return sum + amount
+              }, 0)
 
-          const cogs = currentData
-            .filter((item) => item.category === "COGS")
-            .reduce((sum, item) => sum + Math.abs(item.total), 0)
-
-          const operatingExpenses = currentData
-            .filter((item) => item.category === "Operating Expenses")
-            .reduce((sum, item) => sum + Math.abs(item.total), 0)
-
-          const otherIncome = Object.values(periodData)
-            .filter((item) => item.category === "Other Income")
-            .reduce((sum, item) => sum + item.total, 0)
-
-          const otherExpenses = currentData
-            .filter((item) => item.category === "Other Expenses")
-            .reduce((sum, item) => sum + Math.abs(item.total), 0)
-
+          const revenue = sumByCategory("Revenue")
+          const cogs = sumByCategory("COGS")
+          const operatingExpenses = sumByCategory("Operating Expenses")
+          const otherIncome = sumByCategory("Other Income")
+          const otherExpenses = sumByCategory("Other Expenses")
           const netIncome = revenue - cogs - operatingExpenses + otherIncome - otherExpenses
 
           const result = {
@@ -1727,27 +1729,34 @@ export default function MobileResponsiveFinancialsPage() {
     // For single period (like Trailing 12 Total) - show overall totals as single point
     const singlePeriodKey = timeSeriesData.periods[0]
     const periodData = timeSeriesData.data[singlePeriodKey] || {}
+    const accounts = Object.values(periodData)
+    const isAllCustomers = selectedProperties.has("All Customers")
 
-    const revenue = Object.values(periodData)
-      .filter((item) => item.category === "Revenue")
-      .reduce((sum, item) => sum + item.total, 0)
+    const sumByCategory = (category) =>
+      accounts
+        .filter((item) => item.category === category)
+        .reduce((sum, item) => {
+          let amount = item.total
+          if (!isAllCustomers && item.entries) {
+            amount = item.entries
+              .filter((e) => selectedProperties.has(e.customer))
+              .reduce((s, e) => s + (e.amount || 0), 0)
+          }
+          if (
+            category === "COGS" ||
+            category === "Operating Expenses" ||
+            category === "Other Expenses"
+          ) {
+            return sum + Math.abs(amount)
+          }
+          return sum + amount
+        }, 0)
 
-    const cogs = Object.values(periodData)
-      .filter((item) => item.category === "COGS")
-      .reduce((sum, item) => sum + Math.abs(item.total), 0)
-
-    const operatingExpenses = Object.values(periodData)
-      .filter((item) => item.category === "Operating Expenses")
-      .reduce((sum, item) => sum + Math.abs(item.total), 0)
-
-    const otherIncome = Object.values(periodData)
-      .filter((item) => item.category === "Other Income")
-      .reduce((sum, item) => sum + item.total, 0)
-
-    const otherExpenses = Object.values(periodData)
-      .filter((item) => item.category === "Other Expenses")
-      .reduce((sum, item) => sum + Math.abs(item.total), 0)
-
+    const revenue = sumByCategory("Revenue")
+    const cogs = sumByCategory("COGS")
+    const operatingExpenses = sumByCategory("Operating Expenses")
+    const otherIncome = sumByCategory("Other Income")
+    const otherExpenses = sumByCategory("Other Expenses")
     const netIncome = revenue - cogs - operatingExpenses + otherIncome - otherExpenses
 
     const result = [
