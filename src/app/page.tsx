@@ -174,6 +174,9 @@ export default function FinancialOverviewPage() {
   const [propertyChartMetric, setPropertyChartMetric] = useState<
     "income" | "gp" | "ni" | "expenses" | "cogs"
   >("income");
+  const [customerChartType, setCustomerChartType] = useState<"pie" | "bar">(
+    "pie",
+  );
   const [loadingTrend, setLoadingTrend] = useState(false);
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
@@ -789,7 +792,7 @@ export default function FinancialOverviewPage() {
     const properties = {};
 
     transactions.forEach((transaction) => {
-      const property = transaction.class || "Unassigned";
+      const property = transaction.customer || "Unassigned";
       const category = classifyPLAccount(
         transaction.account_type,
         transaction.report_category,
@@ -1732,20 +1735,44 @@ export default function FinancialOverviewPage() {
                       Customer Performance
                     </CardTitle>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {metricOptions.map((m) => (
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {metricOptions.map((m) => (
+                        <Button
+                          key={m.key}
+                          className={`h-8 px-2 text-xs ${
+                            propertyChartMetric === m.key
+                              ? ""
+                              : "bg-white text-gray-700 border border-gray-200"
+                          }`}
+                          onClick={() => setPropertyChartMetric(m.key)}
+                        >
+                          {m.label}
+                        </Button>
+                      ))}
+                    </div>
+                    <div className="flex gap-1">
                       <Button
-                        key={m.key}
-                        className={`h-8 px-2 text-xs ${
-                          propertyChartMetric === m.key
+                        className={`h-8 w-8 p-0 ${
+                          customerChartType === "pie"
                             ? ""
                             : "bg-white text-gray-700 border border-gray-200"
                         }`}
-                        onClick={() => setPropertyChartMetric(m.key)}
+                        onClick={() => setCustomerChartType("pie")}
                       >
-                        {m.label}
+                        <PieChart className="h-4 w-4" />
                       </Button>
-                    ))}
+                      <Button
+                        className={`h-8 w-8 p-0 ${
+                          customerChartType === "bar"
+                            ? ""
+                            : "bg-white text-gray-700 border border-gray-200"
+                        }`}
+                        onClick={() => setCustomerChartType("bar")}
+                      >
+                        <BarChart3 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -1772,39 +1799,52 @@ export default function FinancialOverviewPage() {
                   )}
                   {!loadingProperty && propertyChartData.length > 0 && (
                     <ResponsiveContainer width="100%" height={300}>
-                      <RechartsPieChart>
-                        <Pie
-                          data={propertyChartData}
-                          dataKey="value"
-                          nameKey="name"
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={40}
-                          outerRadius={100}
-                          paddingAngle={2}
-                        >
-                          {propertyChartData.map((entry, index) => (
-                            <Cell
-                              key={`cell-${index}`}
-                              fill={
-                                [
-                                  BRAND_COLORS.primary,
-                                  BRAND_COLORS.secondary,
-                                  BRAND_COLORS.tertiary,
-                                  BRAND_COLORS.accent,
-                                  BRAND_COLORS.success,
-                                  BRAND_COLORS.warning,
-                                  "#8884d8",
-                                  "#82ca9d",
-                                ][index % 8]
-                              }
-                              stroke="#fff"
-                            />
-                          ))}
-                        </Pie>
-                        <Tooltip content={<PropertyTooltip />} />
-                        <Legend />
-                      </RechartsPieChart>
+                      {customerChartType === "pie" ? (
+                        <RechartsPieChart>
+                          <Pie
+                            data={propertyChartData}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={40}
+                            outerRadius={100}
+                            paddingAngle={2}
+                          >
+                            {propertyChartData.map((entry, index) => (
+                              <Cell
+                                key={`cell-${index}`}
+                                fill={
+                                  [
+                                    BRAND_COLORS.primary,
+                                    BRAND_COLORS.secondary,
+                                    BRAND_COLORS.tertiary,
+                                    BRAND_COLORS.accent,
+                                    BRAND_COLORS.success,
+                                    BRAND_COLORS.warning,
+                                    "#8884d8",
+                                    "#82ca9d",
+                                  ][index % 8]
+                                }
+                                stroke="#fff"
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<PropertyTooltip />} />
+                          <Legend />
+                        </RechartsPieChart>
+                      ) : (
+                        <BarChart data={propertyChartData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" />
+                          <YAxis />
+                          <Tooltip
+                            formatter={(value) => formatCurrency(value as number)}
+                          />
+                          <Legend />
+                          <Bar dataKey="value" fill={BRAND_COLORS.primary} />
+                        </BarChart>
+                      )}
                     </ResponsiveContainer>
                   )}
                 </CardContent>
