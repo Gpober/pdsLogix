@@ -12,36 +12,7 @@ import {
   Target,
   type LucideIcon,
 } from "lucide-react";
-
-// Mock supabase client for demo
-const supabase = {
-  from: (table: string) => ({
-    select: (fields: string) => ({
-      gte: (field: string, value: string) => ({
-        lte: (field: string, value: string) => ({
-          eq: (field: string, value: string) => Promise.resolve({ data: [] }),
-          is: (field: string, value: null) => Promise.resolve({ data: [] })
-        }),
-        eq: (field: string, value: string) => ({
-          order: (field: string) => Promise.resolve({ data: [] })
-        })
-      }),
-      lte: (field: string, value: string) => ({
-        eq: (field: string, value: string) => ({
-          order: (field: string) => Promise.resolve({ data: [] })
-        }),
-        is: (field: string, value: null) => Promise.resolve({ data: [] })
-      }),
-      eq: (field: string, value: string) => ({
-        gte: (field: string, value: string) => ({
-          lte: (field: string, value: string) => ({
-            order: (field: string) => Promise.resolve({ data: [] })
-          })
-        })
-      })
-    })
-  })
-};
+import { supabase } from "@/lib/supabaseClient";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
