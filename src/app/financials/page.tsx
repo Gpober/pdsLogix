@@ -1677,7 +1677,7 @@ export default function FinancialsPage() {
                   } as React.CSSProperties
                 }
               >
-                Properties: {Array.from(selectedProperties).join(", ")}
+                Customers: {Array.from(selectedProperties).join(", ")}
                 <ChevronDown className="w-4 h-4 ml-2" />
               </button>
 
