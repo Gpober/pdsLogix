@@ -345,7 +345,7 @@ const HARDCODED_CUSTOMERS = [
 const fetchCustomers = async () => {
   try {
     const { data, error } = await supabase
-      .from("Journal_entry_lines")
+      .from("journal_entry_lines")
       .select("customer")
       .not("customer", "is", null)
 
