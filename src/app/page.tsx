@@ -1070,16 +1070,6 @@ export default function FinancialOverviewPage() {
       .sort((a, b) => b.value - a.value);
   }, [propertyData, propertyChartMetric]);
 
-  const customerLegendPayload = useMemo(
-    () =>
-      propertyChartData.slice(0, 15).map((entry, index) => ({
-        value: entry.name,
-        type: "square",
-        color: CHART_COLORS[index % CHART_COLORS.length],
-      })),
-    [propertyChartData],
-  );
-
   const totalPropertyValue = useMemo(
     () => propertyChartData.reduce((sum, p) => sum + p.value, 0),
     [propertyChartData],
@@ -1843,17 +1833,15 @@ export default function FinancialOverviewPage() {
                             ))}
                           </Pie>
                           <Tooltip content={<PropertyTooltip />} />
-                          <Legend payload={customerLegendPayload} />
                         </RechartsPieChart>
                       ) : (
                         <BarChart data={propertyChartData}>
                           <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="name" />
+                          <XAxis dataKey="name" hide />
                           <YAxis />
                           <Tooltip
                             formatter={(value) => formatCurrency(value as number)}
                           />
-                          <Legend payload={customerLegendPayload} />
                           <Bar dataKey="value">
                             {propertyChartData.map((entry, index) => (
                               <Cell
