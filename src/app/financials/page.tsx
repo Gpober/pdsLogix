@@ -221,7 +221,7 @@ export default function FinancialsPage() {
   const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
   const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
   const [selectedProperties, setSelectedProperties] = useState<Set<string>>(
-    new Set(["All Properties"]),
+    new Set(["All Customers"]),
   );
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
@@ -232,7 +232,7 @@ export default function FinancialsPage() {
   const [plAccounts, setPlAccounts] = useState<PLAccount[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
   const [availableProperties, setAvailableProperties] = useState<string[]>([
-    "All Properties",
+    "All Customers",
   ]);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [transactionModalTitle, setTransactionModalTitle] = useState("");
@@ -493,7 +493,7 @@ export default function FinancialsPage() {
     try {
       const { startDate, endDate } = calculateDateRange();
       const selectedProperty =
-        Array.from(selectedProperties)[0] || "All Properties";
+        Array.from(selectedProperties)[0] || "All Customers";
 
       smartLog(`🔍 TIMEZONE-INDEPENDENT P&L DATA FETCH`);
       smartLog(`📅 Period: ${startDate} to ${endDate}`);
@@ -528,7 +528,7 @@ export default function FinancialsPage() {
         .order("date", { ascending: true });
 
       // Apply property filter
-      if (selectedProperty !== "All Properties") {
+      if (selectedProperty !== "All Customers") {
         query = query.eq("customer", selectedProperty);
       }
 
@@ -570,11 +570,11 @@ export default function FinancialsPage() {
       smartLog(`📈 Filtered to ${plTransactions.length} P&L transactions`);
       smartLog(`🔍 Sample P&L transactions:`, plTransactions.slice(0, 5));
 
-      // Get unique properties for filter dropdown using 'class' field
+      // Get unique customers for filter dropdown using 'customer' field
       const properties = new Set<string>();
       plTransactions.forEach((tx) => {
         if (tx.customer && tx.customer.trim()) {
-          properties.add(tx.class.trim());
+          properties.add(tx.customer.trim());
         }
       });
       setAvailableProperties([
@@ -1227,7 +1227,7 @@ export default function FinancialsPage() {
     if (viewMode === "Total") {
       return [];
     } else if (viewMode === "Customer") {
-      return availableProperties.filter((p) => p !== "All Properties");
+      return availableProperties.filter((p) => p !== "All Customers");
     } else if (viewMode === "Detail") {
       // For Detail view, show months in the date range using timezone-independent method
       const { startDate, endDate } = calculateDateRange();
@@ -1276,10 +1276,10 @@ export default function FinancialsPage() {
       ];
     }
 
-    if (viewMode === "Class") {
+    if (viewMode === "Customer") {
       // Filter transactions by property and calculate total
       const filteredTransactions = transactions.filter(
-        (tx) => tx.class === header,
+        (tx) => tx.customer === header,
       );
       const credits = filteredTransactions.reduce((sum, tx) => {
         const creditValue = tx.credit
@@ -1372,9 +1372,9 @@ export default function FinancialsPage() {
       });
     }
 
-    // Filter by property if specified (Class view)
-    if (property && viewMode === "Class") {
-      transactions = transactions.filter((tx) => tx.class === property);
+    // Filter by property if specified (Customer view)
+    if (property && viewMode === "Customer") {
+      transactions = transactions.filter((tx) => tx.customer === property);
     }
 
     let title = subAccount
@@ -1694,17 +1694,17 @@ export default function FinancialsPage() {
                         onChange={(e) => {
                           const newSelected = new Set(selectedProperties);
                           if (e.target.checked) {
-                            if (property === "All Properties") {
+                            if (property === "All Customers") {
                               newSelected.clear();
-                              newSelected.add("All Properties");
+                              newSelected.add("All Customers");
                             } else {
-                              newSelected.delete("All Properties");
+                              newSelected.delete("All Customers");
                               newSelected.add(property);
                             }
                           } else {
                             newSelected.delete(property);
                             if (newSelected.size === 0) {
-                              newSelected.add("All Properties");
+                              newSelected.add("All Customers");
                             }
                           }
                           setSelectedProperties(newSelected);
@@ -1758,10 +1758,10 @@ export default function FinancialsPage() {
   }`}
   style={{
     backgroundColor:
-      viewMode === "Customer" ? BRAND_COLORS.primary : undefined,  // ← Changed from "Class" to "Customer"
+      viewMode === "Customer" ? BRAND_COLORS.primary : undefined,  // ← Changed from "Customer" to "Customer"
   }}
 >
-  Customer  {/* ← Changed from "Class" to "Customer" */}
+  Customer  {/* ← Changed from "Customer" to "Customer" */}
 </button>
             </div>
 
@@ -1923,7 +1923,7 @@ export default function FinancialsPage() {
                   {plAccounts.length} accounts • Timezone-independent date
                   handling • Using account_type for P&L classification
                   {viewMode === "Detail" && " • Monthly breakdown"}
-                  {viewMode === "Class" && " • By property"}
+                  {viewMode === "Customer" && " • By property"}
                 </p>
               </div>
 
@@ -2035,7 +2035,7 @@ export default function FinancialsPage() {
                                       viewMode === "Detail"
                                         ? header
                                         : undefined,
-                                      viewMode === "Class" ? header : undefined,
+                                      viewMode === "Customer" ? header : undefined,
                                       !expandedAccounts.has(
                                         group.account.account,
                                       ), // Show combined if collapsed
@@ -2111,7 +2111,7 @@ export default function FinancialsPage() {
                                           viewMode === "Detail"
                                             ? header
                                             : undefined,
-                                          viewMode === "Class"
+                                          viewMode === "Customer"
                                             ? header
                                             : undefined,
                                         )
@@ -2251,7 +2251,7 @@ export default function FinancialsPage() {
                                       viewMode === "Detail"
                                         ? header
                                         : undefined,
-                                      viewMode === "Class" ? header : undefined,
+                                      viewMode === "Customer" ? header : undefined,
                                       !expandedAccounts.has(
                                         group.account.account,
                                       ), // Show combined if collapsed
@@ -2327,7 +2327,7 @@ export default function FinancialsPage() {
                                           viewMode === "Detail"
                                             ? header
                                             : undefined,
-                                          viewMode === "Class"
+                                          viewMode === "Customer"
                                             ? header
                                             : undefined,
                                         )
@@ -2583,7 +2583,7 @@ export default function FinancialsPage() {
                                       viewMode === "Detail"
                                         ? header
                                         : undefined,
-                                      viewMode === "Class" ? header : undefined,
+                                      viewMode === "Customer" ? header : undefined,
                                       !expandedAccounts.has(
                                         group.account.account,
                                       ), // Show combined if collapsed
@@ -2659,7 +2659,7 @@ export default function FinancialsPage() {
                                           viewMode === "Detail"
                                             ? header
                                             : undefined,
-                                          viewMode === "Class"
+                                          viewMode === "Customer"
                                             ? header
                                             : undefined,
                                         )
@@ -2929,7 +2929,7 @@ export default function FinancialsPage() {
                         Amount
                       </th>
                       <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Class
+                        Customer
                       </th>
                     </tr>
                   </thead>
@@ -2978,9 +2978,9 @@ export default function FinancialsPage() {
                             {formatCurrency(Math.abs(netAmount))}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-center">
-                            {transaction.class && (
+                            {transaction.customer && (
                               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                {transaction.class}
+                                {transaction.customer}
                               </span>
                             )}
                           </td>
@@ -3020,7 +3020,7 @@ export default function FinancialsPage() {
                       Memo
                     </th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Class
+                      Customer
                     </th>
                     <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Debit
@@ -3038,7 +3038,7 @@ export default function FinancialsPage() {
                       </td>
                       <td className="px-4 py-2 text-sm text-gray-900">{line.account}</td>
                       <td className="px-4 py-2 text-sm text-gray-500">{line.memo || ""}</td>
-                      <td className="px-4 py-2 text-sm text-gray-500">{line.class || ""}</td>
+                      <td className="px-4 py-2 text-sm text-gray-500">{line.customer || ""}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-red-600">
                         {formatCurrency(Number.parseFloat(line.debit?.toString() || "0"))}
                       </td>

@@ -50,7 +50,7 @@ interface JournalEntryLine {
   date: string
   account: string
   memo: string | null
-  class: string | null
+  customer: string | null
   debit: string | number | null
   credit: string | number | null
 }
@@ -133,7 +133,7 @@ export default function CashFlowPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>("June")
   const [selectedYear, setSelectedYear] = useState<string>("2024")
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly")
-  const [selectedProperty, setSelectedProperty] = useState("All Properties")
+  const [selectedProperty, setSelectedProperty] = useState("All Customers")
   const [selectedBankAccount, setSelectedBankAccount] = useState("All Bank Accounts")
   const [viewMode, setViewMode] = useState<ViewMode>("offset")
   const [periodType, setPeriodType] = useState<PeriodType>("monthly")
@@ -176,7 +176,7 @@ export default function CashFlowPage() {
   const [bankAccountData, setBankAccountData] = useState<BankAccountData[]>([])
 
   // Common state
-  const [availableProperties, setAvailableProperties] = useState<string[]>(["All Properties"])
+  const [availableProperties, setAvailableProperties] = useState<string[]>(["All Customers"])
   const [availableBankAccounts, setAvailableBankAccounts] = useState<string[]>(["All Bank Accounts"])
   const [error, setError] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
@@ -692,23 +692,23 @@ export default function CashFlowPage() {
     return "Trailing 12 Months"
   }
 
-  // ENHANCED: Fetch available properties and bank accounts using new fields
+  // ENHANCED: Fetch available customers and bank accounts using new fields
   const fetchFilters = async () => {
     try {
-      // Fetch properties from 'class' field
+      // Fetch customers from 'customer' field
       const { data: propertyData, error: propertyError } = await supabase
         .from("journal_entry_lines")
         .select("class")
-        // .not("class", "is", null)
+        // .not("customer", "is", null)
 
       if (propertyError) throw propertyError
 
       const properties = new Set<string>()
       propertyData.forEach((row: any) => {
-        if (row.class) properties.add(row.class)
+        if (row.customer) properties.add(row.customer)
       })
 
-      setAvailableProperties(["All Properties", ...Array.from(properties).sort()])
+      setAvailableProperties(["All Customers", ...Array.from(properties).sort()])
 
       // ENHANCED: Fetch bank accounts using entry_bank_account field
       const { data: bankData, error: bankError } = await supabase
@@ -746,7 +746,7 @@ export default function CashFlowPage() {
 
       console.log(`🔍 CASH FLOW BY BANK ACCOUNT - Using Enhanced Database`)
       console.log(`📅 Period: ${startDate} to ${endDate}`)
-      console.log(`🏢 Property Filter: "${selectedProperty}"`)
+      console.log(`🏢 Customer Filter: "${selectedProperty}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
       // FIXED QUERY: Corrected transfer toggle logic
@@ -768,8 +768,8 @@ export default function CashFlowPage() {
         query = query.eq("is_cash_account", false).neq("report_category", "transfer")
       }
 
-      if (selectedProperty !== "All Properties") {
-        query = query.eq("class", selectedProperty)
+      if (selectedProperty !== "All Customers") {
+        query = query.eq("customer", selectedProperty)
       }
 
       const { data: cashFlowTransactions, error } = await query
@@ -894,7 +894,7 @@ export default function CashFlowPage() {
 
       console.log(`🔍 CASH FLOW OFFSET VIEW - Using Enhanced Database`)
       console.log(`📅 Period: ${startDate} to ${endDate}`)
-      console.log(`🏢 Property Filter: "${selectedProperty}"`)
+      console.log(`🏢 Customer Filter: "${selectedProperty}"`)
       console.log(`🏦 Bank Account Filter: "${selectedBankAccount}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
@@ -917,8 +917,8 @@ export default function CashFlowPage() {
         query = query.eq("is_cash_account", false).neq("report_category", "transfer")
       }
 
-      if (selectedProperty !== "All Properties") {
-        query = query.eq("class", selectedProperty)
+      if (selectedProperty !== "All Customers") {
+        query = query.eq("customer", selectedProperty)
       }
 
       if (selectedBankAccount !== "All Bank Accounts") {
@@ -1067,7 +1067,7 @@ export default function CashFlowPage() {
 
       console.log(`🔍 CASH FLOW TRADITIONAL VIEW - Using Enhanced Database`)
       console.log(`📅 Period: ${startDate} to ${endDate}`)
-      console.log(`🏢 Property Filter: "${selectedProperty}"`)
+      console.log(`🏢 Customer Filter: "${selectedProperty}"`)
       console.log(`🏦 Bank Account Filter: "${selectedBankAccount}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
@@ -1090,8 +1090,8 @@ export default function CashFlowPage() {
         query = query.eq("is_cash_account", false).neq("report_category", "transfer")
       }
 
-      if (selectedProperty !== "All Properties") {
-        query = query.eq("class", selectedProperty)
+      if (selectedProperty !== "All Customers") {
+        query = query.eq("customer", selectedProperty)
       }
 
       if (selectedBankAccount !== "All Bank Accounts") {
@@ -1108,7 +1108,7 @@ export default function CashFlowPage() {
       const propertyTransactions = new Map<string, any[]>()
 
       cashFlowTransactions.forEach((tx: any) => {
-        const property = tx.class || "Unclassified"
+        const property = tx.customer || "Unclassified"
         if (!propertyTransactions.has(property)) {
           propertyTransactions.set(property, [])
         }
@@ -1204,7 +1204,7 @@ export default function CashFlowPage() {
         customer: tx.customer,
         vendor: tx.vendor,
         name: tx.name,
-        class: tx.class,
+        customer: tx.customer,
         bankAccount: tx.entry_bank_account,
         accountType: tx.account_type,
         reportCategory: tx.report_category,
@@ -1245,7 +1245,7 @@ export default function CashFlowPage() {
         customer: tx.customer,
         vendor: tx.vendor,
         name: tx.name,
-        class: tx.class,
+        customer: tx.customer,
         bankAccount: tx.entry_bank_account,
         accountType: tx.account_type,
         reportCategory: tx.report_category,
@@ -1395,7 +1395,6 @@ export default function CashFlowPage() {
         customer: row.customer,
         vendor: row.vendor,
         name: row.name,
-        class: row.class,
       }))
 
       setTransactionDetails(transactionDetails)
@@ -1721,7 +1720,7 @@ export default function CashFlowPage() {
               </div>
             )}
 
-            {/* Property Filter */}
+            {/* Customer Filter */}
             <select
               value={selectedProperty}
               onChange={(e) => setSelectedProperty(e.target.value)}
@@ -1803,7 +1802,7 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedProperty !== "All Properties" && (
+                  {selectedProperty !== "All Customers" && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
                       Property: {selectedProperty}
                     </span>
@@ -1948,7 +1947,7 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedProperty !== "All Properties" && (
+                  {selectedProperty !== "All Customers" && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
                       Property: {selectedProperty}
                     </span>
@@ -2864,7 +2863,7 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedProperty !== "All Properties" && (
+                  {selectedProperty !== "All Customers" && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
                       Property: {selectedProperty}
                     </span>
@@ -3235,7 +3234,7 @@ export default function CashFlowPage() {
                         Amount
                       </th>
                       <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Class
+                        Customer
                       </th>
                     </tr>
                   </thead>
@@ -3269,9 +3268,9 @@ export default function CashFlowPage() {
                           {formatCurrency(transaction.impact)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
-                          {transaction.class && (
+                          {transaction.customer && (
                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                              {transaction.class}
+                              {transaction.customer}
                             </span>
                           )}
                         </td>
@@ -3310,7 +3309,7 @@ export default function CashFlowPage() {
                       Memo
                     </th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Class
+                      Customer
                     </th>
                     <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Debit
@@ -3328,7 +3327,7 @@ export default function CashFlowPage() {
                       </td>
                       <td className="px-4 py-2 text-sm text-gray-900">{line.account}</td>
                       <td className="px-4 py-2 text-sm text-gray-500">{line.memo || ""}</td>
-                      <td className="px-4 py-2 text-sm text-gray-500">{line.class || ""}</td>
+                      <td className="px-4 py-2 text-sm text-gray-500">{line.customer || ""}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-red-600">
                         {formatCurrency(Number.parseFloat(line.debit?.toString() || "0"))}
                       </td>

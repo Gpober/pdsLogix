@@ -323,7 +323,7 @@ const classifyAccount = (accountType, accountDetailType, accountName) => {
 
 // Hardcoded properties based on actual database data
 const HARDCODED_PROPERTIES = [
-  "All Properties",
+  "All Customers",
   "Cleveland",
   "Columbus IN",
   "Detroit",
@@ -349,11 +349,11 @@ const fetchProperties = async () => {
 
     if (response.ok) {
       const data = await response.json()
-      const classValues = data.map((item) => item.class).filter((cls) => cls && cls.trim() !== "")
+      const classValues = data.map((item) => item.customer).filter((cls) => cls && cls.trim() !== "")
 
       const uniqueClasses = [...new Set(classValues)].sort()
       const allProperties = [...new Set([...HARDCODED_PROPERTIES.slice(1), ...uniqueClasses])].sort()
-      const result = ["All Properties", ...allProperties]
+      const result = ["All Customers", ...allProperties]
 
       return result
     }
@@ -366,7 +366,7 @@ const fetchProperties = async () => {
 }
 
 // ENHANCED: Time series data fetching with Property Dimension support
-const fetchTimeSeriesData = async (property = "All Properties", monthYear, timePeriod, viewMode, onDataValidation) => {
+const fetchTimeSeriesData = async (property = "All Customers", monthYear, timePeriod, viewMode, onDataValidation) => {
   try {
     const perfStart = performanceTracker.startTime("fetchTimeSeriesData")
     smartLog("🔍 FETCHING TIME SERIES DATA:", { property, monthYear, timePeriod, viewMode })
@@ -584,7 +584,7 @@ const fetchTimeSeriesData = async (property = "All Properties", monthYear, timeP
 
       // FIXED: For by-property view, NEVER filter by property - we need ALL property data
       // Only filter by property for non-by-property views
-      if (viewMode !== "by-property" && property !== "All Properties") {
+      if (viewMode !== "by-property" && property !== "All Customers") {
         url += `&class=eq.${encodeURIComponent(property)}`
       }
 
@@ -613,7 +613,7 @@ const fetchTimeSeriesData = async (property = "All Properties", monthYear, timeP
         if (viewMode === "by-property") {
           // Get available properties from the data
           const propertiesInData = [
-            ...new Set(rawData.map((row) => row.class).filter((cls) => cls && cls.trim() !== "")),
+            ...new Set(rawData.map((row) => row.customer).filter((cls) => cls && cls.trim() !== "")),
           ].sort()
           if (availableProperties.length === 0) {
             availableProperties = propertiesInData
@@ -628,7 +628,7 @@ const fetchTimeSeriesData = async (property = "All Properties", monthYear, timeP
           // Group by account first, then by property within each account
           const groupedByAccount = rawData.reduce((acc, row) => {
             const accountName = row.account || "Unknown Account"
-            const propertyName = row.class || "No Property"
+            const propertyName = row.customer || "No Property"
 
             const category = classifyAccount(row.account_type, row.account_detail_type, accountName)
             if (category === null) {
@@ -670,7 +670,7 @@ const fetchTimeSeriesData = async (property = "All Properties", monthYear, timeP
             accountsGrouped: Object.keys(groupedByAccount).length,
             sampleAccount: Object.keys(groupedByAccount)[0],
             sampleData: groupedByAccount[Object.keys(groupedByAccount)[0]],
-            availableProperties: propertiesInData,
+            availableCustomers: propertiesInData,
           })
 
           allData[range.label] = groupedByAccount
@@ -780,11 +780,11 @@ const fetchTimeSeriesData = async (property = "All Properties", monthYear, timeP
         success: true,
         data: { "Trailing 12 Months": aggregatedData },
         periods: ["Trailing 12 Months"],
-        availableProperties: allAvailableProperties.sort(),
+        availableCustomers: allAvailableProperties.sort(),
         summary: {
           timePeriod,
           viewMode,
-          property: property === "All Properties" ? "ALL PROPERTIES" : property,
+          property: property === "All Customers" ? "ALL PROPERTIES" : property,
           dateRanges: [
             {
               start: dateRanges[0].start,
@@ -835,11 +835,11 @@ const fetchTimeSeriesData = async (property = "All Properties", monthYear, timeP
         success: true,
         data: { "Trailing 12 Months": aggregatedData },
         periods: ["Trailing 12 Months"],
-        availableProperties: viewMode === "by-property" ? availableProperties : [],
+        availableCustomers: viewMode === "by-property" ? availableProperties : [],
         summary: {
           timePeriod,
           viewMode,
-          property: property === "All Properties" ? "ALL PROPERTIES" : property,
+          property: property === "All Customers" ? "ALL PROPERTIES" : property,
           dateRanges: [
             {
               start: dateRanges[0].start,
@@ -861,11 +861,11 @@ const fetchTimeSeriesData = async (property = "All Properties", monthYear, timeP
       success: true,
       data: allData,
       periods: dateRanges.map((r) => r.label),
-      availableProperties: viewMode === "by-property" ? availableProperties : [],
+      availableCustomers: viewMode === "by-property" ? availableProperties : [],
       summary: {
         timePeriod,
         viewMode,
-        property: property === "All Properties" ? "ALL PROPERTIES" : property,
+        property: property === "All Customers" ? "ALL PROPERTIES" : property,
         dateRanges: dateRanges,
         totalEntriesProcessed,
         periodsGenerated: dateRanges.length,
@@ -932,7 +932,7 @@ export default function MobileResponsiveFinancialsPage() {
   const [viewMode, setViewMode] = useState("by-property") // Default to by-property
   const [notification, setNotification] = useState({ show: false, message: "", type: "info" })
   const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false)
-  const [selectedProperties, setSelectedProperties] = useState(new Set(["All Properties"]))
+  const [selectedProperties, setSelectedProperties] = useState(new Set(["All Customers"]))
   const [propertyDropdownOpen, setPropertyDropdownOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
@@ -1037,9 +1037,9 @@ export default function MobileResponsiveFinancialsPage() {
               </select>
             </div>
 
-            {/* Properties multiselect */}
+            {/* Customers multiselect */}
             <div>
-              <div className="text-xs text-gray-600 mb-1">Properties</div>
+              <div className="text-xs text-gray-600 mb-1">Customers</div>
               <button
                 className="w-full rounded-md border px-3 py-2 text-sm text-left"
                 onClick={() => setPropertyDropdownOpen((v) => !v)}
@@ -1160,20 +1160,20 @@ export default function MobileResponsiveFinancialsPage() {
       setIsLoadingData(true)
       setDataError(null)
 
-      // FIXED: For by-property view, always use 'All Properties' to get all data
-      let propertyFilter = "All Properties"
-      if (viewMode !== "by-property" && selectedProperties.size > 0 && !selectedProperties.has("All Properties")) {
+      // FIXED: For by-property view, always use 'All Customers' to get all data
+      let propertyFilter = "All Customers"
+      if (viewMode !== "by-property" && selectedProperties.size > 0 && !selectedProperties.has("All Customers")) {
         propertyFilter = Array.from(selectedProperties)[0]
       }
 
       smartLog("🔍 LOADING DATA WITH FILTERS:", {
-        selectedProperties: Array.from(selectedProperties),
+        selectedCustomers: Array.from(selectedProperties),
         propertyFilter,
         month: selectedMonth,
         timePeriod,
         viewMode,
         note:
-          viewMode === "by-property" ? "FORCING All Properties for by-property view" : "Using selected property filter",
+          viewMode === "by-property" ? "FORCING All Customers for by-property view" : "Using selected property filter",
       })
 
       const timeSeriesResult = await fetchTimeSeriesData(
@@ -1195,7 +1195,7 @@ export default function MobileResponsiveFinancialsPage() {
       const propertyText =
         viewMode === "by-property"
           ? "all properties (by-property view)"
-          : selectedProperties.has("All Properties")
+          : selectedProperties.has("All Customers")
             ? "all property classes"
             : `${selectedProperties.size} selected property classes`
 
@@ -1212,11 +1212,11 @@ export default function MobileResponsiveFinancialsPage() {
   const handlePropertyToggle = (property) => {
     const newSelected = new Set(selectedProperties)
 
-    if (property === "All Properties") {
+    if (property === "All Customers") {
       newSelected.clear()
-      newSelected.add("All Properties")
+      newSelected.add("All Customers")
     } else {
-      newSelected.delete("All Properties")
+      newSelected.delete("All Customers")
 
       if (newSelected.has(property)) {
         newSelected.delete(property)
@@ -1225,7 +1225,7 @@ export default function MobileResponsiveFinancialsPage() {
       }
 
       if (newSelected.size === 0) {
-        newSelected.add("All Properties")
+        newSelected.add("All Customers")
       }
     }
 
@@ -1234,13 +1234,13 @@ export default function MobileResponsiveFinancialsPage() {
   }
 
   const getSelectedPropertiesText = () => {
-    if (selectedProperties.has("All Properties") || selectedProperties.size === 0) {
-      return "All Property Classes"
+    if (selectedProperties.has("All Customers") || selectedProperties.size === 0) {
+      return "All Customer"
     }
     if (selectedProperties.size === 1) {
       return Array.from(selectedProperties)[0]
     }
-    return `${selectedProperties.size} Property Classes Selected`
+    return `${selectedProperties.size} Customer Selected`
   }
 
   // Helper functions
@@ -1479,7 +1479,7 @@ export default function MobileResponsiveFinancialsPage() {
           periodKey: firstPeriodKey,
           accountCount: result.length,
           sampleAccount: result[0],
-          availableProperties: timeSeriesData.availableProperties,
+          availableCustomers: timeSeriesData.availableProperties,
         })
 
         return result
@@ -1595,7 +1595,7 @@ export default function MobileResponsiveFinancialsPage() {
       viewMode,
       periods: timeSeriesData.periods,
       dataKeys: Object.keys(timeSeriesData.data),
-      availableProperties: timeSeriesData.availableProperties,
+      availableCustomers: timeSeriesData.availableProperties,
     })
 
     // For by-property view with multiple properties, show property breakdown
@@ -1804,7 +1804,7 @@ export default function MobileResponsiveFinancialsPage() {
       currentData.forEach((account) => {
         if (account.entries) {
           account.entries.forEach((entry) => {
-            const property = entry.class || "No Property"
+            const property = entry.customer || "No Property"
             if (!propertyData[property]) {
               propertyData[property] = { revenue: 0, cogs: 0, opex: 0, otherIncome: 0, otherExpenses: 0 }
             }
@@ -2202,7 +2202,7 @@ export default function MobileResponsiveFinancialsPage() {
           <div className="flex justify-between items-center">
             <div>
               <h3 className="text-xl font-semibold text-gray-900">
-                Profit & Loss Statement {viewMode === "by-property" ? "(By Property Class)" : "(By Property Class)"}
+                Profit & Loss Statement {viewMode === "by-property" ? "(By Customer)" : "(By Customer)"}
               </h3>
               <div className="mt-2 text-sm text-gray-600">
                 Showing {timePeriod.toLowerCase()} {viewMode} view for {selectedMonth}
@@ -2412,7 +2412,7 @@ export default function MobileResponsiveFinancialsPage() {
                 <div className="text-xs text-gray-500">{kpis.netMargin.toFixed(1)}% margin</div>
               </div>
               <div className="text-center">
-                <div className="text-sm text-gray-600 mb-1">📊 Properties</div>
+                <div className="text-sm text-gray-600 mb-1">📊 Customers</div>
                 <div className="text-xl font-bold text-purple-600">
                   {timeSeriesData?.availableProperties?.length || 0}
                 </div>
@@ -2487,7 +2487,7 @@ export default function MobileResponsiveFinancialsPage() {
           {/* Property count */}
           <div className="mt-4 pt-4 border-t border-white border-opacity-20">
             <div className="flex justify-between items-center text-sm">
-              <span className="opacity-75">Properties:</span>
+              <span className="opacity-75">Customers:</span>
               <span className="font-semibold">{timeSeriesData?.availableProperties?.length || 0}</span>
             </div>
             <div className="flex justify-between items-center text-sm mt-1">
@@ -2976,7 +2976,7 @@ export default function MobileResponsiveFinancialsPage() {
 
                       <div className="flex justify-between text-sm text-gray-600">
                         <span>ID: {entry.id}</span>
-                        <span>Class: {entry.class || "No Class"}</span>
+                        <span>Customer: {entry.customer || "No Customer"}</span>
                       </div>
                     </div>
                   ))}
@@ -3079,7 +3079,7 @@ export default function MobileResponsiveFinancialsPage() {
                       {entry.memo && <div className="mb-2 text-xs text-gray-700">{entry.memo}</div>}
 
                       <div className="text-xs text-gray-600">
-                        <strong>Class:</strong> {entry.class || "No Class"}
+                        <strong>Customer:</strong> {entry.customer || "No Customer"}
                       </div>
                     </div>
                   ))}
@@ -3159,14 +3159,14 @@ export default function MobileResponsiveFinancialsPage() {
                 ))}
               </select>
 
-              {/* Property Classes Dropdown */}
+              {/* Customer Dropdown */}
               <div className="relative">
                 <button
                   onClick={() => setPropertyDropdownOpen(!propertyDropdownOpen)}
                   className="flex items-center justify-between w-56 px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
                   style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
                 >
-                  <span className="truncate">All Property Classes</span>
+                  <span className="truncate">All Customer</span>
                   <ChevronDown
                     className={`w-4 h-4 ml-2 transition-transform ${propertyDropdownOpen ? "rotate-180" : ""}`}
                   />
