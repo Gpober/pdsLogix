@@ -699,7 +699,7 @@ export default function CashFlowPage() {
       const { data: propertyData, error: propertyError } = await supabase
         .from("journal_entry_lines")
         .select("class")
-        .not("class", "is", null)
+        // .not("class", "is", null)
 
       if (propertyError) throw propertyError
 
