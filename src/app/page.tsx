@@ -39,7 +39,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -131,6 +131,7 @@ const classifyCashFlowTransaction = (accountType) => {
 };
 
 export default function FinancialOverviewPage() {
+  const supabase = getSupabaseClient();
   const [isLoading, setIsLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState("June");
   const [selectedYear, setSelectedYear] = useState("2024");

@@ -13,7 +13,7 @@ import {
   Calendar,
   X,
 } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -207,6 +207,7 @@ const formatDateDisplay = (dateString: string) => {
 };
 
 export default function FinancialsPage() {
+  const supabase = getSupabaseClient();
   const [selectedMonth, setSelectedMonth] = useState<string>("June");
   const [selectedYear, setSelectedYear] = useState<string>("2025");
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("YTD");

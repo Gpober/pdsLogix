@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabaseClient"
+import { getSupabaseClient } from "@/lib/supabaseClient"
+
+export const dynamic = "force-dynamic"
 
 const MONTH_NAMES = [
   "January",
@@ -44,6 +46,7 @@ interface Entry {
 }
 
 export async function GET(req: Request) {
+  const supabase = getSupabaseClient()
   const url = new URL(req.url)
   const months = Number.parseInt(url.searchParams.get("months") || "12", 10)
   const endMonth = Number.parseInt(url.searchParams.get("endMonth") || "1", 10)

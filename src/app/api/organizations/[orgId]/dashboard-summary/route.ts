@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabaseClient"
+import { getSupabaseClient } from "@/lib/supabaseClient"
+
+export const dynamic = "force-dynamic"
 
 const isIncomeAccount = (type: string | null) => {
   const t = type?.toLowerCase() || ""
@@ -33,6 +35,7 @@ interface Entry {
 }
 
 export async function GET(req: Request) {
+  const supabase = getSupabaseClient()
   const url = new URL(req.url)
   const classId = url.searchParams.get("class")
   const includeProperties = url.searchParams.get("includeProperties") === "true"
