@@ -603,126 +603,175 @@ export default function EnhancedMobileDashboard() {
     });
   };
 
-  // FIXED: Complete rewrite of loadCF to match main cash flow page logic
-  const loadCF = async (customerName: string | null = selectedCustomer) => {
-    const { start, end } = getDateRange();
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(
-        "account, account_type, report_category, normal_balance, debit, credit, customer, date"
-      )
-      .gte("date", start)
-      .lte("date", end)
-      .not("entry_bank_account", "is", null) // Only cash transactions
-      .eq("is_bank_account", false); // Exclude checking accounts
-      
-    if (customerName) {
-      query =
-        customerName === "Corporate"
-          ? query.is("customer", null)
-          : query.eq("customer", customerName);
-    }
+  // FIXED: loadCF function to match cash flow page exactly
+const loadCF = async (customerName: string | null = selectedCustomer) => {
+  const { start, end } = getDateRange();
+
+  // FIXED: Use EXACT same query logic as cash flow page
+  let query = supabase
+    .from("journal_entry_lines")
+    .select("account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account, number") // ✅ Changed to "number"
+    .gte("date", start)
+    .lte("date", end)
+    .not("entry_bank_account", "is", null) // ← ADDED: Must have bank account source
+    .order("date", { ascending: true });
+
+  // FIXED: Use same transfer logic as cash flow page
+  // For mobile, we'll exclude transfers (business activity mode)
+  query = query.eq("is_cash_account", false).neq("report_category", "transfer");
     
-    const { data } = await query;
-    const operating: Record<string, number> = {};
-    const financing: Record<string, number> = {};
-    const investing: Record<string, number> = {};
-    const other: Record<string, number> = {};
-    const accountTransactions = new Map<string, CashJournalRow[]>();
+  if (customerName) {
+    query =
+      customerName === "Corporate"
+        ? query.is("customer", null)
+        : query.eq("customer", customerName);
+  }
+  
+  const { data } = await query;
+  const operating: Record<string, number> = {};
+  const financing: Record<string, number> = {};
+  const investing: Record<string, number> = {};
+  const other: Record<string, number> = {};
+  const accountTransactions = new Map<string, CashJournalRow[]>();
 
-    ((data as JournalRow[]) || []).forEach((row) => {
-      // Skip transfers at customer level
-      if (row.report_category === "transfer") {
-        return;
-      }
+  ((data as JournalRow[]) || []).forEach((row) => {
+    const debit = Number(row.debit) || 0;
+    const credit = Number(row.credit) || 0;
 
+    // FIXED: Use EXACT same cash flow calculation as main page
+    const cashImpact = row.normal_balance || credit - debit;
+
+    // Classify by cash flow activity, not account type
+    const classification = classifyTransaction(row.account_type, row.report_category);
+    const account = row.account;
+
+    // Store detailed transactions for drill-down
+    const list = accountTransactions.get(account) || [];
+    list.push({ ...row, cashFlowImpact: cashImpact });
+    accountTransactions.set(account, list);
+
+    if (classification === "operating") {
+      operating[account] = (operating[account] || 0) + cashImpact;
+    } else if (classification === "financing") {
+      financing[account] = (financing[account] || 0) + cashImpact;
+    } else if (classification === "investing") {
+      investing[account] = (investing[account] || 0) + cashImpact;
+    } else {
+      other[account] = (other[account] || 0) + cashImpact;
+    }
+  });
+
+  // Convert to arrays and sort by amount (filter out zero amounts)
+  const operatingArr = Object.entries(operating)
+    .map(([name, total]) => ({ name, total }))
+    .filter(item => item.total !== 0)
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    
+  const financingArr = Object.entries(financing)
+    .map(([name, total]) => ({ name, total }))
+    .filter(item => item.total !== 0)
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    
+  const investingArr = Object.entries(investing)
+    .map(([name, total]) => ({ name, total }))
+    .filter(item => item.total !== 0)
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    
+  const otherArr = Object.entries(other)
+    .map(([name, total]) => ({ name, total }))
+    .filter(item => item.total !== 0)
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+
+  setCfData({
+    income: operatingArr,        // Operating activities
+    otherIncome: financingArr,   // Financing activities  
+    cogs: investingArr,          // Investing activities
+    expenses: otherArr,          // Other activities
+    otherExpenses: [],           // Not used in cash flow
+  });
+  setCfTransactionData(accountTransactions);
+};
+
+// FIXED: handleCategory function to match cash flow page
+const handleCategory = async (
+  account: string,
+  type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
+) => {
+  if (reportType === "cf") {
+    // Use stored transaction data for cash flow drill-down
+    const rows = cfTransactionData.get(account) || [];
+    const list: Transaction[] = rows
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((row) => ({
+        date: row.date,
+        amount: row.cashFlowImpact,
+        running: 0,
+        payee: row.customer || row.vendor || row.name || undefined,
+        memo: row.memo,
+        customer: row.customer,
+        entryNumber: row.entry_number,
+        invoiceNumber: row.number, // ✅ Changed to "number"
+      }));
+
+    let run = 0;
+    list.forEach((t) => {
+      run += t.amount;
+      t.running = run;
+    });
+
+    setTransactions(list);
+    setSelectedCategory(account);
+    setView("detail");
+    return;
+  }
+
+  // P&L logic remains the same
+  const { start, end } = getDateRange();
+  
+  let query = supabase
+    .from("journal_entry_lines")
+    .select("date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number, number") // ✅ Changed to "number"
+    .eq("account", account)
+    .gte("date", start)
+    .lte("date", end);
+
+  if (selectedCustomer) {
+    query =
+      selectedCustomer === "Corporate"
+        ? query.is("customer", null)
+        : query.eq("customer", selectedCustomer);
+  }
+
+  const { data } = await query;
+  const list: Transaction[] = ((data as JournalRow[]) || [])
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((row) => {
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
+      const amount = type === "income" || type === "otherIncome" ? credit - debit : debit - credit;
 
-      // Enhanced cash flow calculation matching main page
-      const cashImpact = row.normal_balance || credit - debit;
-
-      // Classify by cash flow activity, not account type
-      const classification = classifyTransaction(row.account_type, row.report_category);
-      const account = row.account;
-
-      const list = accountTransactions.get(account) || [];
-      list.push({ ...row, cashFlowImpact: cashImpact });
-      accountTransactions.set(account, list);
-
-      if (classification === "operating") {
-        operating[account] = (operating[account] || 0) + cashImpact;
-      } else if (classification === "financing") {
-        financing[account] = (financing[account] || 0) + cashImpact;
-      } else if (classification === "investing") {
-        investing[account] = (investing[account] || 0) + cashImpact;
-      } else {
-        other[account] = (other[account] || 0) + cashImpact;
-      }
+      return {
+        date: row.date,
+        amount,
+        running: 0,
+        payee: row.customer || row.vendor || row.name,
+        memo: row.memo,
+        customer: row.customer,
+        entryNumber: row.entry_number,
+        invoiceNumber: row.number, // ✅ Changed to "number"
+      };
     });
-
-    // Convert to arrays and sort by amount (filter out zero amounts)
-    const operatingArr = Object.entries(operating)
-      .map(([name, total]) => ({ name, total }))
-      .filter(item => item.total !== 0)
-      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
-      
-    const financingArr = Object.entries(financing)
-      .map(([name, total]) => ({ name, total }))
-      .filter(item => item.total !== 0)
-      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
-      
-    const investingArr = Object.entries(investing)
-      .map(([name, total]) => ({ name, total }))
-      .filter(item => item.total !== 0)
-      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
-      
-    const otherArr = Object.entries(other)
-      .map(([name, total]) => ({ name, total }))
-      .filter(item => item.total !== 0)
-      .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
-
-    setCfData({
-      income: operatingArr,        // Operating activities (was incorrectly using account types)
-      otherIncome: financingArr,   // Financing activities
-      cogs: investingArr,          // Investing activities
-      expenses: otherArr,          // Other activities
-      otherExpenses: [],           // Not used in cash flow
-    });
-    setCfTransactionData(accountTransactions);
-  };
-
-  const handleCategory = async (
-    account: string,
-    type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
-  ) => {
-    if (reportType === "cf") {
-      const rows = cfTransactionData.get(account) || [];
-      const list: Transaction[] = rows
-        .sort((a, b) => a.date.localeCompare(b.date))
-        .map((row) => ({
-          date: row.date,
-          amount: row.cashFlowImpact,
-          running: 0,
-          payee: row.customer || row.vendor || row.name || undefined,
-          memo: row.memo,
-          customer: row.customer,
-          entryNumber: row.entry_number,
-          invoiceNumber: row.invoice_number,
-        }));
-
-      let run = 0;
-      list.forEach((t) => {
-        run += t.amount;
-        t.running = run;
-      });
-
-      setTransactions(list);
-      setSelectedCategory(account);
-      setView("detail");
-      return;
-    }
-
+    
+  let run = 0;
+  list.forEach((t) => {
+    run += t.amount;
+    t.running = run;
+  });
+  
+  setTransactions(list);
+  setSelectedCategory(account);
+  setView("detail");
+};
     const { start, end } = getDateRange();
     const selectColumns = hasInvoiceNumber
       ? `${baseSelectColumns}, invoice_number`
