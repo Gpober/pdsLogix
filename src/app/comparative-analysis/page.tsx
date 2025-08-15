@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 import {
   BarChart as ReBarChart,
   Bar,
@@ -36,6 +36,7 @@ type KPIs = {
 };
 
 export default function ComparativeAnalysisPage() {
+  const supabase = getSupabaseClient();
   const [mode, setMode] = useState<"period" | "class">("period");
   const [startA, setStartA] = useState("");
   const [endA, setEndA] = useState("");

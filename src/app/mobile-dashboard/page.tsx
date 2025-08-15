@@ -12,7 +12,7 @@ import {
   Target,
   type LucideIcon,
 } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -122,6 +122,7 @@ const insights: Insight[] = [
 ];
 
 export default function EnhancedMobileDashboard() {
+  const supabase = getSupabaseClient();
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportType, setReportType] = useState<"pl" | "cf">("pl");
   const [reportPeriod, setReportPeriod] = useState<

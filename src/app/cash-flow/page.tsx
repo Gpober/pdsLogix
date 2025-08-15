@@ -6,7 +6,7 @@ import { RefreshCw, ChevronDown, ChevronRight, X, Download } from "lucide-react"
 import * as XLSX from "xlsx"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
-import { supabase } from "@/lib/supabaseClient"
+import { getSupabaseClient } from "@/lib/supabaseClient"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -129,6 +129,7 @@ const monthsList = [
 const yearsList = Array.from({ length: 10 }, (_, i) => (new Date().getFullYear() - 5 + i).toString())
 
 export default function CashFlowPage() {
+  const supabase = getSupabaseClient()
   // All state variables
   const [selectedMonth, setSelectedMonth] = useState<string>("June")
   const [selectedYear, setSelectedYear] = useState<string>("2024")

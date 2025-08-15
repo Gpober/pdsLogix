@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Papa from "papaparse"
-import { supabase } from "@/lib/supabaseClient"
+import { getSupabaseClient } from "@/lib/supabaseClient"
 
 interface ManualBalance {
   account: string
@@ -24,6 +24,7 @@ const accountMappings: Record<string, string> = {
 }
 
 export default function SettingsPage() {
+  const supabase = getSupabaseClient()
   const [date, setDate] = useState("")
   const [balances, setBalances] = useState<ManualBalance[]>([
     { account: "", accountType: "", balance: "" },

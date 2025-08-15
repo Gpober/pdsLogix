@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react"
 import { RefreshCw, X } from "lucide-react"
-import { supabase } from "@/lib/supabaseClient"
+import { getSupabaseClient } from "@/lib/supabaseClient"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -76,6 +76,7 @@ const assetTypeOrder = ["Bank", "Accounts receivable (A/R)", "Other Current Asse
 const liabilityTypeOrder = ["Accounts payable (A/P)", "Credit Card", "Other Current Liabilities", "Long Term Liabilities"]
 
 export default function BalanceSheetPage() {
+  const supabase = getSupabaseClient()
   // State variables
   const [selectedMonth, setSelectedMonth] = useState<string>("December")
   const [selectedYear, setSelectedYear] = useState<string>("2023")
