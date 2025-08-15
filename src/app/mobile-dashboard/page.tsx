@@ -72,6 +72,8 @@ interface JournalRow {
   name?: string | null;
   entry_number?: string;
   number?: string | null;
+  entry_bank_account?: string | null;
+  is_cash_account?: boolean;
 }
 
 interface JournalEntryLine {
@@ -185,7 +187,7 @@ export default function EnhancedMobileDashboard() {
     };
   }, [cfData]);
 
-  // Enhanced classification function for cash flow
+  // Enhanced classification function to mirror cash flow component
   const classifyTransaction = (
     accountType: string | null,
     reportCategory: string | null,
@@ -196,50 +198,38 @@ export default function EnhancedMobileDashboard() {
       return "transfer";
     }
 
-    // Operating Activities - Focus on cash movements from operations
+    // Operating activities - Income and Expenses (mirroring cash flow logic)
+    const isReceivable = typeLower.includes("accounts receivable") || typeLower.includes("a/r");
+    const isPayable = typeLower.includes("accounts payable") || typeLower.includes("a/p");
+
     if (
       typeLower === "income" ||
       typeLower === "other income" ||
-      typeLower === "revenue" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable" ||
-      typeLower === "accrued liabilities" ||
-      typeLower === "prepaid expenses" ||
-      typeLower === "inventory" ||
-      typeLower === "other current assets" ||
-      typeLower === "other current liabilities" ||
-      typeLower === "cost of goods sold" ||
       typeLower === "expenses" ||
       typeLower === "expense" ||
-      typeLower === "bank" ||
-      typeLower === "cash" ||
-      typeLower === "checking" ||
-      typeLower === "savings"
+      typeLower === "cost of goods sold" ||
+      isReceivable ||
+      isPayable
     ) {
       return "operating";
     }
 
-    // Investing Activities
+    // Investing activities - Fixed Assets and Other Assets
     if (
-      typeLower === "fixed assets" ||
-      typeLower === "other assets" ||
-      typeLower === "property, plant & equipment" ||
-      typeLower === "investments" ||
-      typeLower === "equipment"
+      typeLower === "fixed assets" || 
+      typeLower === "other assets" || 
+      typeLower === "property, plant & equipment"
     ) {
       return "investing";
     }
 
-    // Financing Activities
+    // Financing activities - Liabilities, Equity, Credit Cards
     if (
       typeLower === "long term liabilities" ||
       typeLower === "equity" ||
       typeLower === "credit card" ||
-      typeLower === "line of credit" ||
-      typeLower === "notes payable" ||
-      typeLower === "loans payable" ||
-      typeLower === "owner's equity" ||
-      typeLower === "retained earnings"
+      typeLower === "other current liabilities" ||
+      typeLower === "line of credit"
     ) {
       return "financing";
     }
@@ -294,15 +284,28 @@ export default function EnhancedMobileDashboard() {
   useEffect(() => {
     const load = async () => {
       const { start, end } = getDateRange();
-      const query = supabase
+      
+      // Enhanced query to mirror cash flow component structure
+      const selectColumns = "account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
+      
+      let query = supabase
         .from("journal_entry_lines")
-        .select(
-          "account_type, report_category, normal_balance, debit, credit, customer, date",
-        )
+        .select(selectColumns)
         .gte("date", start)
         .lte("date", end);
+
+      // Apply cash flow logic - only include transactions with bank account source
+      // and exclude cash account transactions (following cash flow component logic)
+      if (reportType === "cf") {
+        query = query
+          .not("entry_bank_account", "is", null)
+          .eq("is_cash_account", false)
+          .neq("report_category", "transfer");
+      }
+
       const { data } = await query;
       const map: Record<string, PropertySummary> = {};
+      
       ((data as JournalRow[]) || []).forEach((row) => {
         const customer = row.customer || "General";
         if (!map[customer]) {
@@ -317,6 +320,7 @@ export default function EnhancedMobileDashboard() {
             investing: 0
           };
         }
+        
         const debit = Number(row.debit) || 0;
         const credit = Number(row.credit) || 0;
         
@@ -334,13 +338,14 @@ export default function EnhancedMobileDashboard() {
           // Calculate net income
           map[customer].netIncome = (map[customer].revenue || 0) - (map[customer].cogs || 0) - (map[customer].expenses || 0);
         } else {
-          // Enhanced cash flow calculation - focus on actual cash movements
+          // Enhanced cash flow calculation mirroring cash flow component
           const classification = classifyTransaction(row.account_type, row.report_category);
           
           if (classification !== "other" && classification !== "transfer") {
+            // Mirror cash flow component calculation logic
             const cashImpact = row.report_category === "transfer" 
-              ? debit - credit
-              : row.normal_balance || credit - debit;
+              ? debit - credit  // Reverse for transfers
+              : row.normal_balance || credit - debit;  // Normal for others
               
             if (classification === "operating") {
               map[customer].operating = (map[customer].operating || 0) + cashImpact;
@@ -572,19 +577,26 @@ export default function EnhancedMobileDashboard() {
 
   const loadCF = async (propertyName: string | null = selectedProperty) => {
     const { start, end } = getDateRange();
+    
+    // Enhanced query mirroring cash flow component
+    const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
+    
     let query = supabase
       .from("journal_entry_lines")
-      .select(
-        "account, account_type, report_category, normal_balance, debit, credit, customer, date",
-      )
+      .select(selectColumns)
       .gte("date", start)
-      .lte("date", end);
+      .lte("date", end)
+      .not("entry_bank_account", "is", null)  // Must have bank account source
+      .eq("is_cash_account", false)           // Only non-cash transactions
+      .neq("report_category", "transfer");    // Exclude transfers
+
     if (propertyName) {
       query =
         propertyName === "General"
           ? query.is("customer", null)
           : query.eq("customer", propertyName);
     }
+    
     const { data } = await query;
     const op: Record<string, number> = {};
     const fin: Record<string, number> = {};
@@ -594,13 +606,13 @@ export default function EnhancedMobileDashboard() {
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
       
-      // Enhanced cash impact calculation - focus on actual cash movements
+      // Enhanced cash impact calculation mirroring cash flow component
       const classification = classifyTransaction(row.account_type, row.report_category);
       
       if (classification !== "other" && classification !== "transfer") {
         const cashImpact = row.report_category === "transfer" 
-          ? debit - credit
-          : row.normal_balance || credit - debit;
+          ? debit - credit  // Reverse for transfers
+          : row.normal_balance || credit - debit;  // Normal for others
           
         if (classification === "operating") {
           op[row.account] = (op[row.account] || 0) + cashImpact;
