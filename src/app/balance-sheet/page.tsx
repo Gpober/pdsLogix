@@ -29,7 +29,7 @@ interface TransactionDetail {
   date: string
   payeeCustomer: string | null
   memo: string | null
-  class: string | null
+  customer: string | null
   amount: number
   // Keep some additional fields for reference
   account: string
@@ -44,7 +44,7 @@ interface JournalEntryLine {
   date: string
   account: string
   memo: string | null
-  class: string | null
+  customer: string | null
   debit: string | number | null
   credit: string | number | null
 }
@@ -80,7 +80,7 @@ export default function BalanceSheetPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>("December")
   const [selectedYear, setSelectedYear] = useState<string>("2023")
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly")
-  const [selectedProperty, setSelectedProperty] = useState("All Properties")
+  const [selectedProperty, setSelectedProperty] = useState("All Customers")
   const [customStartDate, setCustomStartDate] = useState("")
   const [customEndDate, setCustomEndDate] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -91,7 +91,7 @@ export default function BalanceSheetPage() {
   const [equity, setEquity] = useState<BalanceSheetSection>({ title: "Equity", accounts: [], total: 0 })
 
   // Common state
-  const [availableProperties, setAvailableProperties] = useState<string[]>(["All Properties"])
+  const [availableProperties, setAvailableProperties] = useState<string[]>(["All Customers"])
   const [error, setError] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
   const [transactionDetails, setTransactionDetails] = useState<TransactionDetail[]>([])
@@ -319,7 +319,7 @@ export default function BalanceSheetPage() {
         .lte("balance_date", endDate)
         .order("balance_date", { ascending: false })
 
-      if (selectedProperty !== "All Properties") {
+      if (selectedProperty !== "All Customers") {
         manualBalanceQuery = manualBalanceQuery.eq("property_class", selectedProperty)
       }
 
@@ -445,16 +445,16 @@ export default function BalanceSheetPage() {
       const { data: propertyData, error: propertyError } = await supabase
         .from("journal_entry_lines")
         .select("class")
-        // .not("class", "is", null)
+        // .not("customer", "is", null)
 
       if (propertyError) throw propertyError
 
       const properties = new Set<string>()
       propertyData.forEach((row: any) => {
-        if (row.class) properties.add(row.class)
+        if (row.customer) properties.add(row.customer)
       })
 
-      setAvailableProperties(["All Properties", ...Array.from(properties).sort()])
+      setAvailableProperties(["All Customers", ...Array.from(properties).sort()])
     } catch (err) {
       console.error("Error fetching filters:", err)
     }
@@ -473,7 +473,7 @@ export default function BalanceSheetPage() {
       smartLog(`🔍 BALANCE SHEET DATA LOAD`)
       smartLog(`📅 As Of Date: ${endDate}`)
       smartLog(`📊 Period Activity From: ${periodStart}`)
-      smartLog(`🏢 Property Filter: "${selectedProperty}"`)
+      smartLog(`🏢 Customer Filter: "${selectedProperty}"`)
 
       // SINGLE QUERY: Get ALL balance sheet transactions up to as-of date
       let query = supabase
@@ -484,8 +484,8 @@ export default function BalanceSheetPage() {
         .lte("date", endDate)
         .order("date", { ascending: true })
 
-      if (selectedProperty !== "All Properties") {
-        query = query.eq("class", selectedProperty)
+      if (selectedProperty !== "All Customers") {
+        query = query.eq("customer", selectedProperty)
       }
 
       const { data: allTransactions, error } = await query
@@ -728,7 +728,7 @@ export default function BalanceSheetPage() {
             date: endDate,
             payeeCustomer: "System Calculated",
             memo: "Calculated Net Income from P&L accounts",
-            class: "All Properties",
+            customer: "All Customers",
             amount: netIncome,
             account: "Net Income",
             debit: netIncome > 0 ? 0 : Math.abs(netIncome),
@@ -823,7 +823,7 @@ export default function BalanceSheetPage() {
         date: tx.date,
         payeeCustomer,
         memo: tx.memo,
-        class: tx.class,
+        customer: tx.customer,
         amount,
         account: tx.account,
         debit: Number.parseFloat(tx.debit) || 0,
@@ -1346,9 +1346,9 @@ export default function BalanceSheetPage() {
                           <span className="font-medium">Memo:</span> {transaction.memo}
                         </div>
                       )}
-                      {transaction.class && (
+                      {transaction.customer && (
                         <div className="text-sm text-blue-600">
-                          <span className="font-medium">Class:</span> {transaction.class}
+                          <span className="font-medium">Customer:</span> {transaction.customer}
                         </div>
                       )}
                     </div>
@@ -1371,7 +1371,7 @@ export default function BalanceSheetPage() {
                         Memo
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Class
+                        Customer
                       </th>
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Amount
@@ -1399,8 +1399,8 @@ export default function BalanceSheetPage() {
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-blue-600 max-w-xs">
-                          <div className="truncate" title={transaction.class || "N/A"}>
-                            {transaction.class || "N/A"}
+                          <div className="truncate" title={transaction.customer || "N/A"}>
+                            {transaction.customer || "N/A"}
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium">
@@ -1443,7 +1443,7 @@ export default function BalanceSheetPage() {
                       Memo
                     </th>
                     <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Class
+                      Customer
                     </th>
                     <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Debit
@@ -1461,7 +1461,7 @@ export default function BalanceSheetPage() {
                       </td>
                       <td className="px-4 py-2 text-sm text-gray-900">{line.account}</td>
                       <td className="px-4 py-2 text-sm text-gray-500">{line.memo || ""}</td>
-                      <td className="px-4 py-2 text-sm text-gray-500">{line.class || ""}</td>
+                      <td className="px-4 py-2 text-sm text-gray-500">{line.customer || ""}</td>
                       <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-red-600">
                         {formatCurrency(Number.parseFloat(line.debit?.toString() || "0"))}
                       </td>

@@ -278,7 +278,7 @@ export default function EnhancedMobileDashboard() {
       const { data } = await query;
       const map: Record<string, PropertySummary> = {};
       ((data as JournalRow[]) || []).forEach((row) => {
-        const cls = row.class || "General";
+        const cls = row.customer || "General";
         if (!map[cls]) {
           map[cls] = { 
             name: cls, 
@@ -489,7 +489,7 @@ export default function EnhancedMobileDashboard() {
       query =
         propertyName === "General"
           ? query.is("class", null)
-          : query.eq("class", propertyName);
+          : query.eq("customer", propertyName);
     }
     const { data } = await query;
     const rev: Record<string, number> = {};
@@ -525,7 +525,7 @@ export default function EnhancedMobileDashboard() {
       query =
         propertyName === "General"
           ? query.is("class", null)
-          : query.eq("class", propertyName);
+          : query.eq("customer", propertyName);
     }
     const { data } = await query;
     const op: Record<string, number> = {};
@@ -586,7 +586,7 @@ export default function EnhancedMobileDashboard() {
       query =
         selectedProperty === "General"
           ? query.is("class", null)
-          : query.eq("class", selectedProperty);
+          : query.eq("customer", selectedProperty);
     }
     const { data } = await query;
     const list: Transaction[] = ((data as JournalRow[]) || [])
@@ -609,7 +609,7 @@ export default function EnhancedMobileDashboard() {
           running: 0,
           payee: row.customer || row.vendor || row.name,
           memo: row.memo,
-          className: row.class,
+          className: row.customer,
           entryNumber: row.entry_number,
         };
       });
@@ -962,7 +962,7 @@ export default function EnhancedMobileDashboard() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
                 <Award size={16} style={{ color: BRAND_COLORS.primary }} />
                 <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.primary }}>
-                  Property Champions
+                  Customer Champions
                 </span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
@@ -1168,7 +1168,7 @@ export default function EnhancedMobileDashboard() {
             </div>
           </div>
 
-          {/* Enhanced Property KPI Boxes */}
+          {/* Enhanced Customer KPI Boxes */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
             {properties.map((p) => {
               const isRevenueKing = p.name === revenueKing;
@@ -2019,7 +2019,7 @@ export default function EnhancedMobileDashboard() {
                     <th style={{ textAlign: 'left', padding: '8px', fontSize: '12px', color: '#475569' }}>Date</th>
                     <th style={{ textAlign: 'left', padding: '8px', fontSize: '12px', color: '#475569' }}>Account</th>
                     <th style={{ textAlign: 'left', padding: '8px', fontSize: '12px', color: '#475569' }}>Memo</th>
-                    <th style={{ textAlign: 'left', padding: '8px', fontSize: '12px', color: '#475569' }}>Class</th>
+                    <th style={{ textAlign: 'left', padding: '8px', fontSize: '12px', color: '#475569' }}>Customer</th>
                     <th style={{ textAlign: 'right', padding: '8px', fontSize: '12px', color: '#475569' }}>Debit</th>
                     <th style={{ textAlign: 'right', padding: '8px', fontSize: '12px', color: '#475569' }}>Credit</th>
                   </tr>
@@ -2036,7 +2036,7 @@ export default function EnhancedMobileDashboard() {
                       </td>
                       <td style={{ padding: '8px', fontSize: '12px', color: '#0f172a' }}>{line.account}</td>
                       <td style={{ padding: '8px', fontSize: '12px', color: '#475569' }}>{line.memo || ''}</td>
-                      <td style={{ padding: '8px', fontSize: '12px', color: '#475569' }}>{line.class || ''}</td>
+                      <td style={{ padding: '8px', fontSize: '12px', color: '#475569' }}>{line.customer || ''}</td>
                       <td style={{ padding: '8px', textAlign: 'right', fontSize: '12px', color: BRAND_COLORS.danger }}>
                         {formatCurrency(Number(line.debit || 0))}
                       </td>

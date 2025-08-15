@@ -36,14 +36,14 @@ type KPIs = {
 };
 
 export default function ComparativeAnalysisPage() {
-  const [mode, setMode] = useState<"period" | "class">("period");
+  const [mode, setMode] = useState<"period" | "customer">("period");
   const [startA, setStartA] = useState("");
   const [endA, setEndA] = useState("");
   const [startB, setStartB] = useState("");
   const [endB, setEndB] = useState("");
-  const [classA, setClassA] = useState("All Properties");
-  const [classB, setClassB] = useState("All Properties");
-  const [classes, setClasses] = useState<string[]>([]);
+  const [customerA, setCustomerA] = useState("All Customers");
+  const [customerB, setCustomerB] = useState("All Customers");
+  const [customers, setCustomers] = useState<string[]>([]);
   const [dataA, setDataA] = useState<KPIs | null>(null);
   const [dataB, setDataB] = useState<KPIs | null>(null);
   const [varianceRows, setVarianceRows] = useState<{
@@ -62,21 +62,21 @@ export default function ComparativeAnalysisPage() {
   const [modalTransactions, setModalTransactions] = useState<any[]>([]);
 
   useEffect(() => {
-    fetchClasses();
+    fetchCustomers();
   }, []);
 
-  const fetchClasses = async () => {
-    const { data } = await supabase.from("journal_entry_lines").select("class");
+  const fetchCustomers = async () => {
+    const { data } = await supabase.from("journal_entry_lines").select("customer");
     if (data) {
       const unique = Array.from(
         new Set(
           data
-            .map((d) => d.class)
+            .map((d) => d.customer)
             .filter((c) => c && c.trim())
             .map((c) => c.trim()),
         ),
       );
-      setClasses(["All Properties", ...unique]);
+      setCustomers(["All Customers", ...unique]);
     }
   };
 
@@ -87,8 +87,8 @@ export default function ComparativeAnalysisPage() {
       .gte("date", start)
       .lte("date", end);
 
-    if (property && property !== "All Properties") {
-      query = query.eq("class", property);
+    if (property && property !== "All Customers") {
+      query = query.eq("customer", property);
     }
 
     const { data, error } = await query;
@@ -220,17 +220,17 @@ export default function ComparativeAnalysisPage() {
 
   const fetchData = async () => {
     if (mode === "period" && (!startA || !endA || !startB || !endB)) return;
-    if (mode === "class" && (!startA || !endA)) return;
+    if (mode === "customer" && (!startA || !endA)) return;
 
     setLoading(true);
     setError(null);
     try {
       const [linesA, linesB] = await Promise.all([
-        fetchLines(startA, endA, mode === "class" ? classA : undefined),
+        fetchLines(startA, endA, mode === "customer" ? customerA : undefined),
         fetchLines(
           mode === "period" ? startB : startA,
           mode === "period" ? endB : endA,
-          mode === "class" ? classB : undefined,
+          mode === "customer" ? customerB : undefined,
         ),
       ]);
       const kpiA = computeKPIs(linesA);
@@ -365,7 +365,7 @@ export default function ComparativeAnalysisPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="period">Period vs Period</SelectItem>
-              <SelectItem value="class">Class vs Class</SelectItem>
+              <SelectItem value="customer">Customer vs Customer</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -412,16 +412,16 @@ export default function ComparativeAnalysisPage() {
           </>
         )}
 
-        {mode === "class" && (
+        {mode === "customer" && (
           <>
             <div className="flex flex-col">
-              <label className="text-sm text-gray-700 mb-1">Class A</label>
-              <Select value={classA} onValueChange={(v) => setClassA(v)}>
+          <label className="text-sm text-gray-700 mb-1">Customer A</label>
+              <Select value={customerA} onValueChange={(v) => setCustomerA(v)}>
                 <SelectTrigger className="w-48">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {classes.map((c) => (
+                  {customers.map((c) => (
                     <SelectItem key={c} value={c}>
                       {c}
                     </SelectItem>
@@ -430,13 +430,13 @@ export default function ComparativeAnalysisPage() {
               </Select>
             </div>
             <div className="flex flex-col">
-              <label className="text-sm text-gray-700 mb-1">Class B</label>
-              <Select value={classB} onValueChange={(v) => setClassB(v)}>
+          <label className="text-sm text-gray-700 mb-1">Customer B</label>
+              <Select value={customerB} onValueChange={(v) => setCustomerB(v)}>
                 <SelectTrigger className="w-48">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {classes.map((c) => (
+                  {customers.map((c) => (
                     <SelectItem key={c} value={c}>
                       {c}
                     </SelectItem>
@@ -803,7 +803,7 @@ export default function ComparativeAnalysisPage() {
                       Amount
                     </th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
-                      Class
+                      Customer
                     </th>
                     <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
                       Set
@@ -825,7 +825,7 @@ export default function ComparativeAnalysisPage() {
                           {formatCurrency(Math.abs(amt))}
                         </td>
                         <td className="px-4 py-2 text-sm text-center">
-                          {t.class || ""}
+                          {t.customer || ""}
                         </td>
                         <td className="px-4 py-2 text-sm text-center">{t.set}</td>
                       </tr>
