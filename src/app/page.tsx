@@ -52,6 +52,17 @@ const BRAND_COLORS = {
   danger: "#E74C3C",
 };
 
+const CHART_COLORS = [
+  BRAND_COLORS.primary,
+  BRAND_COLORS.secondary,
+  BRAND_COLORS.tertiary,
+  BRAND_COLORS.accent,
+  BRAND_COLORS.success,
+  BRAND_COLORS.warning,
+  "#8884d8",
+  "#82ca9d",
+];
+
 // P&L Classification using the same logic as financials page
 const classifyPLAccount = (accountType, reportCategory, accountName) => {
   const typeLower = accountType?.toLowerCase() || "";
@@ -1059,6 +1070,16 @@ export default function FinancialOverviewPage() {
       .sort((a, b) => b.value - a.value);
   }, [propertyData, propertyChartMetric]);
 
+  const customerLegendPayload = useMemo(
+    () =>
+      propertyChartData.slice(0, 15).map((entry, index) => ({
+        value: entry.name,
+        type: "square",
+        color: CHART_COLORS[index % CHART_COLORS.length],
+      })),
+    [propertyChartData],
+  );
+
   const totalPropertyValue = useMemo(
     () => propertyChartData.reduce((sum, p) => sum + p.value, 0),
     [propertyChartData],
@@ -1809,29 +1830,20 @@ export default function FinancialOverviewPage() {
                             cy="50%"
                             innerRadius={40}
                             outerRadius={100}
-                            paddingAngle={2}
+                          paddingAngle={2}
                           >
                             {propertyChartData.map((entry, index) => (
                               <Cell
                                 key={`cell-${index}`}
                                 fill={
-                                  [
-                                    BRAND_COLORS.primary,
-                                    BRAND_COLORS.secondary,
-                                    BRAND_COLORS.tertiary,
-                                    BRAND_COLORS.accent,
-                                    BRAND_COLORS.success,
-                                    BRAND_COLORS.warning,
-                                    "#8884d8",
-                                    "#82ca9d",
-                                  ][index % 8]
+                                  CHART_COLORS[index % CHART_COLORS.length]
                                 }
                                 stroke="#fff"
                               />
                             ))}
                           </Pie>
                           <Tooltip content={<PropertyTooltip />} />
-                          <Legend />
+                          <Legend payload={customerLegendPayload} />
                         </RechartsPieChart>
                       ) : (
                         <BarChart data={propertyChartData}>
@@ -1841,8 +1853,17 @@ export default function FinancialOverviewPage() {
                           <Tooltip
                             formatter={(value) => formatCurrency(value as number)}
                           />
-                          <Legend />
-                          <Bar dataKey="value" fill={BRAND_COLORS.primary} />
+                          <Legend payload={customerLegendPayload} />
+                          <Bar dataKey="value">
+                            {propertyChartData.map((entry, index) => (
+                              <Cell
+                                key={`bar-cell-${index}`}
+                                fill={
+                                  CHART_COLORS[index % CHART_COLORS.length]
+                                }
+                              />
+                            ))}
+                          </Bar>
                         </BarChart>
                       )}
                     </ResponsiveContainer>
