@@ -26,7 +26,7 @@ const isCogsAccount = (type: string | null) => {
 }
 
 interface Entry {
-  class: string | null
+  customer: string | null
   account_type: string | null
   debit: number | string | null
   credit: number | string | null
@@ -34,7 +34,6 @@ interface Entry {
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
-  const classId = url.searchParams.get("class")
   const includeProperties = url.searchParams.get("includeProperties") === "true"
 
   if (!includeProperties) {
@@ -62,17 +61,12 @@ export async function GET(req: Request) {
     endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`
   }
 
-  let query = supabase
+  const { data, error } = await supabase
     .from("journal_entry_lines")
-    .select("class,account_type,debit,credit")
+    .select("customer,account_type,debit,credit")
     .gte("date", startDate)
     .lte("date", endDate)
 
-  if (classId) {
-    query = query.eq("class", classId)
-  }
-
-  const { data, error } = await query
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
@@ -87,11 +81,11 @@ export async function GET(req: Request) {
   }> = {}
 
   ;(data || []).forEach((tx: Entry) => {
-    // Group transactions without a class under "General"
-    const property = tx.class || "General"
-    if (!map[property]) {
-      map[property] = {
-        name: property,
+    // Group transactions without a customer under "Unassigned"
+    const customer = tx.customer || "Unassigned"
+    if (!map[customer]) {
+      map[customer] = {
+        name: customer,
         revenue: 0,
         grossProfit: 0,
         operatingExpenses: 0,
@@ -104,11 +98,11 @@ export async function GET(req: Request) {
     const credit = Number(tx.credit) || 0
 
     if (isIncomeAccount(tx.account_type)) {
-      map[property].revenue += credit - debit
+      map[customer].revenue += credit - debit
     } else if (isCogsAccount(tx.account_type)) {
-      map[property].cogs += debit - credit
+      map[customer].cogs += debit - credit
     } else if (isExpenseAccount(tx.account_type)) {
-      map[property].operatingExpenses += debit - credit
+      map[customer].operatingExpenses += debit - credit
     }
   })
 
