@@ -344,17 +344,33 @@ const HARDCODED_CUSTOMERS = [
 // Fetch customers
 const fetchCustomers = async () => {
   try {
+    // Try to fetch from dedicated Customers table first
     const { data, error } = await supabase
+      .from("Customers")
+      .select("display_name")
+      .not("display_name", "is", null)
+
+    if (!error && data) {
+      const customerNames = data
+        .map((item) => item.display_name)
+        .filter((name) => name && name.trim() !== "")
+
+      const uniqueCustomers = [...new Set(customerNames)].sort()
+      return ["All Customers", ...uniqueCustomers]
+    }
+
+    // Fallback to using journal entry lines if Customers table not available
+    const { data: fallbackData, error: fallbackError } = await supabase
       .from("Journal_entry_lines")
       .select("customer")
       .not("customer", "is", null)
 
-    if (error) {
-      console.error("❌ Customer fetch error:", error)
+    if (fallbackError) {
+      console.error("❌ Customer fetch error:", fallbackError)
       return HARDCODED_CUSTOMERS
     }
 
-    const customerValues = data
+    const customerValues = fallbackData
       .map((item) => item.customer)
       .filter((c) => c && c.trim() !== "")
 
