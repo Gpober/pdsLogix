@@ -443,7 +443,7 @@ export default function BalanceSheetPage() {
   const fetchFilters = async () => {
     try {
       const { data: propertyData, error: propertyError } = await supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select("class")
         .not("class", "is", null)
 
@@ -477,7 +477,7 @@ export default function BalanceSheetPage() {
 
       // SINGLE QUERY: Get ALL balance sheet transactions up to as-of date
       let query = supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select(
           "entry_number, class, date, account, account_type, debit, credit, memo, customer, vendor, name",
         )
@@ -841,7 +841,7 @@ export default function BalanceSheetPage() {
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return
     const { data, error } = await supabase
-      .from("journal_entry_lines")
+      .from("financial_transactions")
       .select("date, account, memo, class, debit, credit")
       .eq("entry_number", entryNumber)
       .order("line_sequence")

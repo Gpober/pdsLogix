@@ -697,7 +697,7 @@ export default function CashFlowPage() {
     try {
       // Fetch properties from 'class' field
       const { data: propertyData, error: propertyError } = await supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select("class")
         .not("class", "is", null)
 
@@ -712,7 +712,7 @@ export default function CashFlowPage() {
 
       // ENHANCED: Fetch bank accounts using entry_bank_account field
       const { data: bankData, error: bankError } = await supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select("entry_bank_account")
         .not("entry_bank_account", "is", null)
 
@@ -751,7 +751,7 @@ export default function CashFlowPage() {
 
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select(
           "entry_number, class, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
         )
@@ -900,7 +900,7 @@ export default function CashFlowPage() {
 
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select(
           "entry_number, class, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
         )
@@ -1073,7 +1073,7 @@ export default function CashFlowPage() {
 
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select(
           "entry_number, class, date, account, account_type, debit, credit, memo, entry_bank_account, normal_balance, report_category",
         )
@@ -1408,7 +1408,7 @@ export default function CashFlowPage() {
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return
     const { data, error } = await supabase
-      .from("journal_entry_lines")
+      .from("financial_transactions")
       .select("date, account, memo, class, debit, credit")
       .eq("entry_number", entryNumber)
       .order("line_sequence")

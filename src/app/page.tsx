@@ -375,7 +375,7 @@ export default function FinancialOverviewPage() {
   const fetchAvailableClasses = async () => {
     try {
       const { data, error } = await supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select("class")
         .not("class", "is", null);
       if (error) throw error;
@@ -422,7 +422,7 @@ export default function FinancialOverviewPage() {
 
       // Fetch current period data using same query structure as other pages
       let currentQuery = supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select(
           `
           entry_number,
@@ -481,7 +481,7 @@ export default function FinancialOverviewPage() {
       const prevEndDate = `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(prevLastDay).padStart(2, "0")}`;
 
       let prevQuery = supabase
-        .from("journal_entry_lines")
+        .from("financial_transactions")
         .select(
           `
           entry_number,
@@ -545,7 +545,7 @@ export default function FinancialOverviewPage() {
         const trendEndDate = `${trendYear}-${String(trendMonthIndex + 1).padStart(2, "0")}-${String(trendLastDay).padStart(2, "0")}`;
 
         let monthQuery = supabase
-          .from("journal_entry_lines")
+          .from("financial_transactions")
           .select(
             `
             entry_number,

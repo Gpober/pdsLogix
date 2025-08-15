@@ -66,7 +66,7 @@ export default function ComparativeAnalysisPage() {
   }, []);
 
   const fetchClasses = async () => {
-    const { data } = await supabase.from("journal_entry_lines").select("class");
+    const { data } = await supabase.from("financial_transactions").select("class");
     if (data) {
       const unique = Array.from(
         new Set(
@@ -82,7 +82,7 @@ export default function ComparativeAnalysisPage() {
 
   const fetchLines = async (start: string, end: string, property?: string) => {
     let query = supabase
-      .from("journal_entry_lines")
+      .from("financial_transactions")
       .select("account, account_type, debit, credit, class, date")
       .gte("date", start)
       .lte("date", end);
