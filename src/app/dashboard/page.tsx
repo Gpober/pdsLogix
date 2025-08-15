@@ -1615,8 +1615,15 @@ export default function MobileResponsiveFinancialsPage() {
       const firstPeriodKey = timeSeriesData.periods[0]
       const periodData = timeSeriesData.data[firstPeriodKey] || {}
 
+      // Filter customers based on selection
+      const propertiesToShow = selectedProperties.has("All Customers")
+        ? timeSeriesData.availableProperties
+        : timeSeriesData.availableProperties.filter((p) =>
+            selectedProperties.has(p),
+          )
+
       // Create trend data by property
-      const propertyTrendData = timeSeriesData.availableProperties
+      const propertyTrendData = propertiesToShow
         .map((property) => {
           const revenue = Object.values(periodData)
             .filter((item) => item.category === "Revenue")
@@ -1755,7 +1762,13 @@ export default function MobileResponsiveFinancialsPage() {
   const generateCustomerChartData = () => {
     // Only show customer data if we have it
     if (viewMode === "by-property" && timeSeriesData?.availableProperties) {
-      return timeSeriesData.availableProperties
+      const propertiesToShow = selectedProperties.has("All Customers")
+        ? timeSeriesData.availableProperties
+        : timeSeriesData.availableProperties.filter((p) =>
+            selectedProperties.has(p),
+          )
+
+      return propertiesToShow
         .map((property) => {
           const revenue = currentData
             .filter((item) => item.category === "Revenue")
@@ -1840,6 +1853,11 @@ export default function MobileResponsiveFinancialsPage() {
       })
 
       return Object.entries(propertyData)
+        .filter(
+          ([property]) =>
+            selectedProperties.has("All Customers") ||
+            selectedProperties.has(property),
+        )
         .map(([property, data]) => {
           const grossProfit = data.revenue - data.cogs
           const netIncome = data.revenue - data.cogs - data.opex + data.otherIncome - data.otherExpenses
