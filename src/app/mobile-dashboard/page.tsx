@@ -194,8 +194,8 @@ export default function EnhancedMobileDashboard() {
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable"
+      typeLower === "accounts receivable" || // treat A/R as operating
+      typeLower === "accounts payable" // treat A/P as operating
     ) {
       return "operating";
     }
