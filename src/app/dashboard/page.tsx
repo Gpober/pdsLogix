@@ -343,13 +343,9 @@ const HARDCODED_PROPERTIES = [
 // Fetch properties
 const fetchProperties = async () => {
   try {
-    const response = await fetch(`${SUPABASE_URL}/rest/v1/financial_transactions?select=class`, {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        "Content-Type": "application/json",
-      },
-    })
+    const { data, error } = await supabase
+  .from('financial_transactions')
+  .select('class')
 
     if (response.ok) {
       const data = await response.json()
