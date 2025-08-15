@@ -573,7 +573,7 @@ export default function FinancialsPage() {
       // Get unique properties for filter dropdown using 'class' field
       const properties = new Set<string>();
       plTransactions.forEach((tx) => {
-        if (tx.class && tx.class.trim()) {
+        if (tx.customer && tx.customer.trim()) {
           properties.add(tx.class.trim());
         }
       });
