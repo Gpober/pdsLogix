@@ -54,6 +54,7 @@ interface Transaction {
   memo?: string | null;
   customer?: string | null;
   entryNumber?: string;
+  invoiceNumber?: string | null;
 }
 
 interface JournalRow {
@@ -69,6 +70,7 @@ interface JournalRow {
   vendor?: string | null;
   name?: string | null;
   entry_number?: string;
+  invoice_number?: string | null;
 }
 
 interface JournalEntryLine {
@@ -134,6 +136,7 @@ export default function EnhancedMobileDashboard() {
   const [view, setView] = useState<"overview" | "summary" | "report" | "detail">("overview");
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null);
+  const [hasInvoiceNumber, setHasInvoiceNumber] = useState(false);
   const [plData, setPlData] = useState<{
     income: Category[];
     cogs: Category[];
@@ -166,6 +169,19 @@ export default function EnhancedMobileDashboard() {
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
+
+  useEffect(() => {
+    const checkInvoiceColumn = async () => {
+      const { data, error } = await supabase.from("journal_entry_lines").select("*").limit(1);
+      if (!error && data && data.length > 0 && "invoice_number" in data[0]) {
+        setHasInvoiceNumber(true);
+      }
+    };
+    checkInvoiceColumn();
+  }, []);
+
+  const baseSelectColumns =
+    "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number";
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -215,14 +231,19 @@ export default function EnhancedMobileDashboard() {
       return "transfer";
     }
 
+    const isReceivable =
+      typeLower.includes("accounts receivable") || typeLower.includes("a/r");
+    const isPayable =
+      typeLower.includes("accounts payable") || typeLower.includes("a/p");
+
     if (
       typeLower === "income" ||
       typeLower === "other income" ||
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable"
+      isReceivable ||
+      isPayable
     ) {
       return "operating";
     }
@@ -632,12 +653,13 @@ export default function EnhancedMobileDashboard() {
     type: "income" | "otherIncome" | "cogs" | "expense" | "otherExpense",
   ) => {
     const { start, end } = getDateRange();
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(
-        "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number",
-      )
-      .eq("account", account)
+    const selectColumns = hasInvoiceNumber
+      ? `${baseSelectColumns}, invoice_number`
+      : baseSelectColumns;
+  let query = supabase
+    .from("journal_entry_lines")
+    .select(selectColumns)
+    .eq("account", account)
       .gte("date", start)
       .lte("date", end);
     if (selectedCustomer) {
@@ -669,6 +691,7 @@ export default function EnhancedMobileDashboard() {
           memo: row.memo,
           customer: row.customer,
           entryNumber: row.entry_number,
+          invoiceNumber: row.invoice_number,
         };
       });
     let run = 0;
@@ -2063,6 +2086,11 @@ export default function EnhancedMobileDashboard() {
                     )}
                     {t.memo && (
                       <div style={{ fontSize: '12px', color: '#64748b' }}>{t.memo}</div>
+                    )}
+                    {t.invoiceNumber && (
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>
+                        Invoice: {t.invoiceNumber}
+                      </div>
                     )}
                   </div>
                   <span

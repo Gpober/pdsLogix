@@ -43,6 +43,7 @@ interface TransactionDetail {
   name?: string
   accountType?: string
   reportCategory?: string
+  invoiceNumber?: string | null
 }
 
 interface JournalEntryLine {
@@ -139,6 +140,7 @@ export default function CashFlowPage() {
   const [customStartDate, setCustomStartDate] = useState("")
   const [customEndDate, setCustomEndDate] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [hasInvoiceNumber, setHasInvoiceNumber] = useState(false)
 
   // Collapsible sections state
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
@@ -188,6 +190,20 @@ export default function CashFlowPage() {
 
   // Store detailed transaction data for reuse
   const [transactionData, setTransactionData] = useState<Map<string, any[]>>(new Map())
+
+  // Check if invoice_number column exists to avoid query errors
+  useEffect(() => {
+    const checkInvoiceColumn = async () => {
+      const { data, error } = await supabase.from("journal_entry_lines").select("*").limit(1)
+      if (!error && data && data.length > 0 && "invoice_number" in data[0]) {
+        setHasInvoiceNumber(true)
+      }
+    }
+    checkInvoiceColumn()
+  }, [])
+
+  const baseSelectColumns =
+    "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category"
 
   // Extract date parts directly from string
   const getDateParts = (dateString: string) => {
@@ -576,14 +592,19 @@ export default function CashFlowPage() {
     const typeLower = accountType?.toLowerCase() || ""
 
     // Operating activities - Income and Expenses
+    const isReceivable =
+      typeLower.includes("accounts receivable") || typeLower.includes("a/r")
+    const isPayable =
+      typeLower.includes("accounts payable") || typeLower.includes("a/p")
+
     if (
       typeLower === "income" ||
       typeLower === "other income" ||
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable"
+      isReceivable ||
+      isPayable
     ) {
       return "operating"
     }
@@ -748,12 +769,14 @@ export default function CashFlowPage() {
       console.log(`🏢 Customer Filter: "${selectedProperty}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
+      const selectColumns = hasInvoiceNumber
+        ? `${baseSelectColumns}, invoice_number`
+        : baseSelectColumns
+
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
         .from("journal_entry_lines")
-        .select(
-          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
-        )
+        .select(selectColumns)
         .gte("date", startDate)
         .lte("date", endDate)
         .not("entry_bank_account", "is", null) // Must have bank account source
@@ -897,12 +920,14 @@ export default function CashFlowPage() {
       console.log(`🏦 Bank Account Filter: "${selectedBankAccount}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
+      const selectColumns = hasInvoiceNumber
+        ? `${baseSelectColumns}, invoice_number`
+        : baseSelectColumns
+
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
         .from("journal_entry_lines")
-        .select(
-          "entry_number, date, account, account_type, debit, credit, memo, customer, vendor, name, entry_bank_account, normal_balance, report_category",
-        )
+        .select(selectColumns)
         .gte("date", startDate)
         .lte("date", endDate)
         .not("entry_bank_account", "is", null) // Must have bank account source
@@ -1070,12 +1095,14 @@ export default function CashFlowPage() {
       console.log(`🏦 Bank Account Filter: "${selectedBankAccount}"`)
       console.log(`🔄 Include Transfers: ${includeTransfers}`)
 
+      const selectColumns = hasInvoiceNumber
+        ? `${baseSelectColumns}, invoice_number`
+        : baseSelectColumns
+
       // FIXED QUERY: Corrected transfer toggle logic
       let query = supabase
         .from("journal_entry_lines")
-        .select(
-          "entry_number, date, account, account_type, debit, credit, memo, entry_bank_account, normal_balance, report_category, customer, vendor, name",
-        )
+        .select(selectColumns)
         .gte("date", startDate)
         .lte("date", endDate)
         .not("entry_bank_account", "is", null) // Must have bank account source
@@ -1200,6 +1227,7 @@ export default function CashFlowPage() {
         credit: Number.parseFloat(tx.credit) || 0,
         impact: tx.cashFlowImpact,
         entryNumber: tx.entry_number,
+        invoiceNumber: tx.invoice_number,
         customer: tx.customer,
         vendor: tx.vendor,
         name: tx.name,
@@ -1241,6 +1269,7 @@ export default function CashFlowPage() {
         credit: Number.parseFloat(tx.credit) || 0,
         impact: tx.cashFlowImpact,
         entryNumber: tx.entry_number,
+        invoiceNumber: tx.invoice_number,
         customer: tx.customer,
         vendor: tx.vendor,
         name: tx.name,
@@ -1394,6 +1423,7 @@ export default function CashFlowPage() {
         customer: row.customer,
         vendor: row.vendor,
         name: row.name,
+        invoiceNumber: row.invoice_number,
       }))
 
       setTransactionDetails(transactionDetails)
@@ -3227,6 +3257,9 @@ export default function CashFlowPage() {
                         Payee/Customer
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Invoice #
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Memo
                       </th>
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -3252,6 +3285,9 @@ export default function CashFlowPage() {
                             transaction.vendor ||
                             transaction.customer ||
                             "N/A"}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {transaction.invoiceNumber || "-"}
                         </td>
                         <td
                           className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
