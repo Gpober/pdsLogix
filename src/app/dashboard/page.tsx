@@ -2647,14 +2647,7 @@ export default function MobileResponsiveFinancialsPage() {
               ) : (
                 <BarChart data={generateCustomerChartData()}>
                   <CartesianGrid strokeDasharray="2 2" stroke="#f1f5f9" />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ fontSize: 10 }}
-                    angle={-45}
-                    textAnchor="end"
-                    height={60}
-                    interval={0}
-                  />
+                  <XAxis dataKey="name" hide />
                   <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} tick={{ fontSize: 10 }} />
                   <Tooltip
                     formatter={(value) => [formatCurrency(value), propertyChartMetric === "income" ? "Revenue" : "Net Income"]}
