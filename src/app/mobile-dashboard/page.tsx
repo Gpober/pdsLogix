@@ -72,6 +72,7 @@ interface JournalRow {
   entry_number?: string;
   invoice_number?: string | null;
   entry_bank_account?: string | null;
+  is_bank_account?: boolean | null;
 }
 
 interface JournalEntryLine {
@@ -601,11 +602,12 @@ export default function EnhancedMobileDashboard() {
     let query = supabase
       .from("journal_entry_lines")
       .select(
-        "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account"
+        "account, account_type, report_category, normal_balance, debit, credit, customer, date"
       )
       .gte("date", start)
       .lte("date", end)
-      .not("entry_bank_account", "is", null); // Only cash transactions
+      .not("entry_bank_account", "is", null) // Only cash transactions
+      .eq("is_bank_account", false); // Exclude checking accounts
       
     if (customerName) {
       query =
