@@ -220,9 +220,9 @@ const validateDataIntegrity = (data, source, expectedCount, callback) => {
 }
 
 // Updated Supabase Configuration
-const SUPABASE_URL = "https://pjaieumtjszcwussmwel.supabase.co"
+const SUPABASE_URL = "https://bdtmsfbhaztukqppnhdk.supabase.co"
 const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBqYWlldW10anN6Y3d1c3Ntd2VsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIwNDQyMTgsImV4cCI6MjA2NzYyMDIxOH0.E1y-qx4EW7dbdN_2sijZaiQVO7ZcqnwC9hTSIccChP0"
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJkdG1zZmJoYXp0dWtxcHBuaGRrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyMDE0NTQsImV4cCI6MjA3MDc3NzQ1NH0.1nJz_lgeRQNTaiFohC5u6yk3OXEleA4sI5pgwPouRsU"
 
 // P&L ONLY Account Classification - EXCLUDES Balance Sheet accounts
 const classifyAccount = (accountType, accountDetailType, accountName) => {
