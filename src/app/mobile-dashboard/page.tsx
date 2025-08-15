@@ -12,6 +12,7 @@ import {
   Target,
   type LucideIcon,
 } from "lucide-react";
+
 import { supabase } from "@/lib/supabaseClient";
 
 // I AM CFO Brand Colors
@@ -54,6 +55,7 @@ interface Transaction {
   memo?: string | null;
   customer?: string | null;
   entryNumber?: string;
+  invoiceNumber?: string | null;
 }
 
 interface JournalRow {
@@ -69,6 +71,7 @@ interface JournalRow {
   vendor?: string | null;
   name?: string | null;
   entry_number?: string;
+  number?: string | null;
 }
 
 interface JournalEntryLine {
@@ -182,7 +185,7 @@ export default function EnhancedMobileDashboard() {
     };
   }, [cfData]);
 
-  // Enhanced classification function
+  // Enhanced classification function for cash flow
   const classifyTransaction = (
     accountType: string | null,
     reportCategory: string | null,
@@ -193,32 +196,50 @@ export default function EnhancedMobileDashboard() {
       return "transfer";
     }
 
+    // Operating Activities - Focus on cash movements from operations
     if (
       typeLower === "income" ||
       typeLower === "other income" ||
+      typeLower === "revenue" ||
+      typeLower === "accounts receivable" ||
+      typeLower === "accounts payable" ||
+      typeLower === "accrued liabilities" ||
+      typeLower === "prepaid expenses" ||
+      typeLower === "inventory" ||
+      typeLower === "other current assets" ||
+      typeLower === "other current liabilities" ||
+      typeLower === "cost of goods sold" ||
       typeLower === "expenses" ||
       typeLower === "expense" ||
-      typeLower === "cost of goods sold" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable"
+      typeLower === "bank" ||
+      typeLower === "cash" ||
+      typeLower === "checking" ||
+      typeLower === "savings"
     ) {
       return "operating";
     }
 
+    // Investing Activities
     if (
       typeLower === "fixed assets" ||
       typeLower === "other assets" ||
-      typeLower === "property, plant & equipment"
+      typeLower === "property, plant & equipment" ||
+      typeLower === "investments" ||
+      typeLower === "equipment"
     ) {
       return "investing";
     }
 
+    // Financing Activities
     if (
       typeLower === "long term liabilities" ||
       typeLower === "equity" ||
       typeLower === "credit card" ||
-      typeLower === "other current liabilities" ||
-      typeLower === "line of credit"
+      typeLower === "line of credit" ||
+      typeLower === "notes payable" ||
+      typeLower === "loans payable" ||
+      typeLower === "owner's equity" ||
+      typeLower === "retained earnings"
     ) {
       return "financing";
     }
@@ -313,19 +334,21 @@ export default function EnhancedMobileDashboard() {
           // Calculate net income
           map[customer].netIncome = (map[customer].revenue || 0) - (map[customer].cogs || 0) - (map[customer].expenses || 0);
         } else {
-          // Enhanced cash flow calculation
-          const cashImpact = row.report_category === "transfer" 
-            ? debit - credit
-            : row.normal_balance || credit - debit;
-            
+          // Enhanced cash flow calculation - focus on actual cash movements
           const classification = classifyTransaction(row.account_type, row.report_category);
           
-          if (classification === "operating") {
-            map[customer].operating = (map[customer].operating || 0) + cashImpact;
-          } else if (classification === "financing") {
-            map[customer].financing = (map[customer].financing || 0) + cashImpact;
-          } else if (classification === "investing") {
-            map[customer].investing = (map[customer].investing || 0) + cashImpact;
+          if (classification !== "other" && classification !== "transfer") {
+            const cashImpact = row.report_category === "transfer" 
+              ? debit - credit
+              : row.normal_balance || credit - debit;
+              
+            if (classification === "operating") {
+              map[customer].operating = (map[customer].operating || 0) + cashImpact;
+            } else if (classification === "financing") {
+              map[customer].financing = (map[customer].financing || 0) + cashImpact;
+            } else if (classification === "investing") {
+              map[customer].investing = (map[customer].investing || 0) + cashImpact;
+            }
           }
         }
       });
@@ -571,19 +594,21 @@ export default function EnhancedMobileDashboard() {
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
       
-      // Enhanced cash impact calculation
-      const cashImpact = row.report_category === "transfer" 
-        ? debit - credit
-        : row.normal_balance || credit - debit;
-        
+      // Enhanced cash impact calculation - focus on actual cash movements
       const classification = classifyTransaction(row.account_type, row.report_category);
       
-      if (classification === "operating") {
-        op[row.account] = (op[row.account] || 0) + cashImpact;
-      } else if (classification === "financing") {
-        fin[row.account] = (fin[row.account] || 0) + cashImpact;
-      } else if (classification === "investing") {
-        inv[row.account] = (inv[row.account] || 0) + cashImpact;
+      if (classification !== "other" && classification !== "transfer") {
+        const cashImpact = row.report_category === "transfer" 
+          ? debit - credit
+          : row.normal_balance || credit - debit;
+          
+        if (classification === "operating") {
+          op[row.account] = (op[row.account] || 0) + cashImpact;
+        } else if (classification === "financing") {
+          fin[row.account] = (fin[row.account] || 0) + cashImpact;
+        } else if (classification === "investing") {
+          inv[row.account] = (inv[row.account] || 0) + cashImpact;
+        }
       }
     });
     
@@ -612,7 +637,7 @@ export default function EnhancedMobileDashboard() {
     let query = supabase
       .from("journal_entry_lines")
       .select(
-        "date, debit, credit, account, customer, report_category, normal_balance, memo, vendor, name, entry_number",
+        "date, debit, credit, account, customer, report_category, normal_balance, memo, vendor, name, entry_number, number",
       )
       .eq("account", account)
       .gte("date", start)
@@ -1358,15 +1383,15 @@ export default function EnhancedMobileDashboard() {
                         display: 'flex', 
                         justifyContent: 'space-between',
                         padding: '6px 10px',
-                        background: `${BRAND_COLORS.danger}08`,
+                        background: `${BRAND_COLORS.warning}08`,
                         borderRadius: '6px',
-                        border: `1px solid ${BRAND_COLORS.danger}20`
+                        border: `1px solid ${BRAND_COLORS.warning}20`
                       }}>
                         <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>COGS</span>
                         <span style={{ 
                           fontSize: '12px', 
                           fontWeight: '700',
-                          color: BRAND_COLORS.danger,
+                          color: BRAND_COLORS.warning,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
                         }}>
                           {formatCompactCurrency(p.cogs || 0)}
@@ -1377,15 +1402,15 @@ export default function EnhancedMobileDashboard() {
                         display: 'flex', 
                         justifyContent: 'space-between',
                         padding: '6px 10px',
-                        background: `${BRAND_COLORS.warning}08`,
+                        background: `${BRAND_COLORS.danger}08`,
                         borderRadius: '6px',
-                        border: `1px solid ${BRAND_COLORS.warning}20`
+                        border: `1px solid ${BRAND_COLORS.danger}20`
                       }}>
                         <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Expenses</span>
                         <span style={{ 
                           fontSize: '12px', 
                           fontWeight: '700',
-                          color: BRAND_COLORS.warning,
+                          color: BRAND_COLORS.danger,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
                         }}>
                           {formatCompactCurrency(p.expenses || 0)}
@@ -1685,8 +1710,8 @@ export default function EnhancedMobileDashboard() {
                   fontSize: '18px', 
                   fontWeight: '600', 
                   marginBottom: '16px',
-                  color: BRAND_COLORS.danger,
-                  borderBottom: `2px solid ${BRAND_COLORS.danger}`,
+                  color: BRAND_COLORS.warning,
+                  borderBottom: `2px solid ${BRAND_COLORS.warning}`,
                   paddingBottom: '8px'
                 }}>
                   Cost of Goods Sold
@@ -1695,55 +1720,6 @@ export default function EnhancedMobileDashboard() {
                   <div
                     key={cat.name}
                     onClick={() => handleCategory(cat.name, "cogs")}
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      padding: '12px',
-                      marginBottom: '8px',
-                      background: BRAND_COLORS.gray[50],
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.background = '#fef2f2';
-                      e.currentTarget.style.borderColor = BRAND_COLORS.danger;
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
-                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
-                    }}
-                  >
-                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
-                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>
-                      {formatCurrency(cat.total)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{
-                background: 'white',
-                borderRadius: '12px',
-                padding: '20px',
-                border: `1px solid ${BRAND_COLORS.gray[200]}`
-              }}>
-                <h3 style={{ 
-                  fontSize: '18px', 
-                  fontWeight: '600', 
-                  marginBottom: '16px',
-                  color: BRAND_COLORS.warning,
-                  borderBottom: `2px solid ${BRAND_COLORS.warning}`,
-                  paddingBottom: '8px'
-                }}>
-                  Expenses
-                </h3>
-                {plData.expenses.map((cat) => (
-                  <div
-                    key={cat.name}
-                    onClick={() => handleCategory(cat.name, "expense")}
                     style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -1767,6 +1743,55 @@ export default function EnhancedMobileDashboard() {
                   >
                     <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
                     <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.danger,
+                  borderBottom: `2px solid ${BRAND_COLORS.danger}`,
+                  paddingBottom: '8px'
+                }}>
+                  Expenses
+                </h3>
+                {plData.expenses.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "expense")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#fef2f2';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.danger;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>
                       {formatCurrency(cat.total)}
                     </span>
                   </div>
@@ -2014,29 +2039,31 @@ export default function EnhancedMobileDashboard() {
                 }}
                 onClick={() => openJournalEntry(t.entryNumber)}
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    marginBottom: '8px',
-                  }}
-                >
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
+                  <div style={{ fontWeight: '600' }}>DATE</div>
+                  <div style={{ fontWeight: '600' }}>PAYEE/CUSTOMER</div>
+                  <div style={{ fontWeight: '600' }}>INVOICE #</div>
+                  <div style={{ fontWeight: '600' }}>MEMO</div>
+                  <div style={{ fontWeight: '600', textAlign: 'right' }}>AMOUNT</div>
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', alignItems: 'center' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '500' }}>
+                    {new Date(t.date).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </div>
+                  
                   <div>
-                    <div style={{ fontSize: '14px', fontWeight: '500' }}>
-                      {new Date(t.date).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}
-                    </div>
                     {t.payee && (
-                      <div style={{ fontSize: '13px', color: '#475569' }}>{t.payee}</div>
+                      <div style={{ fontSize: '13px', color: '#475569', fontWeight: '500' }}>{t.payee}</div>
                     )}
                     {t.customer && (
                       <div
                         style={{
-                          fontSize: '12px',
+                          fontSize: '11px',
                           fontWeight: '600',
                           color: BRAND_COLORS.accent,
                           background: `${BRAND_COLORS.primary}20`,
@@ -2049,27 +2076,37 @@ export default function EnhancedMobileDashboard() {
                         {t.customer}
                       </div>
                     )}
-                    {t.memo && (
-                      <div style={{ fontSize: '12px', color: '#64748b' }}>{t.memo}</div>
-                    )}
                   </div>
-                  <span
-                    style={{
-                      fontSize: '16px',
-                      fontWeight: '600',
-                      color: t.amount >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
-                    }}
-                  >
-                    {formatCurrency(t.amount)}
-                  </span>
+                  
+                  <div style={{ fontSize: '13px', color: '#475569' }}>
+                    {t.invoiceNumber || '-'}
+                  </div>
+                  
+                  <div style={{ fontSize: '12px', color: '#64748b' }}>
+                    {t.memo || '-'}
+                  </div>
+                  
+                  <div style={{ textAlign: 'right' }}>
+                    <span
+                      style={{
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        color: t.amount >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
+                      }}
+                    >
+                      {formatCurrency(t.amount)}
+                    </span>
+                  </div>
                 </div>
+                
                 <div
                   style={{
-                    fontSize: '12px',
+                    fontSize: '11px',
                     color: '#64748b',
                     textAlign: 'right',
                     borderTop: `1px solid ${BRAND_COLORS.gray[100]}`,
                     paddingTop: '8px',
+                    marginTop: '8px',
                   }}
                 >
                   Running Total: {formatCurrency(t.running)}
