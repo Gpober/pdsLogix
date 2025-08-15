@@ -578,7 +578,7 @@ export default function FinancialsPage() {
         }
       });
       setAvailableProperties([
-        "All Properties",
+        "All Customers",
         ...Array.from(properties).sort(),
       ]);
 
