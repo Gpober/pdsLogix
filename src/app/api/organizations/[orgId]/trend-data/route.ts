@@ -40,7 +40,7 @@ interface Entry {
   account_type: string | null
   debit: number | string | null
   credit: number | string | null
-  class?: string | null
+  customer?: string | null  // ← CHANGED from class to customer
 }
 
 export async function GET(req: Request) {
@@ -48,9 +48,9 @@ export async function GET(req: Request) {
   const months = Number.parseInt(url.searchParams.get("months") || "12", 10)
   const endMonth = Number.parseInt(url.searchParams.get("endMonth") || "1", 10)
   const endYear = Number.parseInt(url.searchParams.get("endYear") || "2024", 10)
-  const classParam = url.searchParams.get("classId")
-  const classIds = classParam
-    ? classParam
+  const customerParam = url.searchParams.get("customerId")  // ← CHANGED from classId
+  const customerIds = customerParam  // ← CHANGED from classIds
+    ? customerParam
         .split(",")
         .map((c) => c.trim())
         .filter(Boolean)
@@ -82,15 +82,16 @@ export async function GET(req: Request) {
 
     let query = supabase
       .from("journal_entry_lines")
-      .select("account_type,debit,credit,class")
+      .select("account_type,debit,credit,customer")  // ← CHANGED from class to customer
       .gte("date", startDate)
       .lte("date", endDate)
 
-    if (classIds.length > 0) {
-      query = query.in("class", classIds)
+    if (customerIds.length > 0) {  // ← CHANGED from classIds
+      query = query.in("customer", customerIds)  // ← CHANGED from class to customer
     }
 
     const { data, error } = await query
+
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
