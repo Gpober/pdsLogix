@@ -51,7 +51,7 @@ interface Transaction {
   running: number;
   payee?: string | null;
   memo?: string | null;
-  className?: string | null;
+  customer?: string | null;
   entryNumber?: string;
 }
 
@@ -60,7 +60,6 @@ interface JournalRow {
   account_type: string | null;
   debit: number | null;
   credit: number | null;
-  class: string | null;
   report_category?: string | null;
   normal_balance?: number | null;
   date: string;
@@ -75,7 +74,7 @@ interface JournalEntryLine {
   date: string;
   account: string;
   memo: string | null;
-  class: string | null;
+  customer: string | null;
   debit: number | null;
   credit: number | null;
 }
@@ -271,7 +270,7 @@ export default function EnhancedMobileDashboard() {
       const query = supabase
         .from("journal_entry_lines")
         .select(
-          "account_type, report_category, normal_balance, debit, credit, class, date",
+          "account_type, report_category, normal_balance, debit, credit, customer, date",
         )
         .gte("date", start)
         .lte("date", end);
@@ -482,13 +481,13 @@ export default function EnhancedMobileDashboard() {
     const { start, end } = getDateRange();
     let query = supabase
       .from("journal_entry_lines")
-      .select("account, account_type, debit, credit, class, date")
+      .select("account, account_type, debit, credit, customer, date")
       .gte("date", start)
       .lte("date", end);
     if (propertyName) {
       query =
         propertyName === "General"
-          ? query.is("class", null)
+          ? query.is("customer", null)
           : query.eq("customer", propertyName);
     }
     const { data } = await query;
@@ -517,14 +516,14 @@ export default function EnhancedMobileDashboard() {
     let query = supabase
       .from("journal_entry_lines")
       .select(
-        "account, account_type, report_category, normal_balance, debit, credit, class, date",
+        "account, account_type, report_category, normal_balance, debit, credit, customer, date",
       )
       .gte("date", start)
       .lte("date", end);
     if (propertyName) {
       query =
         propertyName === "General"
-          ? query.is("class", null)
+          ? query.is("customer", null)
           : query.eq("customer", propertyName);
     }
     const { data } = await query;
@@ -577,7 +576,7 @@ export default function EnhancedMobileDashboard() {
     let query = supabase
       .from("journal_entry_lines")
       .select(
-        "date, debit, credit, account, class, report_category, normal_balance, memo, customer, vendor, name, entry_number",
+        "date, debit, credit, account, report_category, normal_balance, memo, customer, vendor, name, entry_number",
       )
       .eq("account", account)
       .gte("date", start)
@@ -585,7 +584,7 @@ export default function EnhancedMobileDashboard() {
     if (selectedProperty) {
       query =
         selectedProperty === "General"
-          ? query.is("class", null)
+          ? query.is("customer", null)
           : query.eq("customer", selectedProperty);
     }
     const { data } = await query;
@@ -609,7 +608,7 @@ export default function EnhancedMobileDashboard() {
           running: 0,
           payee: row.customer || row.vendor || row.name,
           memo: row.memo,
-          className: row.customer,
+          customer: row.customer,
           entryNumber: row.entry_number,
         };
       });
@@ -627,7 +626,7 @@ export default function EnhancedMobileDashboard() {
     if (!entryNumber) return;
     const { data, error } = await supabase
       .from("journal_entry_lines")
-      .select("date, account, memo, class, debit, credit")
+      .select("date, account, memo, customer, debit, credit")
       .eq("entry_number", entryNumber)
       .order("line_sequence");
     if (error) {
@@ -1909,7 +1908,7 @@ export default function EnhancedMobileDashboard() {
                     {t.payee && (
                       <div style={{ fontSize: '13px', color: '#475569' }}>{t.payee}</div>
                     )}
-                    {t.className && (
+                    {t.customer && (
                       <div
                         style={{
                           fontSize: '12px',
@@ -1922,7 +1921,7 @@ export default function EnhancedMobileDashboard() {
                           marginTop: '2px',
                         }}
                       >
-                        {t.className}
+                        {t.customer}
                       </div>
                     )}
                     {t.memo && (
