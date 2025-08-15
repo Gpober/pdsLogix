@@ -2209,42 +2209,4 @@ export default function EnhancedMobileDashboard() {
       )}
     </div>
   );
-}${BRAND_COLORS.success}08`,
-                        borderRadius: '8px',
-                        border: `1px solid ${BRAND_COLORS.success}20`
-                      }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>Revenue</span>
-                        <span style={{
-                          fontSize: '13px',
-                          fontWeight: '700',
-                          color: BRAND_COLORS.success,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                        }}>
-                          {formatCompactCurrency(p.revenue || 0)}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: `${BRAND_COLORS.warning}08`,
-                        borderRadius: '8px',
-                        border: `1px solid ${BRAND_COLORS.warning}20`
-                      }}>
-                        <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>COGS</span>
-                        <span style={{
-                          fontSize: '13px',
-                          fontWeight: '700',
-                          color: BRAND_COLORS.warning,
-                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                        }}>
-                          {formatCompactCurrency(p.cogs || 0)}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        background: `
+}
