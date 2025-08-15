@@ -1226,7 +1226,7 @@ export default function FinancialsPage() {
   const getColumnHeaders = () => {
     if (viewMode === "Total") {
       return [];
-    } else if (viewMode === "Class") {
+    } else if (viewMode === "Customer") {
       return availableProperties.filter((p) => p !== "All Properties");
     } else if (viewMode === "Detail") {
       // For Detail view, show months in the date range using timezone-independent method
