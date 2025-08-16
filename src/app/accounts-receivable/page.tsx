@@ -18,45 +18,39 @@ const BRAND_COLORS = {
 interface ARRecord {
   customer: string
   balance: number
-  lastInvoiceDate: string
-  daysOutstanding: number
-  status: 'current' | '30-60' | '60-90' | '90+'
-  transactions: ARTransaction[]
+  invoiceCount: number
   aging: {
     current: number
     days30: number
     days60: number
     days90: number
   }
+  invoices: ARInvoice[]
 }
 
-interface ARTransaction {
+interface ARInvoice {
+  id: number
   date: string
-  entryNumber: string
-  description: string
-  debit: number
-  credit: number
-  balance: number
-  invoiceNumber?: string | null
-  isOpen: boolean
-  originalAmount: number
-  paidAmount: number
-  remainingBalance: number
-  type: 'invoice' | 'payment'
+  type: string
+  number: string
+  customer: string
+  location: string
+  due_date: string
+  amount: number
+  open_balance: number
+  days_outstanding: number
+  aging_bucket: string
 }
 
 export default function AccountsReceivablePage() {
-  const [selectedPeriod, setSelectedPeriod] = useState("Current")
+  const [selectedPeriod, setSelectedPeriod] = useState("All")
   const [isLoading, setIsLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [arData, setArData] = useState<ARRecord[]>([])
   const [error, setError] = useState<string | null>(null)
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
-  const [asOfDate, setAsOfDate] = useState(() => {
-    const today = new Date()
-    return today.toISOString().split('T')[0]
-  })
+  const [selectedAgingFilter, setSelectedAgingFilter] = useState<string | undefined>(undefined)
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("en-US", {
@@ -98,117 +92,23 @@ export default function AccountsReceivablePage() {
     }
   }
 
-  const calculateDaysOutstanding = (invoiceDate: string, asOfDate: string): number => {
-    const { year: invYear, month: invMonth, day: invDay } = getDateParts(invoiceDate)
-    const { year: asOfYear, month: asOfMonth, day: asOfDay } = getDateParts(asOfDate)
+  const calculateDaysOutstanding = (dueDate: string): number => {
+    if (!dueDate) return 0
     
-    const invoice = new Date(invYear, invMonth - 1, invDay)
-    const asOf = new Date(asOfYear, asOfMonth - 1, asOfDay)
+    const { year, month, day } = getDateParts(dueDate)
+    const due = new Date(year, month - 1, day)
+    const today = new Date()
     
-    const diffTime = Math.abs(asOf.getTime() - invoice.getTime())
+    const diffTime = today.getTime() - due.getTime()
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
   }
 
-  const getAgingStatus = (days: number): 'current' | '30-60' | '60-90' | '90+' => {
-    if (days <= 30) return 'current'
-    if (days <= 60) return '30-60'
-    if (days <= 90) return '60-90'
+  const getAgingBucket = (daysOutstanding: number): string => {
+    if (daysOutstanding <= 0) return 'current'
+    if (daysOutstanding <= 30) return 'current'
+    if (daysOutstanding <= 60) return '31-60'
+    if (daysOutstanding <= 90) return '61-90'
     return '90+'
-  }
-
-  // Calculate aging breakdown for individual invoices based on as-of date
-  const calculateAgingBreakdown = (invoices: ARTransaction[], asOfDate: string) => {
-    const aging = { current: 0, days30: 0, days60: 0, days90: 0 }
-    
-    invoices.forEach(invoice => {
-      const days = calculateDaysOutstanding(invoice.date, asOfDate)
-      const amount = invoice.remainingBalance
-      
-      if (days <= 30) {
-        aging.current += amount
-      } else if (days <= 60) {
-        aging.days30 += amount
-      } else if (days <= 90) {
-        aging.days60 += amount
-      } else {
-        aging.days90 += amount
-      }
-    })
-    
-    return aging
-  }
-
-  // Enhanced payment allocation with as-of date cutoff
-  const allocatePaymentsToInvoices = (transactions: any[], asOfDate: string): ARTransaction[] => {
-    // Filter transactions by as-of date first
-    const filteredTransactions = transactions.filter(tx => {
-      const txDate = getDateParts(tx.date).dateStr
-      return txDate <= asOfDate
-    })
-
-    // Separate invoices and payments from filtered transactions
-    const invoices = filteredTransactions
-      .filter(tx => (Number(tx.debit) || 0) > 0) // Debits are invoices
-      .map(tx => ({
-        date: tx.date,
-        entryNumber: tx.entry_number || "N/A",
-        description: tx.memo || tx.account || "A/R Invoice",
-        debit: Number(tx.debit) || 0,
-        credit: 0,
-        balance: Number(tx.debit) || 0,
-        invoiceNumber: tx.number,
-        isOpen: true,
-        originalAmount: Number(tx.debit) || 0,
-        paidAmount: 0,
-        remainingBalance: Number(tx.debit) || 0,
-        type: 'invoice' as const
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date)) // Sort by date for FIFO
-
-    const payments = filteredTransactions
-      .filter(tx => (Number(tx.credit) || 0) > 0) // Credits are payments
-      .map(tx => ({
-        date: tx.date,
-        entryNumber: tx.entry_number || "N/A",
-        description: tx.memo || tx.account || "A/R Payment",
-        debit: 0,
-        credit: Number(tx.credit) || 0,
-        balance: 0,
-        invoiceNumber: null,
-        isOpen: false,
-        originalAmount: Number(tx.credit) || 0,
-        paidAmount: Number(tx.credit) || 0,
-        remainingBalance: 0,
-        type: 'payment' as const
-      }))
-      .sort((a, b) => a.date.localeCompare(b.date))
-
-    // Apply FIFO payment allocation
-    let remainingPayment = 0
-    const result: ARTransaction[] = []
-
-    // Add all payments first to track total payment pool (only payments on or before as-of date)
-    payments.forEach(payment => {
-      remainingPayment += payment.credit
-    })
-
-    // Allocate payments to invoices using FIFO
-    invoices.forEach(invoice => {
-      if (remainingPayment > 0) {
-        const paymentToApply = Math.min(remainingPayment, invoice.remainingBalance)
-        invoice.paidAmount += paymentToApply
-        invoice.remainingBalance -= paymentToApply
-        invoice.isOpen = invoice.remainingBalance > 0
-        remainingPayment -= paymentToApply
-      }
-      
-      // Only include open invoices in the result
-      if (invoice.isOpen) {
-        result.push(invoice)
-      }
-    })
-
-    return result.sort((a, b) => a.date.localeCompare(b.date))
   }
 
   const fetchARData = async () => {
@@ -216,81 +116,95 @@ export default function AccountsReceivablePage() {
       setIsLoading(true)
       setError(null)
 
-      console.log(`🔍 Fetching A/R data from Supabase as of ${asOfDate}...`)
+      console.log("🔍 Fetching A/R data from ar_aging_detail table...")
 
-      // Query for all A/R account transactions
-      const { data: transactions, error } = await supabase
-        .from("journal_entry_lines")
+      // Query the new ar_aging_detail table
+      const { data: arDetails, error } = await supabase
+        .from("ar_aging_detail")
         .select("*")
-        .ilike("account_type", "%accounts receivable%")
-        .order("date", { ascending: true })
+        .gt("open_balance", 0) // Only records with outstanding balances
+        .order("customer", { ascending: true })
+        .order("due_date", { ascending: true })
 
       if (error) throw error
 
-      console.log(`📊 Found ${transactions.length} A/R transactions`)
+      console.log(`📊 Found ${arDetails.length} A/R detail records`)
 
-      // Group by customer and calculate balances with as-of date logic
+      // Group by customer and calculate aging
       const customerMap = new Map<string, {
-        transactions: any[]
+        invoices: ARInvoice[]
         balance: number
-        lastInvoiceDate: string
+        aging: { current: number, days30: number, days60: number, days90: number }
       }>()
 
-      transactions.forEach((tx: any) => {
-        const customer = tx.customer || tx.name || tx.vendor || "Unknown Customer"
+      arDetails.forEach((record: any) => {
+        const customer = record.customer
         
         if (!customerMap.has(customer)) {
           customerMap.set(customer, {
-            transactions: [],
+            invoices: [],
             balance: 0,
-            lastInvoiceDate: tx.date
+            aging: { current: 0, days30: 0, days60: 0, days90: 0 }
           })
         }
 
         const customerData = customerMap.get(customer)!
-        customerData.transactions.push(tx)
         
-        // Update last invoice date if this is more recent and within as-of date
-        const txDate = getDateParts(tx.date).dateStr
-        if (txDate <= asOfDate && tx.date > customerData.lastInvoiceDate) {
-          customerData.lastInvoiceDate = tx.date
+        // Calculate days outstanding and aging bucket
+        const daysOutstanding = calculateDaysOutstanding(record.due_date)
+        const agingBucket = getAgingBucket(daysOutstanding)
+        
+        const invoice: ARInvoice = {
+          id: record.id,
+          date: record.date,
+          type: record.type || 'Invoice',
+          number: record.number || '',
+          customer: record.customer,
+          location: record.location || '',
+          due_date: record.due_date,
+          amount: Number(record.amount) || 0,
+          open_balance: Number(record.open_balance) || 0,
+          days_outstanding: daysOutstanding,
+          aging_bucket: agingBucket
+        }
+        
+        customerData.invoices.push(invoice)
+        customerData.balance += invoice.open_balance
+        
+        // Add to appropriate aging bucket
+        switch (agingBucket) {
+          case 'current':
+            customerData.aging.current += invoice.open_balance
+            break
+          case '31-60':
+            customerData.aging.days30 += invoice.open_balance
+            break
+          case '61-90':
+            customerData.aging.days60 += invoice.open_balance
+            break
+          case '90+':
+            customerData.aging.days90 += invoice.open_balance
+            break
         }
       })
 
-      // Convert to ARRecord format and filter positive balances
+      // Convert to ARRecord format
       const arRecords: ARRecord[] = []
       
       customerMap.forEach((data, customer) => {
-        // Process transactions with smart payment allocation and as-of date cutoff
-        const openInvoices = allocatePaymentsToInvoices(data.transactions, asOfDate)
-        const openBalance = openInvoices.reduce((sum, inv) => sum + inv.remainingBalance, 0)
-
-        // Only include customers with open invoices
-        if (openBalance > 0) {
-          const lastInvoiceDate = openInvoices.length > 0 
-            ? openInvoices[openInvoices.length - 1].date 
-            : data.lastInvoiceDate
-          
-          const daysOutstanding = calculateDaysOutstanding(lastInvoiceDate, asOfDate)
-          const status = getAgingStatus(daysOutstanding)
-          const aging = calculateAgingBreakdown(openInvoices, asOfDate)
-
-          arRecords.push({
-            customer,
-            balance: openBalance,
-            lastInvoiceDate,
-            daysOutstanding,
-            status,
-            transactions: openInvoices,
-            aging
-          })
-        }
+        arRecords.push({
+          customer,
+          balance: data.balance,
+          invoiceCount: data.invoices.length,
+          aging: data.aging,
+          invoices: data.invoices
+        })
       })
 
       // Sort by balance descending
       arRecords.sort((a, b) => b.balance - a.balance)
 
-      console.log(`✅ Processed ${arRecords.length} customers with outstanding A/R as of ${asOfDate}`)
+      console.log(`✅ Processed ${arRecords.length} customers with outstanding A/R`)
       setArData(arRecords)
     } catch (err) {
       console.error("❌ Error fetching A/R data:", err)
@@ -302,19 +216,23 @@ export default function AccountsReceivablePage() {
 
   useEffect(() => {
     fetchARData()
-  }, [asOfDate]) // Re-fetch when as-of date changes
+  }, [])
 
   // Calculate summary statistics
   const arSummary = useMemo(() => {
     const totalAR = arData.reduce((sum, record) => sum + record.balance, 0)
-    const current = arData.filter(r => r.status === 'current').reduce((sum, r) => sum + r.balance, 0)
-    const days30 = arData.filter(r => r.status === '30-60').reduce((sum, r) => sum + r.balance, 0)
-    const days60 = arData.filter(r => r.status === '60-90').reduce((sum, r) => sum + r.balance, 0)
-    const days90 = arData.filter(r => r.status === '90+').reduce((sum, r) => sum + r.balance, 0)
+    const current = arData.reduce((sum, record) => sum + record.aging.current, 0)
+    const days30 = arData.reduce((sum, record) => sum + record.aging.days30, 0)
+    const days60 = arData.reduce((sum, record) => sum + record.aging.days60, 0)
+    const days90 = arData.reduce((sum, record) => sum + record.aging.days90, 0)
     const pastDue = days30 + days60 + days90
     
-    // Calculate weighted average DSO based on as-of date
-    const totalDays = arData.reduce((sum, r) => sum + (r.daysOutstanding * r.balance), 0)
+    // Calculate weighted average DSO
+    const totalDays = arData.reduce((sum, record) => {
+      return sum + record.invoices.reduce((invSum, inv) => {
+        return invSum + (inv.days_outstanding * inv.open_balance)
+      }, 0)
+    }, 0)
     const averageDSO = totalAR > 0 ? Math.round(totalDays / totalAR) : 0
 
     return {
@@ -325,7 +243,8 @@ export default function AccountsReceivablePage() {
       days90,
       pastDue,
       averageDSO,
-      customerCount: arData.length
+      customerCount: arData.length,
+      totalInvoices: arData.reduce((sum, record) => sum + record.invoiceCount, 0)
     }
   }, [arData])
 
@@ -341,10 +260,10 @@ export default function AccountsReceivablePage() {
 
     if (selectedPeriod !== "All") {
       filtered = filtered.filter(record => {
-        if (selectedPeriod === "Current") return record.status === 'current'
-        if (selectedPeriod === "30-60") return record.status === '30-60'
-        if (selectedPeriod === "60-90") return record.status === '60-90'
-        if (selectedPeriod === "90+") return record.status === '90+'
+        if (selectedPeriod === "Current") return record.aging.current > 0
+        if (selectedPeriod === "30-60") return record.aging.days30 > 0
+        if (selectedPeriod === "60-90") return record.aging.days60 > 0
+        if (selectedPeriod === "90+") return record.aging.days90 > 0
         return true
       })
     }
@@ -358,51 +277,25 @@ export default function AccountsReceivablePage() {
     setShowTransactionModal(true)
   }
 
-  const [selectedAgingFilter, setSelectedAgingFilter] = useState<string | undefined>(undefined)
-  const [selectedJournalEntry, setSelectedJournalEntry] = useState<any>(null)
-  const [showJournalModal, setShowJournalModal] = useState(false)
-
-  const showJournalEntry = async (entryNumber: string) => {
-    try {
-      // Fetch the complete journal entry
-      const { data: journalEntry, error } = await supabase
-        .from("journal_entry_lines")
-        .select("*")
-        .eq("entry_number", entryNumber)
-        .order("line_number", { ascending: true })
-
-      if (error) throw error
-      
-      setSelectedJournalEntry(journalEntry)
-      setShowJournalModal(true)
-    } catch (err) {
-      console.error("Error fetching journal entry:", err)
-    }
-  }
-
-  // Filter transactions based on aging filter
-  const getFilteredTransactions = (transactions: ARTransaction[], agingFilter?: string) => {
-    if (!agingFilter || agingFilter === 'all') return transactions
+  // Filter invoices based on aging filter
+  const getFilteredInvoices = (invoices: ARInvoice[], agingFilter?: string) => {
+    if (!agingFilter || agingFilter === 'all') return invoices
     
-    return transactions.filter(transaction => {
-      const days = calculateDaysOutstanding(transaction.date, asOfDate)
-      const status = getAgingStatus(days)
-      return status === agingFilter
-    })
+    return invoices.filter(invoice => invoice.aging_bucket === agingFilter)
   }
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'current': return 'bg-green-100 text-green-800'
-      case '30-60': return 'bg-yellow-100 text-yellow-800'
-      case '60-90': return 'bg-orange-100 text-orange-800'
+      case '31-60': return 'bg-yellow-100 text-yellow-800'
+      case '61-90': return 'bg-orange-100 text-orange-800'
       case '90+': return 'bg-red-100 text-red-800'
       default: return 'bg-gray-100 text-gray-800'
     }
   }
 
   const selectedCustomerData = selectedCustomer ? arData.find(r => r.customer === selectedCustomer) : null
-  const filteredTransactions = selectedCustomerData ? getFilteredTransactions(selectedCustomerData.transactions, selectedAgingFilter) : []
+  const filteredInvoices = selectedCustomerData ? getFilteredInvoices(selectedCustomerData.invoices, selectedAgingFilter) : []
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -413,44 +306,26 @@ export default function AccountsReceivablePage() {
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Accounts Receivable</h1>
               <p className="text-sm text-gray-600 mt-1">
-                Manage customer invoices and track outstanding payments
+                Real-time A/R aging from imported aging detail reports
               </p>
               <p className="text-xs text-blue-600 mt-1">
-                💰 Real Supabase Integration - Connected to journal_entry_lines
+                📊 Connected to ar_aging_detail table • Synced hourly
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={asOfDate}
-                onChange={(e) => setAsOfDate(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-              <button
-                onClick={fetchARData}
-                disabled={isLoading}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-                Refresh
-              </button>
-            </div>
+            <button
+              onClick={fetchARData}
+              disabled={isLoading}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
           </div>
         </div>
       </div>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="space-y-8">
-          {/* As of Date Header */}
-          <div className="text-center">
-            <h2 className="text-xl font-semibold text-gray-800">
-              Accounts Receivable as of {formatDateSafe(asOfDate)}
-            </h2>
-            <p className="text-sm text-gray-600 mt-1">
-              Shows outstanding balances and aging based on transactions through the selected date
-            </p>
-          </div>
-
           {/* Error State */}
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -477,7 +352,7 @@ export default function AccountsReceivablePage() {
                   <div className="text-gray-600 text-sm font-medium mb-2">Total A/R</div>
                   <div className="text-2xl font-bold text-gray-900">{formatCurrency(arSummary.totalAR)}</div>
                   <div className="text-xs text-gray-500 font-medium mt-1">
-                    {arSummary.customerCount} customers
+                    {arSummary.customerCount} customers • {arSummary.totalInvoices} invoices
                   </div>
                 </div>
                 <DollarSign className="w-8 h-8" style={{ color: BRAND_COLORS.primary }} />
@@ -535,7 +410,7 @@ export default function AccountsReceivablePage() {
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Aging Analysis</h3>
-              <div className="text-sm text-gray-600 mt-1">Breakdown by aging buckets as of {formatDateSafe(asOfDate)}</div>
+              <div className="text-sm text-gray-600 mt-1">Current aging breakdown from latest imported data</div>
             </div>
 
             <div className="p-6">
@@ -635,7 +510,7 @@ export default function AccountsReceivablePage() {
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Outstanding Receivables</h3>
               <div className="text-sm text-gray-600 mt-1">
-                Showing {filteredData.length} of {arData.length} customers with outstanding balances as of {formatDateSafe(asOfDate)}
+                Showing {filteredData.length} of {arData.length} customers • Click any amount to drill down
               </div>
             </div>
 
@@ -662,8 +537,8 @@ export default function AccountsReceivablePage() {
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Total Balance
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Last Invoice
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Invoices
                       </th>
                     </tr>
                   </thead>
@@ -688,7 +563,7 @@ export default function AccountsReceivablePage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                           {record.aging.days30 > 0 ? (
                             <button
-                              onClick={() => showCustomerTransactions(record.customer, '30-60')}
+                              onClick={() => showCustomerTransactions(record.customer, '31-60')}
                               className="font-medium text-yellow-600 hover:text-yellow-800 hover:underline cursor-pointer"
                             >
                               {formatCurrency(record.aging.days30)}
@@ -700,7 +575,7 @@ export default function AccountsReceivablePage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                           {record.aging.days60 > 0 ? (
                             <button
-                              onClick={() => showCustomerTransactions(record.customer, '60-90')}
+                              onClick={() => showCustomerTransactions(record.customer, '61-90')}
                               className="font-medium text-orange-600 hover:text-orange-800 hover:underline cursor-pointer"
                             >
                               {formatCurrency(record.aging.days60)}
@@ -729,8 +604,8 @@ export default function AccountsReceivablePage() {
                             {formatCurrency(record.balance)}
                           </button>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {formatDateSafe(record.lastInvoiceDate)}
+                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
+                          {record.invoiceCount}
                         </td>
                       </tr>
                     ))}
@@ -747,26 +622,26 @@ export default function AccountsReceivablePage() {
         </div>
       </main>
 
-      {/* Transaction Detail Modal */}
+      {/* Invoice Detail Modal */}
       {showTransactionModal && selectedCustomerData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] flex flex-col">
+          <div className="bg-white rounded-lg max-w-5xl w-full max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-200 flex-shrink-0">
               <div className="flex justify-between items-center">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">
                     {selectedAgingFilter && selectedAgingFilter !== 'all' 
                       ? `${selectedAgingFilter === 'current' ? 'Current (0-30)' : 
-                          selectedAgingFilter === '30-60' ? '31-60 Days' :
-                          selectedAgingFilter === '60-90' ? '61-90 Days' :
+                          selectedAgingFilter === '31-60' ? '31-60 Days' :
+                          selectedAgingFilter === '61-90' ? '61-90 Days' :
                           '90+ Days'} Invoices - ${selectedCustomerData.customer}`
-                      : `All Open Invoices - ${selectedCustomerData.customer}`
+                      : `All Outstanding Invoices - ${selectedCustomerData.customer}`
                     }
                   </h3>
                   <p className="text-sm text-gray-600">
                     {selectedAgingFilter && selectedAgingFilter !== 'all'
-                      ? `Showing ${filteredTransactions.length} invoices in this aging category • Total: ${formatCurrency(filteredTransactions.reduce((sum, t) => sum + t.remainingBalance, 0))}`
-                      : `Outstanding balance as of ${formatDateSafe(asOfDate)}: ${formatCurrency(selectedCustomerData.balance)} • ${selectedCustomerData.transactions.length} open invoices`
+                      ? `Showing ${filteredInvoices.length} invoices in this aging category • Total: ${formatCurrency(filteredInvoices.reduce((sum, inv) => sum + inv.open_balance, 0))}`
+                      : `Outstanding balance: ${formatCurrency(selectedCustomerData.balance)} • ${selectedCustomerData.invoiceCount} invoices`
                     }
                   </p>
                 </div>
@@ -785,149 +660,47 @@ export default function AccountsReceivablePage() {
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entry #</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Original</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Paid</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Remaining</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Number</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Due Date</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Open Balance</th>
                       <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredTransactions.map((transaction, index) => {
-                      const daysOld = calculateDaysOutstanding(transaction.date, asOfDate)
-                      const agingStatus = getAgingStatus(daysOld)
-                      
-                      return (
-                        <tr key={index} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                            {formatDateSafe(transaction.date)}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm">
-                            <button
-                              onClick={() => showJournalEntry(transaction.entryNumber)}
-                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
-                            >
-                              {transaction.entryNumber}
-                            </button>
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                            {transaction.invoiceNumber || '-'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-900">
-                            {transaction.description}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
-                            {formatCurrency(transaction.originalAmount)}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-green-600">
-                            {formatCurrency(transaction.paidAmount)}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-red-600">
-                            {formatCurrency(transaction.remainingBalance)}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-center">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(agingStatus)}`}>
-                              {daysOld} days
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Journal Entry Detail Modal */}
-      {showJournalModal && selectedJournalEntry && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-5xl w-full max-h-[80vh] flex flex-col">
-            <div className="p-6 border-b border-gray-200 flex-shrink-0">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Journal Entry Details
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    Entry #{selectedJournalEntry[0]?.entry_number} • Date: {formatDateSafe(selectedJournalEntry[0]?.date)} • {selectedJournalEntry.length} lines
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowJournalModal(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-            
-            <div className="flex-1 overflow-auto p-6">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Line</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Debit</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Credit</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {selectedJournalEntry.map((line: any, index: number) => (
+                    {filteredInvoices.map((invoice, index) => (
                       <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                          {line.line_number || index + 1}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                          {formatDateSafe(invoice.date)}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          {line.account_type || line.account}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {invoice.type}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          {line.memo || line.description || '-'}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {invoice.number || '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600">
-                          {line.customer || line.vendor || line.name || '-'}
+                          {invoice.location || '-'}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
-                          {line.debit > 0 ? (
-                            <span className="font-medium text-gray-900">
-                              {formatCurrency(line.debit)}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300">-</span>
-                          )}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {formatDateSafe(invoice.due_date)}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
-                          {line.credit > 0 ? (
-                            <span className="font-medium text-gray-900">
-                              {formatCurrency(line.credit)}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300">-</span>
-                          )}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
+                          {formatCurrency(invoice.amount)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-red-600">
+                          {formatCurrency(invoice.open_balance)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-center">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(invoice.aging_bucket)}`}>
+                            {invoice.days_outstanding} days
+                          </span>
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                  <tfoot className="bg-gray-50">
-                    <tr>
-                      <td colSpan={4} className="px-4 py-3 text-sm font-medium text-gray-900">
-                        Totals:
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
-                        {formatCurrency(selectedJournalEntry.reduce((sum: number, line: any) => sum + (line.debit || 0), 0))}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
-                        {formatCurrency(selectedJournalEntry.reduce((sum: number, line: any) => sum + (line.credit || 0), 0))}
-                      </td>
-                    </tr>
-                  </tfoot>
                 </table>
               </div>
             </div>
