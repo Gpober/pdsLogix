@@ -3,15 +3,12 @@
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
-  BarChart as ReBarChart,
-  Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
-  Legend,
   ResponsiveContainer,
-  LineChart,
-  Line,
 } from "recharts";
 import {
   Select,
@@ -20,11 +17,32 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Download, RefreshCw, X } from "lucide-react";
+import { 
+  Download, 
+  RefreshCw, 
+  X, 
+  TrendingUp, 
+  TrendingDown, 
+  AlertCircle,
+  CheckCircle2,
+  Sparkles
+} from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
 
 const BRAND_COLORS = {
   primary: "#56B6E9",
+  success: "#10B981",
+  warning: "#F59E0B", 
+  danger: "#EF4444",
+  gray: {
+    50: '#F9FAFB',
+    100: '#F3F4F6',
+    200: '#E5E7EB',
+    300: '#D1D5DB',
+    600: '#4B5563',
+    700: '#374151',
+    800: '#1F2937'
+  }
 };
 
 type KPIs = {
@@ -35,7 +53,14 @@ type KPIs = {
   netIncome: number;
 };
 
-export default function ComparativeAnalysisPage() {
+type Insight = {
+  type: 'positive' | 'negative' | 'neutral' | 'warning';
+  title: string;
+  description: string;
+  impact: 'high' | 'medium' | 'low';
+};
+
+export default function EnhancedComparativeAnalysis() {
   const [mode, setMode] = useState<"period" | "customer">("period");
   const [startA, setStartA] = useState("");
   const [endA, setEndA] = useState("");
@@ -51,8 +76,7 @@ export default function ComparativeAnalysisPage() {
     cogs: any[];
     expenses: any[];
   }>({ income: [], cogs: [], expenses: [] });
-  const [lineData, setLineData] = useState<any[]>([]);
-  const [selectedKpi, setSelectedKpi] = useState<keyof KPIs>("revenue");
+  const [weeklyData, setWeeklyData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allLinesA, setAllLinesA] = useState<any[]>([]);
@@ -60,6 +84,7 @@ export default function ComparativeAnalysisPage() {
   const [showModal, setShowModal] = useState(false);
   const [modalTitle, setModalTitle] = useState("");
   const [modalTransactions, setModalTransactions] = useState<any[]>([]);
+  const [insights, setInsights] = useState<Insight[]>([]);
 
   useEffect(() => {
     fetchCustomers();
@@ -97,9 +122,7 @@ export default function ComparativeAnalysisPage() {
   };
 
   const computeKPIs = (lines: any[]): KPIs => {
-    let revenue = 0,
-      cogs = 0,
-      opEx = 0;
+    let revenue = 0, cogs = 0, opEx = 0;
     lines.forEach((l) => {
       const amount = (Number(l.credit) || 0) - (Number(l.debit) || 0);
       const type = (l.account_type || "").toLowerCase();
@@ -116,34 +139,114 @@ export default function ComparativeAnalysisPage() {
     return { revenue, cogs, grossProfit, opEx, netIncome };
   };
 
-  const aggregateDaily = (lines: any[], kpi: keyof KPIs) => {
-    const map = new Map<string, number>();
-    lines.forEach((l) => {
-      const date = l.date.slice(0, 10);
-      const amount = (Number(l.credit) || 0) - (Number(l.debit) || 0);
-      const type = (l.account_type || "").toLowerCase();
-      let include = false;
-      if (
-        kpi === "revenue" &&
-        (type.includes("income") || type.includes("revenue"))
-      )
-        include = true;
-      else if (kpi === "cogs" && type.includes("cost of goods sold"))
-        include = true;
-      else if (
-        kpi === "opEx" &&
-        type.includes("expense") &&
-        !type.includes("cost of goods sold")
-      )
-        include = true;
-      else if (kpi === "grossProfit") include = true;
-      else if (kpi === "netIncome") include = true;
+  const generateInsights = (dataA: KPIs, dataB: KPIs): Insight[] => {
+    const insights: Insight[] = [];
+    
+    // Revenue analysis
+    const revChange = ((dataA.revenue - dataB.revenue) / Math.abs(dataB.revenue)) * 100;
+    if (Math.abs(revChange) > 10) {
+      insights.push({
+        type: revChange > 0 ? 'positive' : 'negative',
+        title: `Revenue ${revChange > 0 ? 'Growth' : 'Decline'}`,
+        description: `Revenue ${revChange > 0 ? 'increased' : 'decreased'} by ${Math.abs(revChange).toFixed(1)}%, indicating ${revChange > 0 ? 'strong business growth' : 'potential market challenges or operational issues'}.`,
+        impact: Math.abs(revChange) > 25 ? 'high' : Math.abs(revChange) > 15 ? 'medium' : 'low'
+      });
+    }
 
-      if (include) {
-        map.set(date, (map.get(date) || 0) + amount);
-      }
-    });
-    return map;
+    // Margin analysis
+    const marginA = dataA.revenue ? (dataA.grossProfit / dataA.revenue) * 100 : 0;
+    const marginB = dataB.revenue ? (dataB.grossProfit / dataB.revenue) * 100 : 0;
+    const marginChange = marginA - marginB;
+    
+    if (Math.abs(marginChange) > 2) {
+      insights.push({
+        type: marginChange > 0 ? 'positive' : 'warning',
+        title: `Gross Margin ${marginChange > 0 ? 'Improvement' : 'Compression'}`,
+        description: `Gross margin ${marginChange > 0 ? 'improved' : 'declined'} by ${Math.abs(marginChange).toFixed(1)} percentage points, suggesting ${marginChange > 0 ? 'better cost management or pricing power' : 'increased costs or pricing pressure'}.`,
+        impact: Math.abs(marginChange) > 5 ? 'high' : 'medium'
+      });
+    }
+
+    // Expense efficiency
+    const expenseRatioA = dataA.revenue ? Math.abs(dataA.opEx / dataA.revenue) * 100 : 0;
+    const expenseRatioB = dataB.revenue ? Math.abs(dataB.opEx / dataB.revenue) * 100 : 0;
+    const expenseChange = expenseRatioA - expenseRatioB;
+    
+    if (Math.abs(expenseChange) > 3) {
+      insights.push({
+        type: expenseChange < 0 ? 'positive' : 'warning',
+        title: `Operational Efficiency ${expenseChange < 0 ? 'Gains' : 'Concerns'}`,
+        description: `Operating expenses as % of revenue ${expenseChange < 0 ? 'decreased' : 'increased'} by ${Math.abs(expenseChange).toFixed(1)} points, indicating ${expenseChange < 0 ? 'improved operational leverage' : 'potential cost control challenges'}.`,
+        impact: Math.abs(expenseChange) > 5 ? 'high' : 'medium'
+      });
+    }
+
+    // Profitability
+    const profitChange = ((dataA.netIncome - dataB.netIncome) / Math.abs(dataB.netIncome)) * 100;
+    if (Math.abs(profitChange) > 15) {
+      insights.push({
+        type: profitChange > 0 ? 'positive' : 'negative',
+        title: `Bottom Line ${profitChange > 0 ? 'Acceleration' : 'Pressure'}`,
+        description: `Net income ${profitChange > 0 ? 'surged' : 'fell'} by ${Math.abs(profitChange).toFixed(1)}%, ${profitChange > 0 ? 'demonstrating strong operational performance and strategic execution' : 'highlighting the need for strategic cost management or revenue optimization'}.`,
+        impact: 'high'
+      });
+    }
+
+    return insights.slice(0, 3); // Keep top 3 insights
+  };
+
+  const aggregateWeekly = (linesA: any[], linesB: any[]) => {
+    const weeks = new Map<string, { A: KPIs; B: KPIs }>();
+    
+    const processLines = (lines: any[], key: 'A' | 'B') => {
+      lines.forEach((line) => {
+        const date = new Date(line.date);
+        const weekStart = new Date(date);
+        weekStart.setDate(date.getDate() - date.getDay());
+        const weekKey = weekStart.toISOString().split('T')[0];
+        
+        if (!weeks.has(weekKey)) {
+          weeks.set(weekKey, {
+            A: { revenue: 0, cogs: 0, grossProfit: 0, opEx: 0, netIncome: 0 },
+            B: { revenue: 0, cogs: 0, grossProfit: 0, opEx: 0, netIncome: 0 }
+          });
+        }
+        
+        const week = weeks.get(weekKey)!;
+        const amount = (Number(line.credit) || 0) - (Number(line.debit) || 0);
+        const type = (line.account_type || "").toLowerCase();
+        
+        if (type.includes("income") || type.includes("revenue")) {
+          week[key].revenue += amount;
+        } else if (type.includes("cost of goods sold")) {
+          week[key].cogs += amount;
+        } else if (type.includes("expense")) {
+          week[key].opEx += amount;
+        }
+      });
+    };
+    
+    processLines(linesA, 'A');
+    processLines(linesB, 'B');
+    
+    return Array.from(weeks.entries())
+      .map(([week, data]) => {
+        data.A.grossProfit = data.A.revenue + data.A.cogs;
+        data.A.netIncome = data.A.grossProfit + data.A.opEx;
+        data.B.grossProfit = data.B.revenue + data.B.cogs;
+        data.B.netIncome = data.B.grossProfit + data.B.opEx;
+        
+        return {
+          week,
+          revenueA: data.A.revenue,
+          revenueB: data.B.revenue,
+          netIncomeA: data.A.netIncome,
+          netIncomeB: data.B.netIncome,
+          marginA: data.A.revenue ? (data.A.grossProfit / data.A.revenue) * 100 : 0,
+          marginB: data.B.revenue ? (data.B.grossProfit / data.B.revenue) * 100 : 0
+        };
+      })
+      .sort((a, b) => a.week.localeCompare(b.week));
   };
 
   const computeVarianceTable = (linesA: any[], linesB: any[]) => {
@@ -207,17 +310,6 @@ export default function ComparativeAnalysisPage() {
     return { a, b, var: v, varPct: vp };
   };
 
-  const buildLineData = (linesA: any[], linesB: any[], kpi: keyof KPIs) => {
-    const mapA = aggregateDaily(linesA, kpi);
-    const mapB = aggregateDaily(linesB, kpi);
-    const dates = Array.from(new Set([...mapA.keys(), ...mapB.keys()])).sort();
-    return dates.map((d) => ({
-      date: d,
-      A: mapA.get(d) || 0,
-      B: mapB.get(d) || 0,
-    }));
-  };
-
   const fetchData = async () => {
     if (mode === "period" && (!startA || !endA || !startB || !endB)) return;
     if (mode === "customer" && (!startA || !endA)) return;
@@ -233,70 +325,21 @@ export default function ComparativeAnalysisPage() {
           mode === "customer" ? customerB : undefined,
         ),
       ]);
+      
       const kpiA = computeKPIs(linesA);
       const kpiB = computeKPIs(linesB);
       setDataA(kpiA);
       setDataB(kpiB);
       setVarianceRows(computeVarianceTable(linesA, linesB));
-      setLineData(buildLineData(linesA, linesB, selectedKpi));
+      setWeeklyData(aggregateWeekly(linesA, linesB));
       setAllLinesA(linesA);
       setAllLinesB(linesB);
+      setInsights(generateInsights(kpiA, kpiB));
     } catch (e: any) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    if (allLinesA.length || allLinesB.length) {
-      setLineData(buildLineData(allLinesA, allLinesB, selectedKpi));
-    }
-  }, [selectedKpi, allLinesA, allLinesB]);
-
-  const barChartData =
-    dataA && dataB
-      ? [
-          { kpi: "Revenue", A: dataA.revenue, B: dataB.revenue },
-          { kpi: "COGS", A: dataA.cogs, B: dataB.cogs },
-          {
-            kpi: "Gross Profit",
-            A: dataA.grossProfit,
-            B: dataB.grossProfit,
-          },
-          { kpi: "OpEx", A: dataA.opEx, B: dataB.opEx },
-          {
-            kpi: "Net Income",
-            A: dataA.netIncome,
-            B: dataB.netIncome,
-          },
-        ]
-      : [];
-
-  const percent = (diff: number, base: number) => {
-    if (!base) return 0;
-    return (diff / Math.abs(base)) * 100;
-  };
-
-  const summaryBullets = () => {
-    if (!dataA || !dataB) return [];
-    const bullets = [];
-    const revPct = percent(dataA.revenue - dataB.revenue, dataB.revenue);
-    if (revPct)
-      bullets.push(
-        `Revenue ${revPct > 0 ? "up" : "down"} ${Math.abs(revPct).toFixed(2)}%`,
-      );
-    const opPct = percent(dataA.opEx - dataB.opEx, dataB.opEx);
-    if (opPct)
-      bullets.push(
-        `OpEx ${opPct > 0 ? "up" : "down"} ${Math.abs(opPct).toFixed(2)}%`,
-      );
-    const netPct = percent(dataA.netIncome - dataB.netIncome, dataB.netIncome);
-    if (netPct)
-      bullets.push(
-        `Net Income ${netPct > 0 ? "up" : "down"} ${Math.abs(netPct).toFixed(2)}%`,
-      );
-    return bullets.slice(0, 3);
   };
 
   const showTransactionDetails = (account: string) => {
@@ -350,463 +393,617 @@ export default function ComparativeAnalysisPage() {
     URL.revokeObjectURL(url);
   };
 
-  const summary = summaryBullets();
+  const getInsightIcon = (type: string) => {
+    switch (type) {
+      case 'positive': return <CheckCircle2 className="w-5 h-5 text-green-500" />;
+      case 'negative': return <AlertCircle className="w-5 h-5 text-red-500" />;
+      case 'warning': return <AlertCircle className="w-5 h-5 text-yellow-500" />;
+      default: return <Sparkles className="w-5 h-5 text-blue-500" />;
+    }
+  };
+
+  const formatPercentage = (value: number) => {
+    const abs = Math.abs(value);
+    const sign = value >= 0 ? '+' : '';
+    return `${sign}${abs.toFixed(1)}%`;
+  };
+
+  const getChangeColor = (value: number) => {
+    if (value > 0) return 'text-green-600';
+    if (value < 0) return 'text-red-600';
+    return 'text-gray-600';
+  };
+
+  const getChangeIcon = (value: number) => {
+    if (value > 0) return <TrendingUp className="w-4 h-4" />;
+    if (value < 0) return <TrendingDown className="w-4 h-4" />;
+    return null;
+  };
 
   return (
-    <div className="p-4 space-y-6">
-      <h1 className="text-2xl font-bold mb-2">Comparative Analysis</h1>
+    <div className="p-6 space-y-8 bg-gray-50 min-h-screen">
+      {/* Header */}
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+        <h1 className="text-3xl font-bold text-gray-900 mb-6">Comparative Analysis</h1>
 
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="flex flex-col">
-          <label className="text-sm text-gray-700 mb-1">Mode</label>
-          <Select value={mode} onValueChange={(v) => setMode(v as any)}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="period">Period vs Period</SelectItem>
-              <SelectItem value="customer">Customer vs Customer</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex flex-col">
-          <label className="text-sm text-gray-700 mb-1">Start A</label>
-          <input
-            type="date"
-            value={startA}
-            onChange={(e) => setStartA(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
-          />
-        </div>
-        <div className="flex flex-col">
-          <label className="text-sm text-gray-700 mb-1">End A</label>
-          <input
-            type="date"
-            value={endA}
-            onChange={(e) => setEndA(e.target.value)}
-            className="border rounded px-2 py-1 text-sm"
-          />
-        </div>
-
-        {mode === "period" && (
-          <>
-            <div className="flex flex-col">
-              <label className="text-sm text-gray-700 mb-1">Start B</label>
-              <input
-                type="date"
-                value={startB}
-                onChange={(e) => setStartB(e.target.value)}
-                className="border rounded px-2 py-1 text-sm"
-              />
-            </div>
-            <div className="flex flex-col">
-              <label className="text-sm text-gray-700 mb-1">End B</label>
-              <input
-                type="date"
-                value={endB}
-                onChange={(e) => setEndB(e.target.value)}
-                className="border rounded px-2 py-1 text-sm"
-              />
-            </div>
-          </>
-        )}
-
-        {mode === "customer" && (
-          <>
-            <div className="flex flex-col">
-          <label className="text-sm text-gray-700 mb-1">Customer A</label>
-              <Select value={customerA} onValueChange={(v) => setCustomerA(v)}>
-                <SelectTrigger className="w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex flex-col">
-          <label className="text-sm text-gray-700 mb-1">Customer B</label>
-              <Select value={customerB} onValueChange={(v) => setCustomerB(v)}>
-                <SelectTrigger className="w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </>
-        )}
-
-        <button
-          onClick={fetchData}
-          disabled={loading}
-          className="inline-flex items-center px-4 py-2 text-white rounded-lg text-sm font-medium hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2"
-          style={
-            {
-              backgroundColor: BRAND_COLORS.primary,
-              "--tw-ring-color": BRAND_COLORS.primary + "33",
-            } as React.CSSProperties
-          }
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
-          {loading ? "Loading..." : "Refresh"}
-        </button>
-        <button
-          onClick={handleExport}
-          className="inline-flex items-center px-4 py-2 text-white rounded-lg text-sm font-medium hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2"
-          style={
-            {
-              backgroundColor: BRAND_COLORS.primary,
-              "--tw-ring-color": BRAND_COLORS.primary + "33",
-            } as React.CSSProperties
-          }
-        >
-          <Download className="w-4 h-4 mr-2" />
-          Export CSV
-        </button>
-      </div>
-
-      {error && <div className="text-red-600 text-sm">{error}</div>}
-
-      {summary.length > 0 && (
-        <div className="bg-gray-50 p-4 rounded-md">
-          {summary.map((s, idx) => (
-            <p key={idx} className="text-sm text-gray-700">
-              • {s}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {barChartData.length > 0 && (
-        <div className="w-full h-64">
-          <ResponsiveContainer>
-            <ReBarChart data={barChartData}>
-              <XAxis dataKey="kpi" />
-              <YAxis tickFormatter={(v) => formatCurrency(v)} />
-              <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-              <Legend />
-              <Bar dataKey="A" fill="#56B6E9" />
-              <Bar dataKey="B" fill="#94A3B8" />
-            </ReBarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {lineData.length > 0 && (
-        <div className="w-full">
-          <div className="flex justify-end mb-2">
-            <Select
-              value={selectedKpi}
-              onValueChange={(v) => setSelectedKpi(v as keyof KPIs)}
-            >
-              <SelectTrigger className="w-48">
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex flex-col">
+            <label className="text-sm font-medium text-gray-700 mb-2">Analysis Type</label>
+            <Select value={mode} onValueChange={(v) => setMode(v as any)}>
+              <SelectTrigger className="w-48 h-11">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="revenue">Revenue</SelectItem>
-                <SelectItem value="cogs">COGS</SelectItem>
-                <SelectItem value="grossProfit">Gross Profit</SelectItem>
-                <SelectItem value="opEx">OpEx</SelectItem>
-                <SelectItem value="netIncome">Net Income</SelectItem>
+                <SelectItem value="period">Period vs Period</SelectItem>
+                <SelectItem value="customer">Customer vs Customer</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          <div className="h-64">
-            <ResponsiveContainer>
-              <LineChart data={lineData} margin={{ left: 40, right: 20 }}>
-                <XAxis dataKey="date" />
-                <YAxis tickFormatter={(v) => formatCurrency(v)} />
-                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-                <Legend />
-                <Line type="monotone" dataKey="A" stroke="#56B6E9" />
-                <Line type="monotone" dataKey="B" stroke="#94A3B8" />
-              </LineChart>
-            </ResponsiveContainer>
+
+          <div className="flex flex-col">
+            <label className="text-sm font-medium text-gray-700 mb-2">
+              {mode === "period" ? "Period A Start" : "Date Range Start"}
+            </label>
+            <input
+              type="date"
+              value={startA}
+              onChange={(e) => setStartA(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          
+          <div className="flex flex-col">
+            <label className="text-sm font-medium text-gray-700 mb-2">
+              {mode === "period" ? "Period A End" : "Date Range End"}
+            </label>
+            <input
+              type="date"
+              value={endA}
+              onChange={(e) => setEndA(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          {mode === "period" ? (
+            <>
+              <div className="flex flex-col">
+                <label className="text-sm font-medium text-gray-700 mb-2">Period B Start</label>
+                <input
+                  type="date"
+                  value={startB}
+                  onChange={(e) => setStartB(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-sm font-medium text-gray-700 mb-2">Period B End</label>
+                <input
+                  type="date"
+                  value={endB}
+                  onChange={(e) => setEndB(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-col">
+                <label className="text-sm font-medium text-gray-700 mb-2">Customer A</label>
+                <Select value={customerA} onValueChange={(v) => setCustomerA(v)}>
+                  <SelectTrigger className="w-48 h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col">
+                <label className="text-sm font-medium text-gray-700 mb-2">Customer B</label>
+                <Select value={customerB} onValueChange={(v) => setCustomerB(v)}>
+                  <SelectTrigger className="w-48 h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          )}
+
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 h-11"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
+            {loading ? "Analyzing..." : "Analyze"}
+          </button>
+          
+          <button
+            onClick={handleExport}
+            className="inline-flex items-center px-6 py-3 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 h-11"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Export
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-red-600 text-sm">{error}</p>
+          </div>
+        )}
+      </div>
+
+      {/* AI Insights */}
+      {insights.length > 0 && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-100">
+          <div className="flex items-center gap-2 mb-4">
+            <Sparkles className="w-6 h-6 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900">AI Analysis</h2>
+          </div>
+          <div className="grid gap-4 md:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
+            {insights.map((insight, idx) => (
+              <div key={idx} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+                <div className="flex items-start gap-3">
+                  {getInsightIcon(insight.type)}
+                  <div className="flex-1">
+                    <h3 className="font-medium text-gray-900 mb-1">{insight.title}</h3>
+                    <p className="text-sm text-gray-600 leading-relaxed">{insight.description}</p>
+                    <span className={`inline-block mt-2 px-2 py-1 rounded-full text-xs font-medium ${
+                      insight.impact === 'high' ? 'bg-red-100 text-red-700' :
+                      insight.impact === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-green-100 text-green-700'
+                    }`}>
+                      {insight.impact.toUpperCase()} IMPACT
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {(varianceRows.income.length > 0 ||
-        varianceRows.cogs.length > 0 ||
-        varianceRows.expenses.length > 0) && (
-        <div className="overflow-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                  Account
-                </th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
-                  A
-                </th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
-                  B
-                </th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
-                  Var $
-                </th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
-                  Var %
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {/* Income Section */}
-              {varianceRows.income.length > 0 && (
-                <>
-                  <tr className="bg-green-50">
-                    {(() => {
-                      const t = sectionTotals(varianceRows.income);
-                      return (
-                        <>
-                          <td className="!bg-green-50 px-4 py-2 text-sm font-bold text-green-800">
-                            INCOME
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-green-800 text-right">
-                            {formatCurrency(t.a)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-green-800 text-right">
-                            {formatCurrency(t.b)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-green-800 text-right">
-                            {formatCurrency(t.var)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-green-800 text-right">
-                            {t.varPct !== null
-                              ? (t.varPct * 100).toFixed(2) + "%"
-                              : ""}
-                          </td>
-                        </>
-                      );
-                    })()}
-                  </tr>
-                  {varianceRows.income.map((r) => (
-                    <tr
-                      key={r.account}
-                      onClick={() => showTransactionDetails(r.account)}
-                      className="hover:bg-gray-50 cursor-pointer"
-                    >
-                      <td className="px-4 py-2 text-sm text-gray-700">
-                        {r.account}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.a)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.b)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.var)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {r.varPct !== null
-                          ? (r.varPct * 100).toFixed(2) + "%"
-                          : ""}
-                      </td>
-                    </tr>
-                  ))}
-                </>
-              )}
-
-              {/* COGS Section */}
-              {varianceRows.cogs.length > 0 && (
-                <>
-                  <tr className="bg-yellow-50">
-                    {(() => {
-                      const t = sectionTotals(varianceRows.cogs);
-                      return (
-                        <>
-                          <td className="!bg-yellow-50 px-4 py-2 text-sm font-bold text-yellow-800">
-                            COGS
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-yellow-800 text-right">
-                            {formatCurrency(t.a)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-yellow-800 text-right">
-                            {formatCurrency(t.b)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-yellow-800 text-right">
-                            {formatCurrency(t.var)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-yellow-800 text-right">
-                            {t.varPct !== null
-                              ? (t.varPct * 100).toFixed(2) + "%"
-                              : ""}
-                          </td>
-                        </>
-                      );
-                    })()}
-                  </tr>
-                  {varianceRows.cogs.map((r) => (
-                    <tr
-                      key={r.account}
-                      onClick={() => showTransactionDetails(r.account)}
-                      className="hover:bg-gray-50 cursor-pointer"
-                    >
-                      <td className="px-4 py-2 text-sm text-gray-700">
-                        {r.account}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.a)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.b)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.var)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {r.varPct !== null
-                          ? (r.varPct * 100).toFixed(2) + "%"
-                          : ""}
-                      </td>
-                    </tr>
-                  ))}
-                </>
-              )}
-
-              {/* Expenses Section */}
-              {varianceRows.expenses.length > 0 && (
-                <>
-                  <tr className="bg-red-50">
-                    {(() => {
-                      const t = sectionTotals(varianceRows.expenses);
-                      return (
-                        <>
-                          <td className="!bg-red-50 px-4 py-2 text-sm font-bold text-red-800">
-                            EXPENSES
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-red-800 text-right">
-                            {formatCurrency(t.a)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-red-800 text-right">
-                            {formatCurrency(t.b)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-red-800 text-right">
-                            {formatCurrency(t.var)}
-                          </td>
-                          <td className="px-4 py-2 text-sm font-bold text-red-800 text-right">
-                            {t.varPct !== null
-                              ? (t.varPct * 100).toFixed(2) + "%"
-                              : ""}
-                          </td>
-                        </>
-                      );
-                    })()}
-                  </tr>
-                  {varianceRows.expenses.map((r) => (
-                    <tr
-                      key={r.account}
-                      onClick={() => showTransactionDetails(r.account)}
-                      className="hover:bg-gray-50 cursor-pointer"
-                    >
-                      <td className="px-4 py-2 text-sm text-gray-700">
-                        {r.account}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.a)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.b)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {formatCurrency(r.var)}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-right">
-                        {r.varPct !== null
-                          ? (r.varPct * 100).toFixed(2) + "%"
-                          : ""}
-                      </td>
-                    </tr>
-                  ))}
-                </>
-              )}
-
-              {/* Net Income */}
-              {(() => {
-                const inc = sectionTotals(varianceRows.income);
-                const cog = sectionTotals(varianceRows.cogs);
-                const exp = sectionTotals(varianceRows.expenses);
-                const a = inc.a + cog.a + exp.a;
-                const b = inc.b + cog.b + exp.b;
-                const v = a - b;
-                const vp = b ? v / Math.abs(b) : null;
-                const color = (n: number) =>
-                  n >= 0 ? "text-green-800" : "text-red-800";
-                return (
-                  <tr className="bg-gray-100">
-                    <td className="!bg-gray-100 px-4 py-2 text-sm font-bold text-gray-800">
-                      NET INCOME
-                    </td>
-                    <td
-                      className={`px-4 py-2 text-sm font-bold text-right ${color(a)}`}
-                    >
-                      {formatCurrency(a)}
-                    </td>
-                    <td
-                      className={`px-4 py-2 text-sm font-bold text-right ${color(b)}`}
-                    >
-                      {formatCurrency(b)}
-                    </td>
-                    <td
-                      className={`px-4 py-2 text-sm font-bold text-right ${color(v)}`}
-                    >
-                      {formatCurrency(v)}
-                    </td>
-                    <td
-                      className={`px-4 py-2 text-sm font-bold text-right ${color(v)}`}
-                    >
-                      {vp !== null ? (vp * 100).toFixed(2) + "%" : ""}
-                    </td>
-                  </tr>
-                );
-              })()}
-            </tbody>
-          </table>
+      {/* KPI Comparison Cards */}
+      {dataA && dataB && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+          {[
+            { key: 'revenue', label: 'Revenue', valueA: dataA.revenue, valueB: dataB.revenue },
+            { key: 'grossProfit', label: 'Gross Profit', valueA: dataA.grossProfit, valueB: dataB.grossProfit },
+            { key: 'opEx', label: 'Operating Expenses', valueA: Math.abs(dataA.opEx), valueB: Math.abs(dataB.opEx) },
+            { key: 'netIncome', label: 'Net Income', valueA: dataA.netIncome, valueB: dataB.netIncome },
+            { 
+              key: 'margin', 
+              label: 'Gross Margin', 
+              valueA: dataA.revenue ? (dataA.grossProfit / dataA.revenue) * 100 : 0,
+              valueB: dataB.revenue ? (dataB.grossProfit / dataB.revenue) * 100 : 0,
+              isPercentage: true
+            }
+          ].map((metric) => {
+            const change = metric.valueA - metric.valueB;
+            const changePercent = metric.valueB !== 0 ? (change / Math.abs(metric.valueB)) * 100 : 0;
+            
+            return (
+              <div key={metric.key} className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-medium text-gray-600">{metric.label}</h3>
+                  <div className={`flex items-center gap-1 ${getChangeColor(change)}`}>
+                    {getChangeIcon(change)}
+                    <span className="text-xs font-medium">
+                      {formatPercentage(changePercent)}
+                    </span>
+                  </div>
+                </div>
+                
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Current (A)</p>
+                    <p className="text-xl font-bold text-gray-900">
+                      {metric.isPercentage ? `${metric.valueA.toFixed(1)}%` : formatCurrency(metric.valueA)}
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Previous (B)</p>
+                    <p className="text-sm text-gray-600">
+                      {metric.isPercentage ? `${metric.valueB.toFixed(1)}%` : formatCurrency(metric.valueB)}
+                    </p>
+                  </div>
+                  
+                  <div className="pt-2 border-t border-gray-100">
+                    <p className="text-xs text-gray-500 mb-1">Variance</p>
+                    <p className={`text-sm font-medium ${getChangeColor(change)}`}>
+                      {metric.isPercentage ? 
+                        `${change >= 0 ? '+' : ''}${change.toFixed(1)}pts` : 
+                        `${change >= 0 ? '+' : ''}${formatCurrency(change)}`
+                      }
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
+      {/* Weekly Trend Chart */}
+      {weeklyData.length > 0 && (
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Weekly Performance Trends</h2>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Revenue Trend */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-700 mb-4">Revenue Comparison</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
+                    <XAxis 
+                      dataKey="week" 
+                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <YAxis 
+                      tickFormatter={(v) => formatCurrency(v)} 
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <Tooltip 
+                      formatter={(value) => formatCurrency(Number(value))}
+                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="revenueA" 
+                      stroke={BRAND_COLORS.primary}
+                      strokeWidth={3}
+                      dot={{ fill: BRAND_COLORS.primary, strokeWidth: 2, r: 4 }}
+                      name="Period A"
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="revenueB" 
+                      stroke={BRAND_COLORS.gray[600]}
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={{ fill: BRAND_COLORS.gray[600], strokeWidth: 2, r: 3 }}
+                      name="Period B"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Net Income Trend */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-700 mb-4">Net Income Comparison</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
+                    <XAxis 
+                      dataKey="week" 
+                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <YAxis 
+                      tickFormatter={(v) => formatCurrency(v)} 
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <Tooltip 
+                      formatter={(value) => formatCurrency(Number(value))}
+                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="netIncomeA" 
+                      stroke={BRAND_COLORS.success}
+                      strokeWidth={3}
+                      dot={{ fill: BRAND_COLORS.success, strokeWidth: 2, r: 4 }}
+                      name="Period A"
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="netIncomeB" 
+                      stroke={BRAND_COLORS.gray[600]}
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={{ fill: BRAND_COLORS.gray[600], strokeWidth: 2, r: 3 }}
+                      name="Period B"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detailed Variance Table */}
+      {(varianceRows.income.length > 0 ||
+        varianceRows.cogs.length > 0 ||
+        varianceRows.expenses.length > 0) && (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-6 border-b border-gray-100">
+            <h2 className="text-xl font-semibold text-gray-900">Account-Level Analysis</h2>
+            <p className="text-sm text-gray-600 mt-1">Detailed variance breakdown by account</p>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Account
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Period A
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Period B
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Variance $
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Variance %
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {/* Income Section */}
+                {varianceRows.income.length > 0 && (
+                  <>
+                    <tr className="bg-green-50">
+                      {(() => {
+                        const t = sectionTotals(varianceRows.income);
+                        return (
+                          <>
+                            <td className="px-6 py-4 text-sm font-bold text-green-800">
+                              REVENUE
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-green-800 text-right">
+                              {formatCurrency(t.a)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-green-800 text-right">
+                              {formatCurrency(t.b)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-green-800 text-right">
+                              {formatCurrency(t.var)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-green-800 text-right">
+                              {t.varPct !== null
+                                ? formatPercentage(t.varPct * 100)
+                                : ""}
+                            </td>
+                          </>
+                        );
+                      })()}
+                    </tr>
+                    {varianceRows.income.slice(0, 10).map((r) => (
+                      <tr
+                        key={r.account}
+                        onClick={() => showTransactionDetails(r.account)}
+                        className="hover:bg-gray-50 cursor-pointer transition-colors"
+                      >
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {r.account}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-right text-gray-900">
+                          {formatCurrency(r.a)}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-right text-gray-600">
+                          {formatCurrency(r.b)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${getChangeColor(r.var)}`}>
+                          {formatCurrency(r.var)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${getChangeColor(r.var)}`}>
+                          {r.varPct !== null
+                            ? formatPercentage(r.varPct * 100)
+                            : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                )}
+
+                {/* COGS Section */}
+                {varianceRows.cogs.length > 0 && (
+                  <>
+                    <tr className="bg-yellow-50">
+                      {(() => {
+                        const t = sectionTotals(varianceRows.cogs);
+                        return (
+                          <>
+                            <td className="px-6 py-4 text-sm font-bold text-yellow-800">
+                              COST OF GOODS SOLD
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-yellow-800 text-right">
+                              {formatCurrency(t.a)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-yellow-800 text-right">
+                              {formatCurrency(t.b)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-yellow-800 text-right">
+                              {formatCurrency(t.var)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-yellow-800 text-right">
+                              {t.varPct !== null
+                                ? formatPercentage(t.varPct * 100)
+                                : ""}
+                            </td>
+                          </>
+                        );
+                      })()}
+                    </tr>
+                    {varianceRows.cogs.slice(0, 10).map((r) => (
+                      <tr
+                        key={r.account}
+                        onClick={() => showTransactionDetails(r.account)}
+                        className="hover:bg-gray-50 cursor-pointer transition-colors"
+                      >
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {r.account}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-right text-gray-900">
+                          {formatCurrency(r.a)}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-right text-gray-600">
+                          {formatCurrency(r.b)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${getChangeColor(r.var)}`}>
+                          {formatCurrency(r.var)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${getChangeColor(r.var)}`}>
+                          {r.varPct !== null
+                            ? formatPercentage(r.varPct * 100)
+                            : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                )}
+
+                {/* Expenses Section */}
+                {varianceRows.expenses.length > 0 && (
+                  <>
+                    <tr className="bg-red-50">
+                      {(() => {
+                        const t = sectionTotals(varianceRows.expenses);
+                        return (
+                          <>
+                            <td className="px-6 py-4 text-sm font-bold text-red-800">
+                              OPERATING EXPENSES
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-red-800 text-right">
+                              {formatCurrency(t.a)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-red-800 text-right">
+                              {formatCurrency(t.b)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-red-800 text-right">
+                              {formatCurrency(t.var)}
+                            </td>
+                            <td className="px-6 py-4 text-sm font-bold text-red-800 text-right">
+                              {t.varPct !== null
+                                ? formatPercentage(t.varPct * 100)
+                                : ""}
+                            </td>
+                          </>
+                        );
+                      })()}
+                    </tr>
+                    {varianceRows.expenses.slice(0, 10).map((r) => (
+                      <tr
+                        key={r.account}
+                        onClick={() => showTransactionDetails(r.account)}
+                        className="hover:bg-gray-50 cursor-pointer transition-colors"
+                      >
+                        <td className="px-6 py-4 text-sm text-gray-900">
+                          {r.account}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-right text-gray-900">
+                          {formatCurrency(r.a)}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-right text-gray-600">
+                          {formatCurrency(r.b)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${getChangeColor(r.var)}`}>
+                          {formatCurrency(r.var)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${getChangeColor(r.var)}`}>
+                          {r.varPct !== null
+                            ? formatPercentage(r.varPct * 100)
+                            : ""}
+                        </td>
+                      </tr>
+                    ))}
+                  </>
+                )}
+
+                {/* Net Income Summary */}
+                {(() => {
+                  const inc = sectionTotals(varianceRows.income);
+                  const cog = sectionTotals(varianceRows.cogs);
+                  const exp = sectionTotals(varianceRows.expenses);
+                  const a = inc.a + cog.a + exp.a;
+                  const b = inc.b + cog.b + exp.b;
+                  const v = a - b;
+                  const vp = b ? v / Math.abs(b) : null;
+                  
+                  return (
+                    <tr className="bg-gray-100 border-t-2 border-gray-300">
+                      <td className="px-6 py-4 text-sm font-bold text-gray-900">
+                        NET INCOME
+                      </td>
+                      <td className="px-6 py-4 text-sm font-bold text-gray-900 text-right">
+                        {formatCurrency(a)}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-bold text-gray-700 text-right">
+                        {formatCurrency(b)}
+                      </td>
+                      <td className={`px-6 py-4 text-sm font-bold text-right ${getChangeColor(v)}`}>
+                        {formatCurrency(v)}
+                      </td>
+                      <td className={`px-6 py-4 text-sm font-bold text-right ${getChangeColor(v)}`}>
+                        {vp !== null ? formatPercentage(vp * 100) : ""}
+                      </td>
+                    </tr>
+                  );
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction Details Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] flex flex-col">
-            <div className="p-4 border-b flex justify-between items-center">
-              <h3 className="text-lg font-semibold">{modalTitle} - Transaction Details</h3>
+          <div className="bg-white rounded-xl max-w-5xl w-full max-h-[80vh] flex flex-col shadow-2xl">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+              <h3 className="text-xl font-semibold text-gray-900">{modalTitle} - Transaction Details</h3>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <X className="w-5 h-5" />
+                <X className="w-6 h-6" />
               </button>
             </div>
             <div className="flex-1 overflow-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Date
                     </th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                      Memo
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Description
                     </th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Amount
                     </th>
-                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Customer
                     </th>
-                    <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
-                      Set
+                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Period
                     </th>
                   </tr>
                 </thead>
@@ -814,20 +1011,22 @@ export default function ComparativeAnalysisPage() {
                   {modalTransactions.map((t, idx) => {
                     const amt = (Number(t.credit) || 0) - (Number(t.debit) || 0);
                     return (
-                      <tr key={idx} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 text-sm">{formatDate(t.date)}</td>
-                        <td className="px-4 py-2 text-sm">{t.memo || ""}</td>
-                        <td
-                          className={`px-4 py-2 text-sm text-right ${
-                            amt >= 0 ? "text-green-600" : "text-red-600"
-                          }`}
-                        >
+                      <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-4 text-sm text-gray-900">{formatDate(t.date)}</td>
+                        <td className="px-6 py-4 text-sm text-gray-900">{t.memo || t.account}</td>
+                        <td className={`px-6 py-4 text-sm text-right font-medium ${getChangeColor(amt)}`}>
                           {formatCurrency(Math.abs(amt))}
                         </td>
-                        <td className="px-4 py-2 text-sm text-center">
-                          {t.customer || ""}
+                        <td className="px-6 py-4 text-sm text-center text-gray-600">
+                          {t.customer || "-"}
                         </td>
-                        <td className="px-4 py-2 text-sm text-center">{t.set}</td>
+                        <td className="px-6 py-4 text-sm text-center">
+                          <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                            t.set === 'A' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {t.set}
+                          </span>
+                        </td>
                       </tr>
                     );
                   })}
