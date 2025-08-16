@@ -1460,7 +1460,7 @@ export default function EnhancedMobileDashboard() {
                       </div>
                     </div>
                   </>
-            ) : reportType === "cf" ? (
+            ) : (
               <>
                     <div onClick={() => showRanking("arTotal")} style={{
                       background: 'white',
@@ -2236,7 +2236,7 @@ export default function EnhancedMobileDashboard() {
               Net Income: {formatCurrency(plTotals.net)}
             </div>
             </>
-          ) : (
+          ) : reportType === "cf" ? (
             <>
               <div style={{ display: 'grid', gap: '16px' }}>
                 <div style={{
