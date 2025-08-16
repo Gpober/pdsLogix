@@ -2787,34 +2787,98 @@ export default function FinancialsPage() {
                                 )
                               );
                             }, 0);
-                          const headerNet =
-                            headerIncome - headerCogs - headerExpenses;
-                          return (
-                            <td
-                              key={header}
-                              className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold ${
-                                headerNet >= 0
-                                  ? "text-green-700"
-                                  : "text-red-700"
-                              }`}
-                            >
-                              {formatCurrency(headerNet)}
-                            </td>
-                          );
-                        })}
+                      const headerNet =
+                        headerIncome - headerCogs - headerExpenses;
+                      return (
                         <td
-                          className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-xl ${
-                            netIncome >= 0 ? "text-green-700" : "text-red-700"
+                          key={header}
+                          className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold ${
+                            headerNet >= 0
+                              ? "text-green-700"
+                              : "text-red-700"
                           }`}
                         >
-                          {formatCurrency(netIncome)}
+                          {formatCurrency(headerNet)}
                         </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      );
+                    })}
+                    <td
+                      className={`px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-xl ${
+                        netIncome >= 0 ? "text-green-700" : "text-red-700"
+                      }`}
+                    >
+                      {formatCurrency(netIncome)}
+                    </td>
+                  </tr>
+
+                  {/* Net Income Percentage */}
+                  <tr>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      Net Income %
+                    </td>
+                    {columnHeaders.map((header) => {
+                      const headerIncome = groupedAccounts.income.reduce(
+                        (sum, group) => {
+                          return (
+                            sum +
+                            getCellValue(
+                              group.account,
+                              header,
+                              true,
+                              group.subAccounts,
+                            )
+                          );
+                        },
+                        0,
+                      );
+                      const headerCogs = groupedAccounts.cogs.reduce(
+                        (sum, group) => {
+                          return (
+                            sum +
+                            getCellValue(
+                              group.account,
+                              header,
+                              true,
+                              group.subAccounts,
+                            )
+                          );
+                        },
+                        0,
+                      );
+                      const headerExpenses = groupedAccounts.expenses.reduce(
+                        (sum, group) => {
+                          return (
+                            sum +
+                            getCellValue(
+                              group.account,
+                              header,
+                              true,
+                              group.subAccounts,
+                            )
+                          );
+                        }, 0);
+                      const headerNet =
+                        headerIncome - headerCogs - headerExpenses;
+                      const pct =
+                        headerIncome !== 0 ? headerNet / headerIncome : 0;
+                      return (
+                        <td
+                          key={header}
+                          className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right"
+                        >
+                          {formatPercentage(pct)}
+                        </td>
+                      );
+                    })}
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-right">
+                      {formatPercentage(netIncomePercent)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
+          )}
+        </div>
           </div>
         )}
       </div>
