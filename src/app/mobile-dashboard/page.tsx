@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   CheckCircle,
   Target,
+  Clock,
   type LucideIcon,
 } from "lucide-react";
 
@@ -40,6 +41,12 @@ interface PropertySummary {
   operating?: number;
   financing?: number;
   investing?: number;
+  current?: number;
+  days30?: number;
+  days60?: number;
+  days90?: number;
+  over90?: number;
+  total?: number;
 }
 
 interface Category {
@@ -56,6 +63,16 @@ interface Transaction {
   customer?: string | null;
   entryNumber?: string;
   invoiceNumber?: string | null;
+}
+
+interface ARTransaction {
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  amount: number;
+  daysOutstanding: number;
+  customer: string;
+  memo?: string | null;
 }
 
 interface JournalRow {
@@ -104,7 +121,10 @@ type RankingMetric =
   | "netCash"
   | "investing"
   | "stability"
-  | "cogs";
+  | "cogs"
+  | "arTotal"
+  | "arCurrent"
+  | "arOverdue";
 
 const insights: Insight[] = [
   {
@@ -129,7 +149,7 @@ const insights: Insight[] = [
 
 export default function EnhancedMobileDashboard() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [reportType, setReportType] = useState<"pl" | "cf">("pl");
+  const [reportType, setReportType] = useState<"pl" | "cf" | "ar">("pl");
   const [reportPeriod, setReportPeriod] = useState<
     "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
   >("Monthly");
@@ -155,6 +175,7 @@ export default function EnhancedMobileDashboard() {
     investing: [],
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [arTransactions, setArTransactions] = useState<ARTransaction[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
@@ -164,6 +185,11 @@ export default function EnhancedMobileDashboard() {
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
     [transactions],
+  );
+
+  const arTotal = useMemo(
+    () => arTransactions.reduce((sum, t) => sum + t.amount, 0),
+    [arTransactions],
   );
 
   const plTotals = useMemo(() => {
@@ -283,6 +309,11 @@ export default function EnhancedMobileDashboard() {
 
   useEffect(() => {
     const load = async () => {
+      if (reportType === "ar") {
+        await loadARData();
+        return;
+      }
+
       const { start, end } = getDateRange();
       
       // Enhanced query to mirror cash flow component structure
@@ -373,6 +404,57 @@ export default function EnhancedMobileDashboard() {
     load();
   }, [reportType, reportPeriod, month, year, customStart, customEnd, getDateRange]);
 
+  const loadARData = async () => {
+    // Get current date for aging calculation
+    const today = new Date();
+    
+    // Query for all A/R transactions
+    const { data } = await supabase
+      .from("ar_aging_view")
+      .select("*")
+      .order("customer", { ascending: true })
+      .order("invoice_date", { ascending: false });
+
+    const customerMap: Record<string, PropertySummary> = {};
+    
+    ((data as any[]) || []).forEach((row) => {
+      const customer = row.customer || "General";
+      
+      if (!customerMap[customer]) {
+        customerMap[customer] = {
+          name: customer,
+          current: 0,
+          days30: 0,
+          days60: 0,
+          days90: 0,
+          over90: 0,
+          total: 0
+        };
+      }
+      
+      const amount = Number(row.amount) || 0;
+      const daysOutstanding = Number(row.days_outstanding) || 0;
+      
+      // Categorize by aging buckets
+      if (daysOutstanding <= 30) {
+        customerMap[customer].current = (customerMap[customer].current || 0) + amount;
+      } else if (daysOutstanding <= 60) {
+        customerMap[customer].days30 = (customerMap[customer].days30 || 0) + amount;
+      } else if (daysOutstanding <= 90) {
+        customerMap[customer].days60 = (customerMap[customer].days60 || 0) + amount;
+      } else if (daysOutstanding <= 120) {
+        customerMap[customer].days90 = (customerMap[customer].days90 || 0) + amount;
+      } else {
+        customerMap[customer].over90 = (customerMap[customer].over90 || 0) + amount;
+      }
+      
+      customerMap[customer].total = (customerMap[customer].total || 0) + amount;
+    });
+    
+    const list = Object.values(customerMap).filter(p => (p.total || 0) > 0);
+    setProperties(list);
+  };
+
   const revenueKing = useMemo(() => {
     if (reportType !== "pl" || !properties.length) return null;
     return properties.reduce((max, p) =>
@@ -414,6 +496,22 @@ export default function EnhancedMobileDashboard() {
     }, properties[0]).name;
   }, [properties, reportType]);
 
+  const arKing = useMemo(() => {
+    if (reportType !== "ar" || !properties.length) return null;
+    return properties.reduce((max, p) =>
+      (p.total || 0) > (max.total || 0) ? p : max,
+    properties[0]).name;
+  }, [properties, reportType]);
+
+  const currentChamp = useMemo(() => {
+    if (reportType !== "ar" || !properties.length) return null;
+    return properties.reduce((max, p) => {
+      const currentRatioP = p.total ? (p.current || 0) / p.total : 0;
+      const currentRatioM = max.total ? (max.current || 0) / max.total : 0;
+      return currentRatioP > currentRatioM ? p : max;
+    }, properties[0]).name;
+  }, [properties, reportType]);
+
   const companyTotals = properties.reduce(
     (acc, p) => {
       if (reportType === "pl") {
@@ -421,15 +519,25 @@ export default function EnhancedMobileDashboard() {
         acc.cogs += p.cogs || 0;
         acc.expenses += p.expenses || 0;
         acc.net += p.netIncome || 0;
-      } else {
+      } else if (reportType === "cf") {
         acc.operating += p.operating || 0;
         acc.financing += p.financing || 0;
         acc.investing += p.investing || 0;
         acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
+      } else {
+        acc.current += p.current || 0;
+        acc.days30 += p.days30 || 0;
+        acc.days60 += p.days60 || 0;
+        acc.days90 += p.days90 || 0;
+        acc.over90 += p.over90 || 0;
+        acc.total += p.total || 0;
       }
       return acc;
     },
-    { revenue: 0, cogs: 0, expenses: 0, net: 0, operating: 0, financing: 0, investing: 0 },
+    { 
+      revenue: 0, cogs: 0, expenses: 0, net: 0, operating: 0, financing: 0, investing: 0,
+      current: 0, days30: 0, days60: 0, days90: 0, over90: 0, total: 0
+    },
   );
 
   const formatCurrency = (n: number) =>
@@ -458,6 +566,9 @@ export default function EnhancedMobileDashboard() {
     netCash: "Net Cash",
     investing: "Investing",
     stability: "Net Cash",
+    arTotal: "Total A/R",
+    arCurrent: "Current Ratio",
+    arOverdue: "Overdue Amount",
   };
 
   const rankedProperties = useMemo(() => {
@@ -492,6 +603,20 @@ export default function EnhancedMobileDashboard() {
         );
       case "investing":
         return arr.sort((a, b) => (a.investing || 0) - (b.investing || 0));
+      case "arTotal":
+        return arr.sort((a, b) => (b.total || 0) - (a.total || 0));
+      case "arCurrent":
+        return arr.sort((a, b) => {
+          const currentRatioA = a.total ? (a.current || 0) / a.total : 0;
+          const currentRatioB = b.total ? (b.current || 0) / b.total : 0;
+          return currentRatioB - currentRatioA;
+        });
+      case "arOverdue":
+        return arr.sort((a, b) => {
+          const overdueA = (a.days30 || 0) + (a.days60 || 0) + (a.days90 || 0) + (a.over90 || 0);
+          const overdueB = (b.days30 || 0) + (b.days60 || 0) + (b.days90 || 0) + (b.over90 || 0);
+          return overdueB - overdueA;
+        });
       default:
         return arr;
     }
@@ -517,6 +642,14 @@ export default function EnhancedMobileDashboard() {
         return formatCompactCurrency(p.revenue || 0);
       case "growth":
         return formatCompactCurrency(p.revenue || 0);
+      case "arTotal":
+        return formatCompactCurrency(p.total || 0);
+      case "arCurrent":
+        const currentRatio = p.total ? (p.current || 0) / p.total : 0;
+        return `${(currentRatio * 100).toFixed(1)}%`;
+      case "arOverdue":
+        const overdue = (p.days30 || 0) + (p.days60 || 0) + (p.days90 || 0) + (p.over90 || 0);
+        return formatCompactCurrency(overdue);
       case "netIncome":
       default:
         return formatCompactCurrency(p.netIncome || 0);
@@ -530,9 +663,73 @@ export default function EnhancedMobileDashboard() {
 
   const handlePropertySelect = async (name: string | null) => {
     setSelectedProperty(name);
-    if (reportType === "pl") await loadPL(name);
-    else await loadCF(name);
+    if (reportType === "ar") {
+      await loadARDetails(name);
+    } else if (reportType === "pl") {
+      await loadPL(name);
+    } else {
+      await loadCF(name);
+    }
     setView("report");
+  };
+
+  const loadARDetails = async (propertyName: string | null = selectedProperty) => {
+    let query = supabase
+      .from("ar_aging_view")
+      .select("*")
+      .order("invoice_date", { ascending: false });
+
+    if (propertyName && propertyName !== "General") {
+      query = query.eq("customer", propertyName);
+    } else if (propertyName === "General") {
+      query = query.is("customer", null);
+    }
+
+    const { data } = await query;
+    
+    // Group by aging buckets for the category view
+    const currentBucket: Record<string, number> = {};
+    const days30Bucket: Record<string, number> = {};
+    const days60Bucket: Record<string, number> = {};
+    const days90Bucket: Record<string, number> = {};
+    
+    ((data as any[]) || []).forEach((row) => {
+      const amount = Number(row.amount) || 0;
+      const daysOutstanding = Number(row.days_outstanding) || 0;
+      const bucketKey = `${row.invoice_number || "N/A"} - ${row.customer || "General"}`;
+      
+      if (daysOutstanding <= 30) {
+        currentBucket[bucketKey] = (currentBucket[bucketKey] || 0) + amount;
+      } else if (daysOutstanding <= 60) {
+        days30Bucket[bucketKey] = (days30Bucket[bucketKey] || 0) + amount;
+      } else if (daysOutstanding <= 90) {
+        days60Bucket[bucketKey] = (days60Bucket[bucketKey] || 0) + amount;
+      } else {
+        days90Bucket[bucketKey] = (days90Bucket[bucketKey] || 0) + amount;
+      }
+    });
+
+    // Set the AR data in category format similar to P&L
+    const arCategories = {
+      current: Object.entries(currentBucket).map(([name, total]) => ({ name, total })),
+      days30: Object.entries(days30Bucket).map(([name, total]) => ({ name, total })),
+      days60: Object.entries(days60Bucket).map(([name, total]) => ({ name, total })),
+      days90: Object.entries(days90Bucket).map(([name, total]) => ({ name, total }))
+    };
+    
+    // Store in cfData temporarily (we'll create a dedicated arData state later)
+    setCfData({
+      operating: arCategories.current,
+      financing: arCategories.days30,
+      investing: arCategories.days60
+    });
+    
+    // Store days90+ in plData for now
+    setPlData({
+      revenue: arCategories.days90,
+      cogs: [],
+      expenses: []
+    });
   };
 
   const loadPL = async (propertyName: string | null = selectedProperty) => {
@@ -643,8 +840,14 @@ export default function EnhancedMobileDashboard() {
 
   const handleCategory = async (
     account: string,
-    type: "revenue" | "cogs" | "expense" | "operating" | "financing" | "investing",
+    type: "revenue" | "cogs" | "expense" | "operating" | "financing" | "investing" | "current" | "days30" | "days60" | "days90",
   ) => {
+    if (reportType === "ar") {
+      // Handle A/R aging bucket drill-down
+      await handleARCategory(account, type as "current" | "days30" | "days60" | "days90");
+      return;
+    }
+
     const { start, end } = getDateRange();
     let query = supabase
       .from("journal_entry_lines")
@@ -706,6 +909,66 @@ export default function EnhancedMobileDashboard() {
     setView("detail");
   };
 
+  const handleARCategory = async (
+    bucketName: string,
+    type: "current" | "days30" | "days60" | "days90"
+  ) => {
+    // Determine the aging range based on type
+    let minDays = 0;
+    let maxDays = 30;
+    
+    switch (type) {
+      case "current":
+        minDays = 0;
+        maxDays = 30;
+        break;
+      case "days30":
+        minDays = 31;
+        maxDays = 60;
+        break;
+      case "days60":
+        minDays = 61;
+        maxDays = 90;
+        break;
+      case "days90":
+        minDays = 91;
+        maxDays = 9999;
+        break;
+    }
+
+    let query = supabase
+      .from("ar_aging_view")
+      .select("*")
+      .gte("days_outstanding", minDays)
+      .order("invoice_date", { ascending: false });
+
+    if (maxDays < 9999) {
+      query = query.lte("days_outstanding", maxDays);
+    }
+
+    if (selectedProperty && selectedProperty !== "General") {
+      query = query.eq("customer", selectedProperty);
+    } else if (selectedProperty === "General") {
+      query = query.is("customer", null);
+    }
+
+    const { data } = await query;
+    
+    const arList: ARTransaction[] = ((data as any[]) || []).map((row) => ({
+      invoiceNumber: row.invoice_number || "N/A",
+      invoiceDate: row.invoice_date,
+      dueDate: row.due_date,
+      amount: Number(row.amount) || 0,
+      daysOutstanding: Number(row.days_outstanding) || 0,
+      customer: row.customer || "General",
+      memo: row.memo
+    }));
+
+    setArTransactions(arList);
+    setSelectedCategory(bucketName);
+    setView("detail");
+  };
+
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return;
     const { data, error } = await supabase
@@ -728,6 +991,33 @@ export default function EnhancedMobileDashboard() {
     else if (view === "summary") {
       setRankingMetric(null);
       setView("overview");
+    }
+  };
+
+  const getReportTitle = () => {
+    switch (reportType) {
+      case "pl": return "P&L Dashboard";
+      case "cf": return "Cash Flow Dashboard";
+      case "ar": return "A/R Aging Dashboard";
+      default: return "Dashboard";
+    }
+  };
+
+  const getCompanyTotalLabel = () => {
+    switch (reportType) {
+      case "pl": return "Company Total Net Income";
+      case "cf": return "Company Total Net Cash";
+      case "ar": return "Company Total A/R";
+      default: return "Company Total";
+    }
+  };
+
+  const getCompanyTotalValue = () => {
+    switch (reportType) {
+      case "pl": return companyTotals.net;
+      case "cf": return companyTotals.net;
+      case "ar": return companyTotals.total;
+      default: return 0;
     }
   };
 
@@ -784,10 +1074,13 @@ export default function EnhancedMobileDashboard() {
         {/* Dashboard Summary */}
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-            {reportType === "pl" ? "P&L Dashboard" : "Cash Flow Dashboard"}
+            {getReportTitle()}
           </h1>
           <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {getMonthName(month)} {year} • {properties.length} Customers
+            {reportType === "ar" 
+              ? `As of Today • ${properties.length} Customers`
+              : `${getMonthName(month)} ${year} • ${properties.length} Customers`
+            }
           </p>
         </div>
 
@@ -815,7 +1108,7 @@ export default function EnhancedMobileDashboard() {
           <div style={{ textAlign: 'center', marginBottom: '16px' }}>
             <span style={{ fontSize: '14px', opacity: 0.9 }}>Company Total</span>
             <div style={{ fontSize: '32px', fontWeight: 'bold', margin: '8px 0' }}>
-              {formatCompactCurrency(companyTotals.net)}
+              {formatCompactCurrency(getCompanyTotalValue())}
             </div>
           </div>
           
@@ -846,7 +1139,7 @@ export default function EnhancedMobileDashboard() {
                 <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Income</div>
               </div>
             </div>
-          ) : (
+          ) : reportType === "cf" ? (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
               <div>
                 <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
@@ -871,6 +1164,39 @@ export default function EnhancedMobileDashboard() {
                   {formatCompactCurrency(companyTotals.net)}
                 </div>
                 <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', textAlign: 'center' }}>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.current)}
+                </div>
+                <div style={{ fontSize: '10px', opacity: 0.8 }}>Current</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.days30)}
+                </div>
+                <div style={{ fontSize: '10px', opacity: 0.8 }}>31-60</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.days60)}
+                </div>
+                <div style={{ fontSize: '10px', opacity: 0.8 }}>61-90</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.days90)}
+                </div>
+                <div style={{ fontSize: '10px', opacity: 0.8 }}>91-120</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.over90)}
+                </div>
+                <div style={{ fontSize: '10px', opacity: 0.8 }}>120+</div>
               </div>
             </div>
           )}
@@ -905,104 +1231,111 @@ export default function EnhancedMobileDashboard() {
                 fontSize: '16px'
               }}
               value={reportType}
-              onChange={(e) => setReportType(e.target.value as "pl" | "cf")}
+              onChange={(e) => setReportType(e.target.value as "pl" | "cf" | "ar")}
             >
               <option value="pl">P&L Statement</option>
               <option value="cf">Cash Flow Statement</option>
+              <option value="ar">A/R Aging Report</option>
             </select>
           </div>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-              Report Period
-            </label>
-            <select
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                borderRadius: '8px',
-                fontSize: '16px'
-              }}
-              value={reportPeriod}
-              onChange={(e) =>
-                setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
-              }
-            >
-              <option value="Monthly">Monthly</option>
-              <option value="Custom">Custom Range</option>
-              <option value="Year to Date">Year to Date</option>
-              <option value="Trailing 12">Trailing 12 Months</option>
-              <option value="Quarterly">Quarterly</option>
-            </select>
-          </div>
-          {reportPeriod === "Custom" ? (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
-              />
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
-              />
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <select
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={month}
-                onChange={(e) => setMonth(Number(e.target.value))}
-              >
-                {Array.from({ length: 12 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    {new Date(0, i).toLocaleString("en", { month: "long" })}
-                  </option>
-                ))}
-              </select>
-              <select
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={year}
-                onChange={(e) => setYear(Number(e.target.value))}
-              >
-                {Array.from({ length: 5 }, (_, i) => {
-                  const y = new Date().getFullYear() - 2 + i;
-                  return (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+          
+          {reportType !== "ar" && (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
+                  Report Period
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                    borderRadius: '8px',
+                    fontSize: '16px'
+                  }}
+                  value={reportPeriod}
+                  onChange={(e) =>
+                    setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
+                  }
+                >
+                  <option value="Monthly">Monthly</option>
+                  <option value="Custom">Custom Range</option>
+                  <option value="Year to Date">Year to Date</option>
+                  <option value="Trailing 12">Trailing 12 Months</option>
+                  <option value="Quarterly">Quarterly</option>
+                </select>
+              </div>
+              {reportPeriod === "Custom" ? (
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                  <input
+                    type="date"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={customStart}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                  />
+                  <input
+                    type="date"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={customEnd}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                  <select
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={month}
+                    onChange={(e) => setMonth(Number(e.target.value))}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => (
+                      <option key={i + 1} value={i + 1}>
+                        {new Date(0, i).toLocaleString("en", { month: "long" })}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={year}
+                    onChange={(e) => setYear(Number(e.target.value))}
+                  >
+                    {Array.from({ length: 5 }, (_, i) => {
+                      const y = new Date().getFullYear() - 2 + i;
+                      return (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+            </>
           )}
+          
           <button
             style={{
               width: '100%',
@@ -1130,37 +1463,14 @@ export default function EnhancedMobileDashboard() {
                       <span style={{ fontSize: '20px' }}>💎</span>
                       <div>
                         <div style={{ fontSize: '11px', color: BRAND_COLORS.primary, fontWeight: '600' }}>
-                          PROFIT STAR
+                          A/R KING
                         </div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {properties.find(p => (p.netIncome || 0) === Math.max(...properties.map(prop => prop.netIncome || 0)))?.name}
+                          {arKing}
                         </div>
                       </div>
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <div onClick={() => showRanking("operating")} style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.primary}33`,
-                      cursor: 'pointer'
-                    }}>
-                      <span style={{ fontSize: '20px' }}>💰</span>
-                      <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.primary, fontWeight: '600' }}>
-                          CASH KING
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {cashKing}
-                        </div>
-                      </div>
-                    </div>
-                    <div onClick={() => showRanking("netCash")} style={{
+                    <div onClick={() => showRanking("arCurrent")} style={{
                       background: 'white',
                       borderRadius: '8px',
                       padding: '10px',
@@ -1170,53 +1480,67 @@ export default function EnhancedMobileDashboard() {
                       border: `1px solid ${BRAND_COLORS.success}33`,
                       cursor: 'pointer'
                     }}>
-                      <span style={{ fontSize: '20px' }}>⚡</span>
+                      <span style={{ fontSize: '20px' }}>⏰</span>
                       <div>
                         <div style={{ fontSize: '11px', color: BRAND_COLORS.success, fontWeight: '600' }}>
-                          FLOW MASTER
+                          CURRENT CHAMP
                         </div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {flowMaster}
+                          {currentChamp}
                         </div>
                       </div>
                     </div>
-                    <div onClick={() => showRanking("investing")} style={{
+                    <div onClick={() => showRanking("arOverdue")} style={{
                       background: 'white',
                       borderRadius: '8px',
                       padding: '10px',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.warning}33`,
+                      border: `1px solid ${BRAND_COLORS.danger}33`,
                       cursor: 'pointer'
                     }}>
-                      <span style={{ fontSize: '20px' }}>🎯</span>
+                      <span style={{ fontSize: '20px' }}>⚠️</span>
                       <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.warning, fontWeight: '600' }}>
-                          EFFICIENCY ACE
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.danger, fontWeight: '600' }}>
+                          OVERDUE ALERT
                         </div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {properties.find(p => (p.investing || 0) === Math.min(...properties.map(prop => prop.investing || 0)))?.name}
+                          {properties.find(p => {
+                            const overdue = (p.days30 || 0) + (p.days60 || 0) + (p.days90 || 0) + (p.over90 || 0);
+                            return overdue === Math.max(...properties.map(prop => (prop.days30 || 0) + (prop.days60 || 0) + (prop.days90 || 0) + (prop.over90 || 0)));
+                          })?.name}
                         </div>
                       </div>
                     </div>
-                    <div onClick={() => showRanking("stability")} style={{
+                    <div style={{
                       background: 'white',
                       borderRadius: '8px',
                       padding: '10px',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.secondary}33`,
-                      cursor: 'pointer'
+                      border: `1px solid ${BRAND_COLORS.accent}33`,
                     }}>
-                      <span style={{ fontSize: '20px' }}>💪</span>
+                      <span style={{ fontSize: '20px' }}>📊</span>
                       <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.secondary, fontWeight: '600' }}>
-                          STABILITY PRO
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.accent, fontWeight: '600' }}>
+                          AVG DAYS
                         </div>
                         <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {properties.length ? properties[Math.floor(Math.random() * properties.length)].name : "N/A"}
+                          {properties.length ? Math.round(
+                            properties.reduce((sum, p) => {
+                              const total = p.total || 0;
+                              if (total === 0) return sum;
+                              const weightedDays = 
+                                ((p.current || 0) * 15) + 
+                                ((p.days30 || 0) * 45) + 
+                                ((p.days60 || 0) * 75) + 
+                                ((p.days90 || 0) * 105) + 
+                                ((p.over90 || 0) * 150);
+                              return sum + (weightedDays / total);
+                            }, 0) / properties.length
+                          ) + " days" : "N/A"}
                         </div>
                       </div>
                     </div>
@@ -1265,6 +1589,8 @@ export default function EnhancedMobileDashboard() {
               const isCogsChamp = p.name === cogsChamp;
               const isCashKing = p.name === cashKing;
               const isFlowMaster = p.name === flowMaster;
+              const isArKing = p.name === arKing;
+              const isCurrentChamp = p.name === currentChamp;
               
               return (
                 <div
@@ -1374,6 +1700,26 @@ export default function EnhancedMobileDashboard() {
                           <span style={{ fontSize: '16px' }}>⚡</span>
                         </div>
                       )}
+                      {reportType === "ar" && isArKing && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, #0ea5e9)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(14, 165, 233, 0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>💰</span>
+                        </div>
+                      )}
+                      {reportType === "ar" && isCurrentChamp && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.success}, #22c55e)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>⏰</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   
@@ -1456,7 +1802,7 @@ export default function EnhancedMobileDashboard() {
                         </span>
                       </div>
                     </div>
-                  ) : (
+                  ) : reportType === "cf" ? (
                     <div style={{ display: 'grid', gap: '8px' }}>
                       <div style={{ 
                         display: 'flex', 
@@ -1532,6 +1878,85 @@ export default function EnhancedMobileDashboard() {
                         </span>
                       </div>
                     </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '6px' }}>
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.success}08`,
+                        borderRadius: '6px',
+                        border: `1px solid ${BRAND_COLORS.success}20`
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current</span>
+                        <span style={{ 
+                          fontSize: '12px', 
+                          fontWeight: '700',
+                          color: BRAND_COLORS.success,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.current || 0)}
+                        </span>
+                      </div>
+                      
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.warning}08`,
+                        borderRadius: '6px',
+                        border: `1px solid ${BRAND_COLORS.warning}20`
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>31-60 Days</span>
+                        <span style={{ 
+                          fontSize: '12px', 
+                          fontWeight: '700',
+                          color: BRAND_COLORS.warning,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.days30 || 0)}
+                        </span>
+                      </div>
+                      
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.danger}08`,
+                        borderRadius: '6px',
+                        border: `1px solid ${BRAND_COLORS.danger}20`
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>61+ Days</span>
+                        <span style={{ 
+                          fontSize: '12px', 
+                          fontWeight: '700',
+                          color: BRAND_COLORS.danger,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency((p.days60 || 0) + (p.days90 || 0) + (p.over90 || 0))}
+                        </span>
+                      </div>
+                      
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between',
+                        padding: '10px',
+                        background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
+                        borderRadius: '8px',
+                        border: `2px solid ${BRAND_COLORS.primary}30`,
+                        boxShadow: `0 4px 12px ${BRAND_COLORS.primary}20`
+                      }}>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: BRAND_COLORS.accent }}>Total A/R</span>
+                        <span style={{ 
+                          fontSize: '14px', 
+                          fontWeight: '800',
+                          color: BRAND_COLORS.primary,
+                          textShadow: '0 1px 3px rgba(0,0,0,0.2)'
+                        }}>
+                          {formatCompactCurrency(p.total || 0)}
+                        </span>
+                      </div>
+                    </div>
                   )}
                 </div>
               );
@@ -1557,17 +1982,18 @@ export default function EnhancedMobileDashboard() {
                 color: BRAND_COLORS.accent
               }}
             >
-              Company Total Net {reportType === "pl" ? "Income" : "Cash"}
+              {getCompanyTotalLabel()}
             </span>
             <div
               style={{
                 fontSize: '20px',
                 fontWeight: '800',
                 marginTop: '4px',
-                color: companyTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                color: reportType === "ar" ? BRAND_COLORS.primary : 
+                      getCompanyTotalValue() >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
               }}
             >
-              {formatCompactCurrency(companyTotals.net)}
+              {formatCompactCurrency(getCompanyTotalValue())}
             </div>
           </div>
         </div>
@@ -1605,7 +2031,7 @@ export default function EnhancedMobileDashboard() {
               Top Customers by {rankingLabels[rankingMetric]}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
-              {getMonthName(month)} {year}
+              {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
             </p>
           </div>
 
@@ -1660,14 +2086,212 @@ export default function EnhancedMobileDashboard() {
             color: 'white'
           }}>
             <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : "Cash Flow Statement"}
+              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : reportType === "cf" ? "Cash Flow Statement" : "A/R Aging Report"}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
-              {getMonthName(month)} {year}
+              {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
             </p>
           </div>
 
-          {reportType === "pl" ? (
+          {reportType === "ar" ? (
+            <div style={{ display: 'grid', gap: '16px' }}>
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.success,
+                  borderBottom: `2px solid ${BRAND_COLORS.success}`,
+                  paddingBottom: '8px'
+                }}>
+                  Current (0-30 Days)
+                </h3>
+                {cfData.operating.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "current")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#f0f9ff';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.success;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.success }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.warning,
+                  borderBottom: `2px solid ${BRAND_COLORS.warning}`,
+                  paddingBottom: '8px'
+                }}>
+                  31-60 Days
+                </h3>
+                {cfData.financing.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "days30")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#fff7ed';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.warning;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.warning }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: '#f59e0b',
+                  borderBottom: `2px solid #f59e0b`,
+                  paddingBottom: '8px'
+                }}>
+                  61-90 Days
+                </h3>
+                {cfData.investing.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "days60")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#fffbeb';
+                      e.currentTarget.style.borderColor = '#f59e0b';
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: '#f59e0b' }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '20px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`
+              }}>
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: '600', 
+                  marginBottom: '16px',
+                  color: BRAND_COLORS.danger,
+                  borderBottom: `2px solid ${BRAND_COLORS.danger}`,
+                  paddingBottom: '8px'
+                }}>
+                  90+ Days
+                </h3>
+                {plData.revenue.map((cat) => (
+                  <div
+                    key={cat.name}
+                    onClick={() => handleCategory(cat.name, "days90")}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '12px',
+                      marginBottom: '8px',
+                      background: BRAND_COLORS.gray[50],
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseOver={(e) => {
+                      e.currentTarget.style.background = '#fef2f2';
+                      e.currentTarget.style.borderColor = BRAND_COLORS.danger;
+                    }}
+                    onMouseOut={(e) => {
+                      e.currentTarget.style.background = BRAND_COLORS.gray[50];
+                      e.currentTarget.style.borderColor = BRAND_COLORS.gray[200];
+                    }}
+                  >
+                    <span style={{ fontSize: '14px', fontWeight: '500' }}>{cat.name}</span>
+                    <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.danger }}>
+                      {formatCurrency(cat.total)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : reportType === "pl" ? (
             <>
               <div style={{ display: 'grid', gap: '16px' }}>
                 <div style={{
@@ -2026,7 +2650,7 @@ export default function EnhancedMobileDashboard() {
             }}
           >
             <ChevronLeft size={20} style={{ marginRight: '4px' }} /> 
-            Back to {reportType === "pl" ? "P&L" : "Cash Flow"}
+            Back to {reportType === "pl" ? "P&L" : reportType === "cf" ? "Cash Flow" : "A/R Aging"}
           </button>
           
           <div style={{
@@ -2040,110 +2664,209 @@ export default function EnhancedMobileDashboard() {
               {selectedCategory}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
-              Transaction Details • {getMonthName(month)} {year}
+              {reportType === "ar" ? "Invoice Details" : `Transaction Details • ${getMonthName(month)} ${year}`}
             </p>
           </div>
 
-          <div style={{ display: 'grid', gap: '12px' }}>
-            {transactions.map((t, idx) => (
-              <div
-                key={idx}
-                style={{
-                  background: 'white',
-                  borderRadius: '8px',
-                  padding: '16px',
-                  border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                  boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                  cursor: 'pointer',
-                }}
-                onClick={() => openJournalEntry(t.entryNumber)}
-              >
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
-                  <div style={{ fontWeight: '600' }}>DATE</div>
-                  <div style={{ fontWeight: '600' }}>PAYEE/CUSTOMER</div>
-                  <div style={{ fontWeight: '600' }}>INVOICE #</div>
-                  <div style={{ fontWeight: '600' }}>MEMO</div>
-                  <div style={{ fontWeight: '600', textAlign: 'right' }}>AMOUNT</div>
-                </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', alignItems: 'center' }}>
-                  <div style={{ fontSize: '14px', fontWeight: '500' }}>
-                    {new Date(t.date).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </div>
-                  
-                  <div>
-                    {t.payee && (
-                      <div style={{ fontSize: '13px', color: '#475569', fontWeight: '500' }}>{t.payee}</div>
-                    )}
-                    {t.customer && (
-                      <div
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: '600',
-                          color: BRAND_COLORS.accent,
-                          background: `${BRAND_COLORS.primary}20`,
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          display: 'inline-block',
-                          marginTop: '2px',
-                        }}
-                      >
-                        {t.customer}
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div style={{ fontSize: '13px', color: '#475569' }}>
-                    {t.invoiceNumber || '-'}
-                  </div>
-                  
-                  <div style={{ fontSize: '12px', color: '#64748b' }}>
-                    {t.memo || '-'}
-                  </div>
-                  
-                  <div style={{ textAlign: 'right' }}>
-                    <span
-                      style={{
-                        fontSize: '16px',
-                        fontWeight: '600',
-                        color: t.amount >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
-                      }}
-                    >
-                      {formatCurrency(t.amount)}
-                    </span>
-                  </div>
-                </div>
-                
+          {reportType === "ar" ? (
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {arTransactions.map((transaction, idx) => (
                 <div
+                  key={idx}
                   style={{
-                    fontSize: '11px',
-                    color: '#64748b',
-                    textAlign: 'right',
-                    borderTop: `1px solid ${BRAND_COLORS.gray[100]}`,
-                    paddingTop: '8px',
-                    marginTop: '8px',
+                    background: 'white',
+                    borderRadius: '8px',
+                    padding: '16px',
+                    border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
                   }}
                 >
-                  Running Total: {formatCurrency(t.running)}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '16px', fontWeight: '700', color: BRAND_COLORS.accent, marginBottom: '4px' }}>
+                        Invoice #{transaction.invoiceNumber}
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#64748b' }}>
+                        {transaction.customer}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ 
+                        fontSize: '18px', 
+                        fontWeight: '700',
+                        color: transaction.daysOutstanding > 90 ? BRAND_COLORS.danger :
+                              transaction.daysOutstanding > 60 ? BRAND_COLORS.warning :
+                              transaction.daysOutstanding > 30 ? '#f59e0b' : BRAND_COLORS.success
+                      }}>
+                        {formatCurrency(transaction.amount)}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', fontSize: '12px' }}>
+                    <div>
+                      <div style={{ color: '#64748b', marginBottom: '2px' }}>Invoice Date</div>
+                      <div style={{ fontWeight: '600' }}>
+                        {new Date(transaction.invoiceDate).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ color: '#64748b', marginBottom: '2px' }}>Due Date</div>
+                      <div style={{ fontWeight: '600' }}>
+                        {new Date(transaction.dueDate).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ color: '#64748b', marginBottom: '2px' }}>Days Outstanding</div>
+                      <div style={{ 
+                        fontWeight: '700',
+                        color: transaction.daysOutstanding > 90 ? BRAND_COLORS.danger :
+                              transaction.daysOutstanding > 60 ? BRAND_COLORS.warning :
+                              transaction.daysOutstanding > 30 ? '#f59e0b' : BRAND_COLORS.success
+                      }}>
+                        {transaction.daysOutstanding} days
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {transaction.memo && (
+                    <div style={{ 
+                      marginTop: '12px', 
+                      padding: '8px 12px', 
+                      background: BRAND_COLORS.gray[50], 
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      color: '#64748b'
+                    }}>
+                      <strong>Memo:</strong> {transaction.memo}
+                    </div>
+                  )}
                 </div>
+              ))}
+              
+              <div
+                style={{
+                  marginTop: '16px',
+                  textAlign: 'right',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: BRAND_COLORS.primary,
+                }}
+              >
+                Total Outstanding: {formatCurrency(arTotal)}
               </div>
-            ))}
-          </div>
-          <div
-            style={{
-              marginTop: '16px',
-              textAlign: 'right',
-              fontSize: '14px',
-              fontWeight: '600',
-              color: transactionTotal >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
-            }}
-          >
-            {reportType === "pl" ? "Total Net Income" : "Total Net Cash Flow"}: {formatCurrency(transactionTotal)}
-          </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {transactions.map((t, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    background: 'white',
+                    borderRadius: '8px',
+                    padding: '16px',
+                    border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                    boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => openJournalEntry(t.entryNumber)}
+                >
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
+                    <div style={{ fontWeight: '600' }}>DATE</div>
+                    <div style={{ fontWeight: '600' }}>PAYEE/CUSTOMER</div>
+                    <div style={{ fontWeight: '600' }}>INVOICE #</div>
+                    <div style={{ fontWeight: '600' }}>MEMO</div>
+                    <div style={{ fontWeight: '600', textAlign: 'right' }}>AMOUNT</div>
+                  </div>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', alignItems: 'center' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '500' }}>
+                      {new Date(t.date).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </div>
+                    
+                    <div>
+                      {t.payee && (
+                        <div style={{ fontSize: '13px', color: '#475569', fontWeight: '500' }}>{t.payee}</div>
+                      )}
+                      {t.customer && (
+                        <div
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: '600',
+                            color: BRAND_COLORS.accent,
+                            background: `${BRAND_COLORS.primary}20`,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            display: 'inline-block',
+                            marginTop: '2px',
+                          }}
+                        >
+                          {t.customer}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div style={{ fontSize: '13px', color: '#475569' }}>
+                      {t.invoiceNumber || '-'}
+                    </div>
+                    
+                    <div style={{ fontSize: '12px', color: '#64748b' }}>
+                      {t.memo || '-'}
+                    </div>
+                    
+                    <div style={{ textAlign: 'right' }}>
+                      <span
+                        style={{
+                          fontSize: '16px',
+                          fontWeight: '600',
+                          color: t.amount >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
+                        }}
+                      >
+                        {formatCurrency(t.amount)}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: '#64748b',
+                      textAlign: 'right',
+                      borderTop: `1px solid ${BRAND_COLORS.gray[100]}`,
+                      paddingTop: '8px',
+                      marginTop: '8px',
+                    }}
+                  >
+                    Running Total: {formatCurrency(t.running)}
+                  </div>
+                </div>
+              ))}
+              
+              <div
+                style={{
+                  marginTop: '16px',
+                  textAlign: 'right',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: transactionTotal >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
+                }}
+              >
+                {reportType === "pl" ? "Total Net Income" : "Total Net Cash Flow"}: {formatCurrency(transactionTotal)}
+              </div>
+            </div>
+          )}
         </div>
       )}
       {showJournalModal && (
@@ -2233,4 +2956,110 @@ export default function EnhancedMobileDashboard() {
       )}
     </div>
   );
-}
+}600' }}>
+                          PROFIT STAR
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {properties.find(p => (p.netIncome || 0) === Math.max(...properties.map(prop => prop.netIncome || 0)))?.name}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : reportType === "cf" ? (
+                  <>
+                    <div onClick={() => showRanking("operating")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.primary}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>💰</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.primary, fontWeight: '600' }}>
+                          CASH KING
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {cashKing}
+                        </div>
+                      </div>
+                    </div>
+                    <div onClick={() => showRanking("netCash")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.success}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>⚡</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.success, fontWeight: '600' }}>
+                          FLOW MASTER
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {flowMaster}
+                        </div>
+                      </div>
+                    </div>
+                    <div onClick={() => showRanking("investing")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.warning}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>🎯</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.warning, fontWeight: '600' }}>
+                          EFFICIENCY ACE
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {properties.find(p => (p.investing || 0) === Math.min(...properties.map(prop => prop.investing || 0)))?.name}
+                        </div>
+                      </div>
+                    </div>
+                    <div onClick={() => showRanking("stability")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.secondary}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>💪</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.secondary, fontWeight: '600' }}>
+                          STABILITY PRO
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {properties.length ? properties[Math.floor(Math.random() * properties.length)].name : "N/A"}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div onClick={() => showRanking("arTotal")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.primary}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>💰</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.primary, fontWeight: '
