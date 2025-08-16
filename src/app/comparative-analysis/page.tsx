@@ -86,9 +86,34 @@ export default function EnhancedComparativeAnalysis() {
   const [modalTransactions, setModalTransactions] = useState<any[]>([]);
   const [insights, setInsights] = useState<Insight[]>([]);
 
+  // Labels for display
+  const [labelA, setLabelA] = useState("A");
+  const [labelB, setLabelB] = useState("B");
+
   useEffect(() => {
     fetchCustomers();
   }, []);
+
+  // Update labels when mode or selections change
+  useEffect(() => {
+    if (mode === "period") {
+      const formatPeriodLabel = (start: string, end: string) => {
+        if (!start || !end) return "";
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        if (start === end) {
+          return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+        return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+      };
+      
+      setLabelA(formatPeriodLabel(startA, endA) || "Period A");
+      setLabelB(formatPeriodLabel(startB, endB) || "Period B");
+    } else {
+      setLabelA(customerA || "Customer A");
+      setLabelB(customerB || "Customer B");
+    }
+  }, [mode, startA, endA, startB, endB, customerA, customerB]);
 
   const fetchCustomers = async () => {
     const { data } = await supabase.from("journal_entry_lines").select("customer");
@@ -105,15 +130,15 @@ export default function EnhancedComparativeAnalysis() {
     }
   };
 
-  const fetchLines = async (start: string, end: string, property?: string) => {
+  const fetchLines = async (start: string, end: string, customer?: string) => {
     let query = supabase
       .from("journal_entry_lines")
-      .select("account, account_type, debit, credit, class, date")
+      .select("account, account_type, debit, credit, class, date, customer")
       .gte("date", start)
       .lte("date", end);
 
-    if (property && property !== "All Customers") {
-      query = query.eq("customer", property);
+    if (customer && customer !== "All Customers") {
+      query = query.eq("customer", customer);
     }
 
     const { data, error } = await query;
@@ -143,7 +168,7 @@ export default function EnhancedComparativeAnalysis() {
     const insights: Insight[] = [];
     
     // Revenue analysis
-    const revChange = ((dataA.revenue - dataB.revenue) / Math.abs(dataB.revenue)) * 100;
+    const revChange = dataB.revenue !== 0 ? ((dataA.revenue - dataB.revenue) / Math.abs(dataB.revenue)) * 100 : 0;
     if (Math.abs(revChange) > 10) {
       insights.push({
         type: revChange > 0 ? 'positive' : 'negative',
@@ -182,7 +207,7 @@ export default function EnhancedComparativeAnalysis() {
     }
 
     // Profitability
-    const profitChange = ((dataA.netIncome - dataB.netIncome) / Math.abs(dataB.netIncome)) * 100;
+    const profitChange = dataB.netIncome !== 0 ? ((dataA.netIncome - dataB.netIncome) / Math.abs(dataB.netIncome)) * 100 : 0;
     if (Math.abs(profitChange) > 15) {
       insights.push({
         type: profitChange > 0 ? 'positive' : 'negative',
@@ -312,19 +337,26 @@ export default function EnhancedComparativeAnalysis() {
 
   const fetchData = async () => {
     if (mode === "period" && (!startA || !endA || !startB || !endB)) return;
-    if (mode === "customer" && (!startA || !endA)) return;
+    if (mode === "customer" && (!startA || !endA || !customerA || !customerB)) return;
 
     setLoading(true);
     setError(null);
     try {
-      const [linesA, linesB] = await Promise.all([
-        fetchLines(startA, endA, mode === "customer" ? customerA : undefined),
-        fetchLines(
-          mode === "period" ? startB : startA,
-          mode === "period" ? endB : endA,
-          mode === "customer" ? customerB : undefined,
-        ),
-      ]);
+      let linesA, linesB;
+      
+      if (mode === "period") {
+        // Period comparison: different time periods, same customer filter
+        [linesA, linesB] = await Promise.all([
+          fetchLines(startA, endA),
+          fetchLines(startB, endB),
+        ]);
+      } else {
+        // Customer comparison: same time period, different customers
+        [linesA, linesB] = await Promise.all([
+          fetchLines(startA, endA, customerA),
+          fetchLines(startA, endA, customerB),
+        ]);
+      }
       
       const kpiA = computeKPIs(linesA);
       const kpiB = computeKPIs(linesB);
@@ -353,7 +385,7 @@ export default function EnhancedComparativeAnalysis() {
   };
 
   const handleExport = () => {
-    const header = "Account,A,B,Var $,Var %\n";
+    const header = `Account,${labelA},${labelB},Var $,Var %\n`;
     const sections = [
       { name: "INCOME", rows: varianceRows.income },
       { name: "COGS", rows: varianceRows.cogs },
@@ -608,14 +640,14 @@ export default function EnhancedComparativeAnalysis() {
                 
                 <div className="space-y-3">
                   <div>
-                    <p className="text-xs text-gray-500 mb-1">Current (A)</p>
+                    <p className="text-xs text-gray-500 mb-1">{labelA}</p>
                     <p className="text-xl font-bold text-gray-900">
                       {metric.isPercentage ? `${metric.valueA.toFixed(1)}%` : formatCurrency(metric.valueA)}
                     </p>
                   </div>
                   
                   <div>
-                    <p className="text-xs text-gray-500 mb-1">Previous (B)</p>
+                    <p className="text-xs text-gray-500 mb-1">{labelB}</p>
                     <p className="text-sm text-gray-600">
                       {metric.isPercentage ? `${metric.valueB.toFixed(1)}%` : formatCurrency(metric.valueB)}
                     </p>
@@ -671,7 +703,7 @@ export default function EnhancedComparativeAnalysis() {
                       stroke={BRAND_COLORS.primary}
                       strokeWidth={3}
                       dot={{ fill: BRAND_COLORS.primary, strokeWidth: 2, r: 4 }}
-                      name="Period A"
+                      name={labelA}
                     />
                     <Line 
                       type="monotone" 
@@ -680,7 +712,7 @@ export default function EnhancedComparativeAnalysis() {
                       strokeWidth={2}
                       strokeDasharray="5 5"
                       dot={{ fill: BRAND_COLORS.gray[600], strokeWidth: 2, r: 3 }}
-                      name="Period B"
+                      name={labelB}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -715,7 +747,7 @@ export default function EnhancedComparativeAnalysis() {
                       stroke={BRAND_COLORS.success}
                       strokeWidth={3}
                       dot={{ fill: BRAND_COLORS.success, strokeWidth: 2, r: 4 }}
-                      name="Period A"
+                      name={labelA}
                     />
                     <Line 
                       type="monotone" 
@@ -724,7 +756,7 @@ export default function EnhancedComparativeAnalysis() {
                       strokeWidth={2}
                       strokeDasharray="5 5"
                       dot={{ fill: BRAND_COLORS.gray[600], strokeWidth: 2, r: 3 }}
-                      name="Period B"
+                      name={labelB}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -752,10 +784,10 @@ export default function EnhancedComparativeAnalysis() {
                     Account
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Period A
+                    {labelA}
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Period B
+                    {labelB}
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Variance $
@@ -1003,7 +1035,7 @@ export default function EnhancedComparativeAnalysis() {
                       Customer
                     </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Period
+                      Set
                     </th>
                   </tr>
                 </thead>
@@ -1024,7 +1056,7 @@ export default function EnhancedComparativeAnalysis() {
                           <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
                             t.set === 'A' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'
                           }`}>
-                            {t.set}
+                            {t.set === 'A' ? labelA : labelB}
                           </span>
                         </td>
                       </tr>
