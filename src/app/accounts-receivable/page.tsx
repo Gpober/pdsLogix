@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
-import { CreditCard, Clock, AlertTriangle, CheckCircle, RefreshCw, Search, Eye, DollarSign } from "lucide-react"
+import React from "react"
+import { CreditCard, Clock, AlertTriangle, CheckCircle, RefreshCw, Search, Eye, DollarSign, ChevronDown, ChevronRight } from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
 
 // I AM CFO Brand Colors
@@ -28,6 +29,20 @@ interface ARRecord {
   invoices: ARInvoice[]
 }
 
+interface ARParentGroup {
+  parentCustomer: string
+  totalBalance: number
+  totalInvoiceCount: number
+  totalAging: {
+    current: number
+    days30: number
+    days60: number
+    days90: number
+  }
+  subCustomers: ARRecord[]
+  isExpanded: boolean
+}
+
 interface ARInvoice {
   id: number
   date: string
@@ -47,6 +62,7 @@ export default function AccountsReceivablePage() {
   const [isLoading, setIsLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
   const [arData, setArData] = useState<ARRecord[]>([])
+  const [arGroupedData, setArGroupedData] = useState<ARParentGroup[]>([])
   const [error, setError] = useState<string | null>(null)
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
@@ -109,6 +125,74 @@ export default function AccountsReceivablePage() {
     if (daysOutstanding <= 60) return '31-60'
     if (daysOutstanding <= 90) return '61-90'
     return '90+'
+  }
+
+  // Parse customer name to get parent and sub customer
+  const parseCustomerName = (fullCustomerName: string) => {
+    if (fullCustomerName.includes(':')) {
+      const [parent, sub] = fullCustomerName.split(':', 2)
+      return {
+        parent: parent.trim(),
+        sub: sub.trim(),
+        fullName: fullCustomerName
+      }
+    }
+    return {
+      parent: fullCustomerName,
+      sub: null,
+      fullName: fullCustomerName
+    }
+  }
+
+  // Group customers by parent with expand/collapse
+  const groupCustomersByParent = (customers: ARRecord[]): ARParentGroup[] => {
+    const parentGroups = new Map<string, ARParentGroup>()
+
+    customers.forEach(customer => {
+      const { parent, sub } = parseCustomerName(customer.customer)
+      
+      if (!parentGroups.has(parent)) {
+        parentGroups.set(parent, {
+          parentCustomer: parent,
+          totalBalance: 0,
+          totalInvoiceCount: 0,
+          totalAging: { current: 0, days30: 0, days60: 0, days90: 0 },
+          subCustomers: [],
+          isExpanded: false
+        })
+      }
+
+      const group = parentGroups.get(parent)!
+      
+      // Add to sub customers
+      group.subCustomers.push(customer)
+      
+      // Aggregate totals
+      group.totalBalance += customer.balance
+      group.totalInvoiceCount += customer.invoiceCount
+      group.totalAging.current += customer.aging.current
+      group.totalAging.days30 += customer.aging.days30
+      group.totalAging.days60 += customer.aging.days60
+      group.totalAging.days90 += customer.aging.days90
+    })
+
+    // Sort sub customers within each group
+    parentGroups.forEach(group => {
+      group.subCustomers.sort((a, b) => b.balance - a.balance)
+    })
+
+    // Convert to array and sort by total balance
+    return Array.from(parentGroups.values()).sort((a, b) => b.totalBalance - a.totalBalance)
+  }
+
+  const toggleParentExpansion = (parentCustomer: string) => {
+    setArGroupedData(prev => 
+      prev.map(group => 
+        group.parentCustomer === parentCustomer 
+          ? { ...group, isExpanded: !group.isExpanded }
+          : group
+      )
+    )
   }
 
   const fetchARData = async () => {
@@ -206,6 +290,10 @@ export default function AccountsReceivablePage() {
 
       console.log(`✅ Processed ${arRecords.length} customers with outstanding A/R`)
       setArData(arRecords)
+      
+      // Group by parent customers
+      const groupedData = groupCustomersByParent(arRecords)
+      setArGroupedData(groupedData)
     } catch (err) {
       console.error("❌ Error fetching A/R data:", err)
       setError(err instanceof Error ? err.message : "Unknown error")
@@ -250,31 +338,43 @@ export default function AccountsReceivablePage() {
 
   // Filter data based on search and period
   const filteredData = useMemo(() => {
-    let filtered = arData
+    let filtered = arGroupedData
 
     if (searchTerm) {
-      filtered = filtered.filter(record => 
-        record.customer.toLowerCase().includes(searchTerm.toLowerCase())
+      filtered = filtered.filter(group => 
+        group.parentCustomer.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        group.subCustomers.some(sub => sub.customer.toLowerCase().includes(searchTerm.toLowerCase()))
       )
     }
 
     if (selectedPeriod !== "All") {
-      filtered = filtered.filter(record => {
-        if (selectedPeriod === "Current") return record.aging.current > 0
-        if (selectedPeriod === "30-60") return record.aging.days30 > 0
-        if (selectedPeriod === "60-90") return record.aging.days60 > 0
-        if (selectedPeriod === "90+") return record.aging.days90 > 0
+      filtered = filtered.filter(group => {
+        if (selectedPeriod === "Current") return group.totalAging.current > 0
+        if (selectedPeriod === "30-60") return group.totalAging.days30 > 0
+        if (selectedPeriod === "60-90") return group.totalAging.days60 > 0
+        if (selectedPeriod === "90+") return group.totalAging.days90 > 0
         return true
       })
     }
 
     return filtered
-  }, [arData, searchTerm, selectedPeriod])
+  }, [arGroupedData, searchTerm, selectedPeriod])
 
   const showCustomerTransactions = (customer: string, agingFilter?: string) => {
     setSelectedCustomer(customer)
     setSelectedAgingFilter(agingFilter)
     setShowTransactionModal(true)
+  }
+
+  const showParentTransactions = (parentCustomer: string, agingFilter?: string) => {
+    // Find all invoices for this parent (including all sub-customers)
+    const parentGroup = arGroupedData.find(group => group.parentCustomer === parentCustomer)
+    if (parentGroup) {
+      // We'll show transactions for the parent as a special case
+      setSelectedCustomer(`${parentCustomer} (All Locations)`)
+      setSelectedAgingFilter(agingFilter)
+      setShowTransactionModal(true)
+    }
   }
 
   // Filter invoices based on aging filter
@@ -294,7 +394,31 @@ export default function AccountsReceivablePage() {
     }
   }
 
-  const selectedCustomerData = selectedCustomer ? arData.find(r => r.customer === selectedCustomer) : null
+  const selectedCustomerData = selectedCustomer ? (() => {
+    // Handle parent customer (All Locations) case
+    if (selectedCustomer.includes('(All Locations)')) {
+      const parentName = selectedCustomer.replace(' (All Locations)', '')
+      const parentGroup = arGroupedData.find(group => group.parentCustomer === parentName)
+      if (parentGroup) {
+        // Combine all invoices from sub-customers
+        const allInvoices = parentGroup.subCustomers.reduce((acc: ARInvoice[], subCustomer) => {
+          return acc.concat(subCustomer.invoices)
+        }, [])
+        
+        return {
+          customer: selectedCustomer,
+          balance: parentGroup.totalBalance,
+          invoiceCount: parentGroup.totalInvoiceCount,
+          aging: parentGroup.totalAging,
+          invoices: allInvoices
+        }
+      }
+    }
+    
+    // Handle individual customer case
+    return arData.find(r => r.customer === selectedCustomer)
+  })() : null
+  
   const filteredInvoices = selectedCustomerData ? getFilteredInvoices(selectedCustomerData.invoices, selectedAgingFilter) : []
 
   return (
@@ -510,7 +634,7 @@ export default function AccountsReceivablePage() {
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Outstanding Receivables</h3>
               <div className="text-sm text-gray-600 mt-1">
-                Showing {filteredData.length} of {arData.length} customers • Click any amount to drill down
+                Showing {filteredData.length} of {arGroupedData.length} customer groups • Click any amount to drill down
               </div>
             </div>
 
@@ -543,71 +667,167 @@ export default function AccountsReceivablePage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredData.map((record, index) => (
-                      <tr key={`${record.customer}-${index}`} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {record.customer}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          {record.aging.current > 0 ? (
+                    {filteredData.map((group, groupIndex) => (
+                      <React.Fragment key={group.parentCustomer}>
+                        {/* Parent Row */}
+                        <tr className="hover:bg-gray-50 bg-gray-25">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                            <div className="flex items-center">
+                              <button
+                                onClick={() => toggleParentExpansion(group.parentCustomer)}
+                                className="mr-2 p-1 hover:bg-gray-200 rounded"
+                              >
+                                {group.isExpanded ? (
+                                  <ChevronDown className="w-4 h-4 text-gray-500" />
+                                ) : (
+                                  <ChevronRight className="w-4 h-4 text-gray-500" />
+                                )}
+                              </button>
+                              {group.parentCustomer}
+                              {group.subCustomers.length > 1 && (
+                                <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                                  {group.subCustomers.length} locations
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                            {group.totalAging.current > 0 ? (
+                              <button
+                                onClick={() => showParentTransactions(group.parentCustomer, 'current')}
+                                className="font-bold text-green-600 hover:text-green-800 hover:underline cursor-pointer"
+                              >
+                                {formatCurrency(group.totalAging.current)}
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                            {group.totalAging.days30 > 0 ? (
+                              <button
+                                onClick={() => showParentTransactions(group.parentCustomer, '31-60')}
+                                className="font-bold text-yellow-600 hover:text-yellow-800 hover:underline cursor-pointer"
+                              >
+                                {formatCurrency(group.totalAging.days30)}
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                            {group.totalAging.days60 > 0 ? (
+                              <button
+                                onClick={() => showParentTransactions(group.parentCustomer, '61-90')}
+                                className="font-bold text-orange-600 hover:text-orange-800 hover:underline cursor-pointer"
+                              >
+                                {formatCurrency(group.totalAging.days60)}
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                            {group.totalAging.days90 > 0 ? (
+                              <button
+                                onClick={() => showParentTransactions(group.parentCustomer, '90+')}
+                                className="font-bold text-red-600 hover:text-red-800 hover:underline cursor-pointer"
+                              >
+                                {formatCurrency(group.totalAging.days90)}
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                             <button
-                              onClick={() => showCustomerTransactions(record.customer, 'current')}
-                              className="font-medium text-green-600 hover:text-green-800 hover:underline cursor-pointer"
+                              onClick={() => showParentTransactions(group.parentCustomer, 'all')}
+                              className="font-bold text-gray-900 hover:text-blue-600 hover:underline cursor-pointer text-lg"
                             >
-                              {formatCurrency(record.aging.current)}
+                              {formatCurrency(group.totalBalance)}
                             </button>
-                          ) : (
-                            <span className="text-gray-300">-</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          {record.aging.days30 > 0 ? (
-                            <button
-                              onClick={() => showCustomerTransactions(record.customer, '31-60')}
-                              className="font-medium text-yellow-600 hover:text-yellow-800 hover:underline cursor-pointer"
-                            >
-                              {formatCurrency(record.aging.days30)}
-                            </button>
-                          ) : (
-                            <span className="text-gray-300">-</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          {record.aging.days60 > 0 ? (
-                            <button
-                              onClick={() => showCustomerTransactions(record.customer, '61-90')}
-                              className="font-medium text-orange-600 hover:text-orange-800 hover:underline cursor-pointer"
-                            >
-                              {formatCurrency(record.aging.days60)}
-                            </button>
-                          ) : (
-                            <span className="text-gray-300">-</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          {record.aging.days90 > 0 ? (
-                            <button
-                              onClick={() => showCustomerTransactions(record.customer, '90+')}
-                              className="font-medium text-red-600 hover:text-red-800 hover:underline cursor-pointer"
-                            >
-                              {formatCurrency(record.aging.days90)}
-                            </button>
-                          ) : (
-                            <span className="text-gray-300">-</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          <button
-                            onClick={() => showCustomerTransactions(record.customer, 'all')}
-                            className="font-bold text-gray-900 hover:text-blue-600 hover:underline cursor-pointer"
-                          >
-                            {formatCurrency(record.balance)}
-                          </button>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
-                          {record.invoiceCount}
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-bold text-gray-700">
+                            {group.totalInvoiceCount}
+                          </td>
+                        </tr>
+
+                        {/* Sub Customer Rows (when expanded) */}
+                        {group.isExpanded && group.subCustomers.map((subCustomer, subIndex) => {
+                          const { sub } = parseCustomerName(subCustomer.customer)
+                          const displayName = sub || subCustomer.customer
+                          
+                          return (
+                            <tr key={`${group.parentCustomer}-${subIndex}`} className="hover:bg-blue-25 bg-blue-50">
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                                <div className="flex items-center">
+                                  <div className="w-6"></div> {/* Spacer for alignment */}
+                                  <span className="text-blue-700">↳ {displayName}</span>
+                                </div>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                {subCustomer.aging.current > 0 ? (
+                                  <button
+                                    onClick={() => showCustomerTransactions(subCustomer.customer, 'current')}
+                                    className="font-medium text-green-600 hover:text-green-800 hover:underline cursor-pointer"
+                                  >
+                                    {formatCurrency(subCustomer.aging.current)}
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-300">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                {subCustomer.aging.days30 > 0 ? (
+                                  <button
+                                    onClick={() => showCustomerTransactions(subCustomer.customer, '31-60')}
+                                    className="font-medium text-yellow-600 hover:text-yellow-800 hover:underline cursor-pointer"
+                                  >
+                                    {formatCurrency(subCustomer.aging.days30)}
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-300">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                {subCustomer.aging.days60 > 0 ? (
+                                  <button
+                                    onClick={() => showCustomerTransactions(subCustomer.customer, '61-90')}
+                                    className="font-medium text-orange-600 hover:text-orange-800 hover:underline cursor-pointer"
+                                  >
+                                    {formatCurrency(subCustomer.aging.days60)}
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-300">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                {subCustomer.aging.days90 > 0 ? (
+                                  <button
+                                    onClick={() => showCustomerTransactions(subCustomer.customer, '90+')}
+                                    className="font-medium text-red-600 hover:text-red-800 hover:underline cursor-pointer"
+                                  >
+                                    {formatCurrency(subCustomer.aging.days90)}
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-300">-</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                <button
+                                  onClick={() => showCustomerTransactions(subCustomer.customer, 'all')}
+                                  className="font-medium text-gray-900 hover:text-blue-600 hover:underline cursor-pointer"
+                                >
+                                  {formatCurrency(subCustomer.balance)}
+                                </button>
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-600">
+                                {subCustomer.invoiceCount}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
