@@ -1,98 +1,4 @@
-{/* Profit Waterfall Chart */}
-      {dataA && dataB && (
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Profit Bridge Analysis</h2>
-          <p className="text-sm text-gray-600 mb-6">Shows how you get from {labelB} profit to {labelA} profit</p>
-          
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart 
-                data={(() => {
-                  const revenueChange = dataA.revenue - dataB.revenue;
-                  const cogsChange = dataA.cogs - dataB.cogs;
-                  const expenseChange = dataA.opEx - dataB.opEx;
-                  
-                  return [
-                    {
-                      name: labelB,
-                      value: dataB.netIncome,
-                      cumulative: dataB.netIncome,
-                      type: 'start'
-                    },
-                    {
-                      name: 'Revenue\nImpact',
-                      value: revenueChange,
-                      cumulative: dataB.netIncome + revenueChange,
-                      type: revenueChange >= 0 ? 'positive' : 'negative'
-                    },
-                    {
-                      name: 'COGS\nImpact',
-                      value: cogsChange,
-                      cumulative: dataB.netIncome + revenueChange + cogsChange,
-                      type: cogsChange <= 0 ? 'positive' : 'negative'
-                    },
-                    {
-                      name: 'Expense\nImpact',
-                      value: expenseChange,
-                      cumulative: dataB.netIncome + revenueChange + cogsChange + expenseChange,
-                      type: expenseChange <= 0 ? 'positive' : 'negative'
-                    },
-                    {
-                      name: labelA,
-                      value: dataA.netIncome,
-                      cumulative: dataA.netIncome,
-                      type: 'end'
-                    }
-                  ];
-                })()}
-                margin={{ left: 60, right: 60, top: 20, bottom: 60 }}
-              >
-                <XAxis 
-                  dataKey="name" 
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6B7280' }}
-                />
-                <YAxis 
-                  tickFormatter={(v) => formatCurrency(v)} 
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6B7280' }}
-                />
-                <Tooltip 
-                  formatter={(value, name) => {
-                    if (name === 'cumulative') {
-                      return [formatCurrency(Number(value)), 'Running Total'];
-                    }
-                    return [formatCurrency(Number(value)), 'Change'];
-                  }}
-                  labelFormatter={(label) => `${label}`}
-                  contentStyle={{ 
-                    backgroundColor: 'white', 
-                    border: '1px solid #E5E7EB', 
-                    borderRadius: '8px',
-                    fontSize: '14px'
-                  }}
-                />
-                
-                {/* Base line at zero */}
-                <Line 
-                  type="monotone" 
-                  dataKey={() => 0}
-                  stroke="#E5E7EB"
-                  strokeDasharray="2 2"
-                  dot={false}
-                  strokeWidth={1}
-                />
-                
-                {/* Running total line */}
-                <Line 
-                  type="monotone" 
-                  dataKey="cumulative"
-                  stroke={BRAND_COLORS.primary}
-                  strokeWidth={3}
-                  dot={(props) => {
-                    const { cx, cy, payloa"use client";
+"use client";
 
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -103,10 +9,6 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  BarChart,
-  Bar,
-  Cell,
-  ReferenceLine,
 } from "recharts";
 import {
   Select,
@@ -182,9 +84,6 @@ export default function EnhancedComparativeAnalysis() {
   const [showModal, setShowModal] = useState(false);
   const [modalTitle, setModalTitle] = useState("");
   const [modalTransactions, setModalTransactions] = useState<any[]>([]);
-  const [showJournalModal, setShowJournalModal] = useState(false);
-  const [selectedJournalEntry, setSelectedJournalEntry] = useState<any[]>([]);
-  const [selectedJournalDate, setSelectedJournalDate] = useState("");
   const [insights, setInsights] = useState<Insight[]>([]);
 
   // Labels for display
@@ -234,7 +133,7 @@ export default function EnhancedComparativeAnalysis() {
   const fetchLines = async (start: string, end: string, customer?: string) => {
     let query = supabase
       .from("journal_entry_lines")
-      .select("account, account_type, debit, credit, class, date, customer, memo, journal_entry_id")
+      .select("account, account_type, debit, credit, class, date, customer")
       .gte("date", start)
       .lte("date", end);
 
@@ -265,7 +164,7 @@ export default function EnhancedComparativeAnalysis() {
     return { revenue, cogs, grossProfit, opEx, netIncome };
   };
 
-  const generateInsights = (dataA: KPIs, dataB: KPIs, labelA: string, labelB: string, linesA: any[], linesB: any[]): Insight[] => {
+  const generateInsights = (dataA: KPIs, dataB: KPIs, labelA: string, labelB: string): Insight[] => {
     const insights: Insight[] = [];
     
     // Revenue comparison - focus on dollar amounts
@@ -294,76 +193,7 @@ export default function EnhancedComparativeAnalysis() {
       });
     }
 
-    // Labor cost analysis - NEW PAYROLL & CONTRACTOR INSIGHT
-    const getlaborCosts = (lines: any[]) => {
-      let payroll = 0;
-      let contractors = 0;
-      
-      lines.forEach((line) => {
-        const amount = Math.abs((Number(line.debit) || 0) - (Number(line.credit) || 0));
-        const account = (line.account || "").toLowerCase();
-        const type = (line.account_type || "").toLowerCase();
-        
-        // Check for payroll-related accounts
-        if (account.includes("payroll") || 
-            account.includes("salary") || 
-            account.includes("wages") ||
-            account.includes("employee") ||
-            type.includes("payroll")) {
-          payroll += amount;
-        }
-        
-        // Check for contractor-related accounts
-        if (account.includes("contractor") || 
-            account.includes("1099") ||
-            account.includes("freelance") ||
-            account.includes("consulting fees") ||
-            account.includes("independent contractor")) {
-          contractors += amount;
-        }
-      });
-      
-      return { payroll, contractors, total: payroll + contractors };
-    };
-
-    const laborA = getLabor Costs(linesA);
-    const laborB = getLaborCosts(linesB);
-    const laborDifference = laborA.total - laborB.total;
-    
-    if (Math.abs(laborDifference) > 5000 || laborA.total > 10000 || laborB.total > 10000) {
-      const moreExpensive = laborDifference > 0 ? labelA : labelB;
-      const lessExpensive = laborDifference > 0 ? labelB : labelA;
-      const higherCost = laborDifference > 0 ? laborA : laborB;
-      const lowerCost = laborDifference > 0 ? laborB : laborA;
-      
-      // Calculate workforce composition
-      const higherPayrollPct = higherCost.total > 0 ? (higherCost.payroll / higherCost.total * 100) : 0;
-      const higherContractorPct = higherCost.total > 0 ? (higherCost.contractors / higherCost.total * 100) : 0;
-      
-      let description = "";
-      if (Math.abs(laborDifference) > 5000) {
-        description = `${moreExpensive} spent ${formatCurrency(Math.abs(laborDifference))} more on labor costs than ${lessExpensive}. `;
-      } else {
-        description = `Labor cost analysis: `;
-      }
-      
-      description += `${moreExpensive} workforce is ${higherPayrollPct.toFixed(0)}% employees (${formatCurrency(higherCost.payroll)}) and ${higherContractorPct.toFixed(0)}% contractors (${formatCurrency(higherCost.contractors)}).`;
-      
-      if (higherContractorPct > 60) {
-        description += " This heavy contractor reliance may offer flexibility but could indicate workforce gaps.";
-      } else if (higherPayrollPct > 80) {
-        description += " This employee-heavy model provides stability but may limit operational flexibility.";
-      }
-
-      insights.push({
-        type: laborDifference > 0 ? 'warning' : 'neutral',
-        title: `${moreExpensive} Higher Labor Investment`,
-        description,
-        impact: Math.abs(laborDifference) > 50000 ? 'high' : Math.abs(laborDifference) > 25000 ? 'medium' : 'low'
-      });
-    }
-
-    // Cost efficiency comparison (keeping the existing one)
+    // Cost efficiency comparison
     const expenseDifference = Math.abs(dataA.opEx) - Math.abs(dataB.opEx);
     if (Math.abs(expenseDifference) > 5000) { // Only show if difference is meaningful ($5k+)
       const moreEfficient = expenseDifference < 0 ? labelA : labelB;
@@ -373,6 +203,19 @@ export default function EnhancedComparativeAnalysis() {
         title: `${moreEfficient} Operating More Efficiently`,
         description: `${moreEfficient} spent ${formatCurrency(Math.abs(expenseDifference))} less on operating expenses than ${lessEfficient}. This cost advantage contributes to better profitability.`,
         impact: Math.abs(expenseDifference) > 25000 ? 'high' : Math.abs(expenseDifference) > 15000 ? 'medium' : 'low'
+      });
+    }
+
+    // Gross profit comparison
+    const grossProfitDifference = dataA.grossProfit - dataB.grossProfit;
+    if (Math.abs(grossProfitDifference) > 10000) { // Only show if difference is meaningful ($10k+)
+      const winner = grossProfitDifference > 0 ? labelA : labelB;
+      const loser = grossProfitDifference > 0 ? labelB : labelA;
+      insights.push({
+        type: grossProfitDifference > 0 ? 'positive' : 'warning',
+        title: `${winner} Generating More Gross Profit`,
+        description: `${winner} achieved ${formatCurrency(Math.abs(grossProfitDifference))} more gross profit than ${loser}. This indicates better pricing, lower costs, or higher sales volume.`,
+        impact: Math.abs(grossProfitDifference) > 75000 ? 'high' : Math.abs(grossProfitDifference) > 35000 ? 'medium' : 'low'
       });
     }
 
@@ -525,7 +368,7 @@ export default function EnhancedComparativeAnalysis() {
       setWeeklyData(aggregateWeekly(linesA, linesB));
       setAllLinesA(linesA);
       setAllLinesB(linesB);
-      setInsights(generateInsights(kpiA, kpiB, labelA, labelB, linesA, linesB));
+      setInsights(generateInsights(kpiA, kpiB, labelA, labelB));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -541,24 +384,6 @@ export default function EnhancedComparativeAnalysis() {
     setModalTitle(account);
     setModalTransactions(combined);
     setShowModal(true);
-  };
-
-  const showJournalEntry = async (journalEntryId: string, date: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("journal_entry_lines")
-        .select("account, account_type, debit, credit, memo, customer")
-        .eq("journal_entry_id", journalEntryId)
-        .order("account");
-
-      if (error) throw error;
-      
-      setSelectedJournalEntry(data || []);
-      setSelectedJournalDate(date);
-      setShowJournalModal(true);
-    } catch (e) {
-      console.error("Error fetching journal entry:", e);
-    }
   };
 
   const handleExport = () => {
@@ -846,205 +671,98 @@ export default function EnhancedComparativeAnalysis() {
         </div>
       )}
 
-      {/* Profit Waterfall Chart */}
-      {dataA && dataB && (
+      {/* Weekly Trend Chart */}
+      {weeklyData.length > 0 && (
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Profit Bridge Analysis</h2>
-          <p className="text-sm text-gray-600 mb-6">
-            Shows how you get from {labelB} profit ({formatCurrency(dataB.netIncome)}) to {labelA} profit ({formatCurrency(dataA.netIncome)})
-          </p>
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Weekly Performance Trends</h2>
           
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart 
-                data={(() => {
-                  const revenueChange = dataA.revenue - dataB.revenue;
-                  const cogsChange = dataA.cogs - dataB.cogs; // Note: COGS is typically negative, so improvement is more negative
-                  const expenseChange = dataA.opEx - dataB.opEx; // OpEx is typically negative, so improvement is more negative
-                  
-                  let runningTotal = dataB.netIncome;
-                  
-                  const data = [
-                    {
-                      name: `Starting\n${labelB}`,
-                      value: dataB.netIncome,
-                      base: 0,
-                      type: 'start',
-                      displayValue: dataB.netIncome
-                    }
-                  ];
-                  
-                  // Revenue impact
-                  if (Math.abs(revenueChange) > 1000) {
-                    data.push({
-                      name: 'Revenue\nChange',
-                      value: revenueChange > 0 ? revenueChange : 0,
-                      negValue: revenueChange < 0 ? revenueChange : 0,
-                      base: runningTotal,
-                      type: revenueChange >= 0 ? 'positive' : 'negative',
-                      displayValue: revenueChange
-                    });
-                    runningTotal += revenueChange;
-                  }
-                  
-                  // COGS impact (improvement in COGS is negative change, which is good)
-                  if (Math.abs(cogsChange) > 1000) {
-                    data.push({
-                      name: 'COGS\nChange',
-                      value: cogsChange < 0 ? Math.abs(cogsChange) : 0, // Show as positive bar when COGS decreased (good)
-                      negValue: cogsChange > 0 ? cogsChange : 0, // Show as negative bar when COGS increased (bad)
-                      base: runningTotal - (cogsChange > 0 ? cogsChange : 0),
-                      type: cogsChange <= 0 ? 'positive' : 'negative',
-                      displayValue: cogsChange
-                    });
-                    runningTotal += cogsChange;
-                  }
-                  
-                  // Expense impact (improvement in expenses is negative change, which is good)
-                  if (Math.abs(expenseChange) > 1000) {
-                    data.push({
-                      name: 'Expense\nChange',
-                      value: expenseChange < 0 ? Math.abs(expenseChange) : 0, // Show as positive bar when expenses decreased (good)
-                      negValue: expenseChange > 0 ? expenseChange : 0, // Show as negative bar when expenses increased (bad)
-                      base: runningTotal - (expenseChange > 0 ? expenseChange : 0),
-                      type: expenseChange <= 0 ? 'positive' : 'negative',
-                      displayValue: expenseChange
-                    });
-                    runningTotal += expenseChange;
-                  }
-                  
-                  data.push({
-                    name: `Ending\n${labelA}`,
-                    value: dataA.netIncome,
-                    base: 0,
-                    type: 'end',
-                    displayValue: dataA.netIncome
-                  });
-                  
-                  return data;
-                })()}
-                margin={{ left: 60, right: 60, top: 20, bottom: 60 }}
-              >
-                <XAxis 
-                  dataKey="name" 
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6B7280' }}
-                />
-                <YAxis 
-                  tickFormatter={(v) => formatCurrency(v)} 
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fontSize: 12, fill: '#6B7280' }}
-                />
-                <Tooltip 
-                  formatter={(value, name, props) => {
-                    const actualValue = props.payload?.displayValue;
-                    if (actualValue !== undefined) {
-                      return [formatCurrency(actualValue), 'Change Amount'];
-                    }
-                    return [formatCurrency(Number(value)), name];
-                  }}
-                  labelFormatter={(label) => label.replace('\n', ' ')}
-                  contentStyle={{ 
-                    backgroundColor: 'white', 
-                    border: '1px solid #E5E7EB', 
-                    borderRadius: '8px',
-                    fontSize: '14px'
-                  }}
-                />
-                
-                {/* Reference line at zero */}
-                <ReferenceLine y={0} stroke="#E5E7EB" strokeDasharray="2 2" />
-                
-                {/* Positive changes - green bars */}
-                <Bar dataKey="value" stackId="waterfall">
-                  {(() => {
-                    const revenueChange = dataA.revenue - dataB.revenue;
-                    const cogsChange = dataA.cogs - dataB.cogs;
-                    const expenseChange = dataA.opEx - dataB.opEx;
-                    
-                    let runningTotal = dataB.netIncome;
-                    const data = [
-                      { type: 'start' }
-                    ];
-                    
-                    if (Math.abs(revenueChange) > 1000) {
-                      data.push({ type: revenueChange >= 0 ? 'positive' : 'negative' });
-                      runningTotal += revenueChange;
-                    }
-                    
-                    if (Math.abs(cogsChange) > 1000) {
-                      data.push({ type: cogsChange <= 0 ? 'positive' : 'negative' });
-                      runningTotal += cogsChange;
-                    }
-                    
-                    if (Math.abs(expenseChange) > 1000) {
-                      data.push({ type: expenseChange <= 0 ? 'positive' : 'negative' });
-                      runningTotal += expenseChange;
-                    }
-                    
-                    data.push({ type: 'end' });
-                    
-                    return data.map((item, index) => {
-                      let color = BRAND_COLORS.gray[300];
-                      if (item.type === 'positive') color = BRAND_COLORS.success;
-                      else if (item.type === 'negative') color = BRAND_COLORS.danger;
-                      else if (item.type === 'start') color = BRAND_COLORS.gray[600];
-                      else if (item.type === 'end') color = BRAND_COLORS.primary;
-                      
-                      return <Cell key={`cell-${index}`} fill={color} />;
-                    });
-                  })()}
-                </Bar>
-                
-                {/* Negative changes - red bars */}
-                <Bar dataKey="negValue" stackId="waterfall">
-                  {(() => {
-                    const revenueChange = dataA.revenue - dataB.revenue;
-                    const cogsChange = dataA.cogs - dataB.cogs;
-                    const expenseChange = dataA.opEx - dataB.opEx;
-                    
-                    const data = [
-                      { type: 'start' }
-                    ];
-                    
-                    if (Math.abs(revenueChange) > 1000) {
-                      data.push({ type: revenueChange >= 0 ? 'positive' : 'negative' });
-                    }
-                    
-                    if (Math.abs(cogsChange) > 1000) {
-                      data.push({ type: cogsChange <= 0 ? 'positive' : 'negative' });
-                    }
-                    
-                    if (Math.abs(expenseChange) > 1000) {
-                      data.push({ type: expenseChange <= 0 ? 'positive' : 'negative' });
-                    }
-                    
-                    data.push({ type: 'end' });
-                    
-                    return data.map((item, index) => (
-                      <Cell key={`cell-neg-${index}`} fill={item.type === 'negative' ? BRAND_COLORS.danger : 'transparent'} />
-                    ));
-                  })()}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          
-          {/* Legend */}
-          <div className="flex justify-center mt-4 gap-6 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded" style={{ backgroundColor: BRAND_COLORS.success }}></div>
-              <span className="text-gray-600">Positive Impact</span>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Revenue Trend */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-700 mb-4">Revenue Comparison</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
+                    <XAxis 
+                      dataKey="week" 
+                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <YAxis 
+                      tickFormatter={(v) => formatCurrency(v)} 
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <Tooltip 
+                      formatter={(value) => formatCurrency(Number(value))}
+                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="revenueA" 
+                      stroke={BRAND_COLORS.primary}
+                      strokeWidth={3}
+                      dot={{ fill: BRAND_COLORS.primary, strokeWidth: 2, r: 4 }}
+                      name={labelA}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="revenueB" 
+                      stroke={BRAND_COLORS.gray[600]}
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={{ fill: BRAND_COLORS.gray[600], strokeWidth: 2, r: 3 }}
+                      name={labelB}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded" style={{ backgroundColor: BRAND_COLORS.danger }}></div>
-              <span className="text-gray-600">Negative Impact</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded" style={{ backgroundColor: BRAND_COLORS.primary }}></div>
-              <span className="text-gray-600">Final Result</span>
+
+            {/* Net Income Trend */}
+            <div>
+              <h3 className="text-lg font-medium text-gray-700 mb-4">Net Income Comparison</h3>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
+                    <XAxis 
+                      dataKey="week" 
+                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <YAxis 
+                      tickFormatter={(v) => formatCurrency(v)} 
+                      stroke="#6B7280"
+                      fontSize={12}
+                    />
+                    <Tooltip 
+                      formatter={(value) => formatCurrency(Number(value))}
+                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
+                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="netIncomeA" 
+                      stroke={BRAND_COLORS.success}
+                      strokeWidth={3}
+                      dot={{ fill: BRAND_COLORS.success, strokeWidth: 2, r: 4 }}
+                      name={labelA}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="netIncomeB" 
+                      stroke={BRAND_COLORS.gray[600]}
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={{ fill: BRAND_COLORS.gray[600], strokeWidth: 2, r: 3 }}
+                      name={labelB}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
         </div>
@@ -1321,9 +1039,6 @@ export default function EnhancedComparativeAnalysis() {
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Set
                     </th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Journal Entry
-                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -1346,94 +1061,10 @@ export default function EnhancedComparativeAnalysis() {
                             {t.set === 'A' ? labelA : labelB}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-center">
-                          {t.journal_entry_id && (
-                            <button
-                              onClick={() => showJournalEntry(t.journal_entry_id, t.date)}
-                              className="text-blue-600 hover:text-blue-800 text-xs font-medium underline"
-                            >
-                              View Journal
-                            </button>
-                          )}
-                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Journal Entry Details Modal */}
-      {showJournalModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[80vh] flex flex-col shadow-2xl">
-            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-              <div>
-                <h3 className="text-xl font-semibold text-gray-900">Journal Entry Details</h3>
-                <p className="text-sm text-gray-600 mt-1">Date: {formatDate(selectedJournalDate)}</p>
-              </div>
-              <button
-                onClick={() => setShowJournalModal(false)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Account
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Description
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Debit
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Credit
-                    </th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Customer
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {selectedJournalEntry.map((line, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900">{line.account}</td>
-                      <td className="px-6 py-4 text-sm text-gray-600">{line.memo || "-"}</td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">
-                        {line.debit ? formatCurrency(Number(line.debit)) : "-"}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-right text-gray-900">
-                        {line.credit ? formatCurrency(Number(line.credit)) : "-"}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-center text-gray-600">
-                        {line.customer || "-"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot className="bg-gray-50">
-                  <tr>
-                    <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-900">
-                      Totals:
-                    </td>
-                    <td className="px-6 py-3 text-sm font-semibold text-right text-gray-900">
-                      {formatCurrency(selectedJournalEntry.reduce((sum, line) => sum + (Number(line.debit) || 0), 0))}
-                    </td>
-                    <td className="px-6 py-3 text-sm font-semibold text-right text-gray-900">
-                      {formatCurrency(selectedJournalEntry.reduce((sum, line) => sum + (Number(line.credit) || 0), 0))}
-                    </td>
-                    <td className="px-6 py-3"></td>
-                  </tr>
-                </tfoot>
               </table>
             </div>
           </div>
