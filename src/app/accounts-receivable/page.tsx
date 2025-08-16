@@ -673,16 +673,20 @@ export default function AccountsReceivablePage() {
                         <tr className="hover:bg-gray-50 bg-gray-25">
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
                             <div className="flex items-center">
-                              <button
-                                onClick={() => toggleParentExpansion(group.parentCustomer)}
-                                className="mr-2 p-1 hover:bg-gray-200 rounded"
-                              >
-                                {group.isExpanded ? (
-                                  <ChevronDown className="w-4 h-4 text-gray-500" />
-                                ) : (
-                                  <ChevronRight className="w-4 h-4 text-gray-500" />
-                                )}
-                              </button>
+                              {group.subCustomers.length > 1 ? (
+                                <button
+                                  onClick={() => toggleParentExpansion(group.parentCustomer)}
+                                  className="mr-2 p-1 hover:bg-gray-200 rounded"
+                                >
+                                  {group.isExpanded ? (
+                                    <ChevronDown className="w-4 h-4 text-gray-500" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4 text-gray-500" />
+                                  )}
+                                </button>
+                              ) : (
+                                <div className="w-6 mr-2"></div>
+                              )}
                               {group.parentCustomer}
                               {group.subCustomers.length > 1 && (
                                 <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
@@ -752,8 +756,8 @@ export default function AccountsReceivablePage() {
                           </td>
                         </tr>
 
-                        {/* Sub Customer Rows (when expanded) */}
-                        {group.isExpanded && group.subCustomers.map((subCustomer, subIndex) => {
+                        {/* Sub Customer Rows (when expanded and has multiple sub-customers) */}
+                        {group.isExpanded && group.subCustomers.length > 1 && group.subCustomers.map((subCustomer, subIndex) => {
                           const { sub } = parseCustomerName(subCustomer.customer)
                           const displayName = sub || subCustomer.customer
                           
