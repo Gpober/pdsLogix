@@ -32,6 +32,7 @@ interface ARTransaction {
   debit: number
   credit: number
   balance: number
+  invoiceNumber?: string | null
 }
 
 export default function AccountsReceivablePage() {
@@ -143,7 +144,8 @@ export default function AccountsReceivablePage() {
               description: tx.memo || tx.account || "A/R Transaction",
               debit,
               credit,
-              balance: runningBalance
+              balance: runningBalance,
+              invoiceNumber: tx.number
             }
           })
 
@@ -569,6 +571,7 @@ export default function AccountsReceivablePage() {
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entry #</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Debit</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Credit</th>
@@ -587,6 +590,9 @@ export default function AccountsReceivablePage() {
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                           {transaction.entryNumber}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                          {transaction.invoiceNumber || '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
                           {transaction.description}
