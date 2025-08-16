@@ -53,6 +53,10 @@ export default function AccountsReceivablePage() {
   const [error, setError] = useState<string | null>(null)
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
+  const [asOfDate, setAsOfDate] = useState(() => {
+    const today = new Date()
+    return today.toISOString().split('T')[0]
+  })
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("en-US", {
@@ -63,16 +67,45 @@ export default function AccountsReceivablePage() {
   }
 
   const getDateParts = (dateString: string) => {
-    const datePart = dateString.split("T")[0]
-    const [year, month, day] = datePart.split("-").map(Number)
-    return { year, month, day }
+    if (!dateString) return { year: 0, month: 0, day: 0, dateStr: "" }
+    
+    const cleanDate = dateString.includes('T') ? dateString.split('T')[0] : dateString
+    const [year, month, day] = cleanDate.split('-').map(Number)
+    
+    return {
+      year: year || 0,
+      month: month || 0,
+      day: day || 0,
+      dateStr: cleanDate
+    }
   }
 
-  const calculateDaysOutstanding = (lastInvoiceDate: string): number => {
-    const { year, month, day } = getDateParts(lastInvoiceDate)
-    const invoiceDate = new Date(year, month - 1, day)
-    const today = new Date()
-    const diffTime = Math.abs(today.getTime() - invoiceDate.getTime())
+  const formatDateSafe = (dateStr: string): string => {
+    if (!dateStr) return ""
+    
+    try {
+      const { year, month, day } = getDateParts(dateStr)
+      if (!year || !month || !day) return dateStr
+      
+      const date = new Date(year, month - 1, day)
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      })
+    } catch {
+      return dateStr
+    }
+  }
+
+  const calculateDaysOutstanding = (invoiceDate: string, asOfDate: string): number => {
+    const { year: invYear, month: invMonth, day: invDay } = getDateParts(invoiceDate)
+    const { year: asOfYear, month: asOfMonth, day: asOfDay } = getDateParts(asOfDate)
+    
+    const invoice = new Date(invYear, invMonth - 1, invDay)
+    const asOf = new Date(asOfYear, asOfMonth - 1, asOfDay)
+    
+    const diffTime = Math.abs(asOf.getTime() - invoice.getTime())
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24))
   }
 
@@ -83,12 +116,12 @@ export default function AccountsReceivablePage() {
     return '90+'
   }
 
-  // Calculate aging breakdown for individual invoices
-  const calculateAgingBreakdown = (invoices: ARTransaction[]) => {
+  // Calculate aging breakdown for individual invoices based on as-of date
+  const calculateAgingBreakdown = (invoices: ARTransaction[], asOfDate: string) => {
     const aging = { current: 0, days30: 0, days60: 0, days90: 0 }
     
     invoices.forEach(invoice => {
-      const days = calculateDaysOutstanding(invoice.date)
+      const days = calculateDaysOutstanding(invoice.date, asOfDate)
       const amount = invoice.remainingBalance
       
       if (days <= 30) {
@@ -104,9 +137,17 @@ export default function AccountsReceivablePage() {
     
     return aging
   }
-  const allocatePaymentsToInvoices = (transactions: any[]): ARTransaction[] => {
-    // Separate invoices and payments
-    const invoices = transactions
+
+  // Enhanced payment allocation with as-of date cutoff
+  const allocatePaymentsToInvoices = (transactions: any[], asOfDate: string): ARTransaction[] => {
+    // Filter transactions by as-of date first
+    const filteredTransactions = transactions.filter(tx => {
+      const txDate = getDateParts(tx.date).dateStr
+      return txDate <= asOfDate
+    })
+
+    // Separate invoices and payments from filtered transactions
+    const invoices = filteredTransactions
       .filter(tx => (Number(tx.debit) || 0) > 0) // Debits are invoices
       .map(tx => ({
         date: tx.date,
@@ -124,7 +165,7 @@ export default function AccountsReceivablePage() {
       }))
       .sort((a, b) => a.date.localeCompare(b.date)) // Sort by date for FIFO
 
-    const payments = transactions
+    const payments = filteredTransactions
       .filter(tx => (Number(tx.credit) || 0) > 0) // Credits are payments
       .map(tx => ({
         date: tx.date,
@@ -146,7 +187,7 @@ export default function AccountsReceivablePage() {
     let remainingPayment = 0
     const result: ARTransaction[] = []
 
-    // Add all payments first to track total payment pool
+    // Add all payments first to track total payment pool (only payments on or before as-of date)
     payments.forEach(payment => {
       remainingPayment += payment.credit
     })
@@ -169,12 +210,13 @@ export default function AccountsReceivablePage() {
 
     return result.sort((a, b) => a.date.localeCompare(b.date))
   }
+
   const fetchARData = async () => {
     try {
       setIsLoading(true)
       setError(null)
 
-      console.log("🔍 Fetching A/R data from Supabase...")
+      console.log(`🔍 Fetching A/R data from Supabase as of ${asOfDate}...`)
 
       // Query for all A/R account transactions
       const { data: transactions, error } = await supabase
@@ -187,7 +229,7 @@ export default function AccountsReceivablePage() {
 
       console.log(`📊 Found ${transactions.length} A/R transactions`)
 
-      // Group by customer and calculate balances
+      // Group by customer and calculate balances with as-of date logic
       const customerMap = new Map<string, {
         transactions: any[]
         balance: number
@@ -206,15 +248,11 @@ export default function AccountsReceivablePage() {
         }
 
         const customerData = customerMap.get(customer)!
-        const debit = Number(tx.debit) || 0
-        const credit = Number(tx.credit) || 0
-        
-        // A/R increases with debits, decreases with credits
-        customerData.balance += (debit - credit)
         customerData.transactions.push(tx)
         
-        // Update last invoice date if this is more recent
-        if (tx.date > customerData.lastInvoiceDate) {
+        // Update last invoice date if this is more recent and within as-of date
+        const txDate = getDateParts(tx.date).dateStr
+        if (txDate <= asOfDate && tx.date > customerData.lastInvoiceDate) {
           customerData.lastInvoiceDate = tx.date
         }
       })
@@ -223,41 +261,36 @@ export default function AccountsReceivablePage() {
       const arRecords: ARRecord[] = []
       
       customerMap.forEach((data, customer) => {
-        if (data.balance > 0) { // Only customers who owe money
-          const daysOutstanding = calculateDaysOutstanding(data.lastInvoiceDate)
-          const status = getAgingStatus(daysOutstanding)
+        // Process transactions with smart payment allocation and as-of date cutoff
+        const openInvoices = allocatePaymentsToInvoices(data.transactions, asOfDate)
+        const openBalance = openInvoices.reduce((sum, inv) => sum + inv.remainingBalance, 0)
+
+        // Only include customers with open invoices
+        if (openBalance > 0) {
+          const lastInvoiceDate = openInvoices.length > 0 
+            ? openInvoices[openInvoices.length - 1].date 
+            : data.lastInvoiceDate
           
-          // Process transactions with smart payment allocation
-          const openInvoices = allocatePaymentsToInvoices(data.transactions)
-          const openBalance = openInvoices.reduce((sum, inv) => sum + inv.remainingBalance, 0)
+          const daysOutstanding = calculateDaysOutstanding(lastInvoiceDate, asOfDate)
+          const status = getAgingStatus(daysOutstanding)
+          const aging = calculateAgingBreakdown(openInvoices, asOfDate)
 
-          // Only include customers with open invoices
-          if (openBalance > 0) {
-            const lastInvoiceDate = openInvoices.length > 0 
-              ? openInvoices[openInvoices.length - 1].date 
-              : data.lastInvoiceDate
-            
-            const daysOutstanding = calculateDaysOutstanding(lastInvoiceDate)
-            const status = getAgingStatus(daysOutstanding)
-            const aging = calculateAgingBreakdown(openInvoices)
-
-            arRecords.push({
-              customer,
-              balance: openBalance,
-              lastInvoiceDate,
-              daysOutstanding,
-              status,
-              transactions: openInvoices,
-              aging
-            })
-          }
+          arRecords.push({
+            customer,
+            balance: openBalance,
+            lastInvoiceDate,
+            daysOutstanding,
+            status,
+            transactions: openInvoices,
+            aging
+          })
         }
       })
 
       // Sort by balance descending
       arRecords.sort((a, b) => b.balance - a.balance)
 
-      console.log(`✅ Processed ${arRecords.length} customers with outstanding A/R`)
+      console.log(`✅ Processed ${arRecords.length} customers with outstanding A/R as of ${asOfDate}`)
       setArData(arRecords)
     } catch (err) {
       console.error("❌ Error fetching A/R data:", err)
@@ -269,7 +302,7 @@ export default function AccountsReceivablePage() {
 
   useEffect(() => {
     fetchARData()
-  }, [])
+  }, [asOfDate]) // Re-fetch when as-of date changes
 
   // Calculate summary statistics
   const arSummary = useMemo(() => {
@@ -280,7 +313,7 @@ export default function AccountsReceivablePage() {
     const days90 = arData.filter(r => r.status === '90+').reduce((sum, r) => sum + r.balance, 0)
     const pastDue = days30 + days60 + days90
     
-    // Calculate weighted average DSO
+    // Calculate weighted average DSO based on as-of date
     const totalDays = arData.reduce((sum, r) => sum + (r.daysOutstanding * r.balance), 0)
     const averageDSO = totalAR > 0 ? Math.round(totalDays / totalAR) : 0
 
@@ -351,20 +384,38 @@ export default function AccountsReceivablePage() {
                 💰 Real Supabase Integration - Connected to journal_entry_lines
               </p>
             </div>
-            <button
-              onClick={fetchARData}
-              disabled={isLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={asOfDate}
+                onChange={(e) => setAsOfDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <button
+                onClick={fetchARData}
+                disabled={isLoading}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="space-y-8">
+          {/* As of Date Header */}
+          <div className="text-center">
+            <h2 className="text-xl font-semibold text-gray-800">
+              Accounts Receivable as of {formatDateSafe(asOfDate)}
+            </h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Shows outstanding balances and aging based on transactions through the selected date
+            </p>
+          </div>
+
           {/* Error State */}
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -449,7 +500,7 @@ export default function AccountsReceivablePage() {
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Aging Analysis</h3>
-              <div className="text-sm text-gray-600 mt-1">Breakdown by aging buckets as of {new Date().toLocaleDateString()}</div>
+              <div className="text-sm text-gray-600 mt-1">Breakdown by aging buckets as of {formatDateSafe(asOfDate)}</div>
             </div>
 
             <div className="p-6">
@@ -549,7 +600,7 @@ export default function AccountsReceivablePage() {
             <div className="p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Outstanding Receivables</h3>
               <div className="text-sm text-gray-600 mt-1">
-                Showing {filteredData.length} of {arData.length} customers
+                Showing {filteredData.length} of {arData.length} customers with outstanding balances as of {formatDateSafe(asOfDate)}
               </div>
             </div>
 
@@ -614,11 +665,7 @@ export default function AccountsReceivablePage() {
                           {formatCurrency(record.balance)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {(() => {
-                            const { year, month, day } = getDateParts(record.lastInvoiceDate)
-                            const date = new Date(year, month - 1, day)
-                            return date.toLocaleDateString()
-                          })()}
+                          {formatDateSafe(record.lastInvoiceDate)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
                           <button
@@ -655,7 +702,7 @@ export default function AccountsReceivablePage() {
                     Open Invoices - {selectedCustomerData.customer}
                   </h3>
                   <p className="text-sm text-gray-600">
-                    Outstanding balance: {formatCurrency(selectedCustomerData.balance)} • {selectedCustomerData.transactions.length} open invoices
+                    Outstanding balance as of {formatDateSafe(asOfDate)}: {formatCurrency(selectedCustomerData.balance)} • {selectedCustomerData.transactions.length} open invoices
                   </p>
                 </div>
                 <button
@@ -679,38 +726,45 @@ export default function AccountsReceivablePage() {
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Original</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Paid</th>
                       <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Remaining</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {selectedCustomerData.transactions.map((transaction, index) => (
-                      <tr key={index} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                          {(() => {
-                            const { year, month, day } = getDateParts(transaction.date)
-                            const date = new Date(year, month - 1, day)
-                            return date.toLocaleDateString()
-                          })()}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                          {transaction.entryNumber}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                          {transaction.invoiceNumber || '-'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
-                          {transaction.description}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
-                          {formatCurrency(transaction.originalAmount)}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-green-600">
-                          {formatCurrency(transaction.paidAmount)}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-red-600">
-                          {formatCurrency(transaction.remainingBalance)}
-                        </td>
-                      </tr>
-                    ))}
+                    {selectedCustomerData.transactions.map((transaction, index) => {
+                      const daysOld = calculateDaysOutstanding(transaction.date, asOfDate)
+                      const agingStatus = getAgingStatus(daysOld)
+                      
+                      return (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                            {formatDateSafe(transaction.date)}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                            {transaction.entryNumber}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                            {transaction.invoiceNumber || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-900">
+                            {transaction.description}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
+                            {formatCurrency(transaction.originalAmount)}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-green-600">
+                            {formatCurrency(transaction.paidAmount)}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-red-600">
+                            {formatCurrency(transaction.remainingBalance)}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-center">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(agingStatus)}`}>
+                              {daysOld} days
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
