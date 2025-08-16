@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createCFOCompletion } from '@/lib/openai'
+import { createCFOCompletion } from '../../../lib/openai'
 
 export async function POST(request) {
   try {
