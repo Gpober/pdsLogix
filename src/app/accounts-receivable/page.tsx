@@ -17,12 +17,17 @@ const BRAND_COLORS = {
 
 interface ARRecord {
   customer: string
-  property: string
   balance: number
   lastInvoiceDate: string
   daysOutstanding: number
   status: 'current' | '30-60' | '60-90' | '90+'
   transactions: ARTransaction[]
+  aging: {
+    current: number
+    days30: number
+    days60: number
+    days90: number
+  }
 }
 
 interface ARTransaction {
@@ -33,6 +38,11 @@ interface ARTransaction {
   credit: number
   balance: number
   invoiceNumber?: string | null
+  isOpen: boolean
+  originalAmount: number
+  paidAmount: number
+  remainingBalance: number
+  type: 'invoice' | 'payment'
 }
 
 export default function AccountsReceivablePage() {
@@ -73,7 +83,92 @@ export default function AccountsReceivablePage() {
     return '90+'
   }
 
-  const fetchARData = async () => {
+  // Calculate aging breakdown for individual invoices
+  const calculateAgingBreakdown = (invoices: ARTransaction[]) => {
+    const aging = { current: 0, days30: 0, days60: 0, days90: 0 }
+    
+    invoices.forEach(invoice => {
+      const days = calculateDaysOutstanding(invoice.date)
+      const amount = invoice.remainingBalance
+      
+      if (days <= 30) {
+        aging.current += amount
+      } else if (days <= 60) {
+        aging.days30 += amount
+      } else if (days <= 90) {
+        aging.days60 += amount
+      } else {
+        aging.days90 += amount
+      }
+    })
+    
+    return aging
+  }
+  const allocatePaymentsToInvoices = (transactions: any[]): ARTransaction[] => {
+    // Separate invoices and payments
+    const invoices = transactions
+      .filter(tx => (Number(tx.debit) || 0) > 0) // Debits are invoices
+      .map(tx => ({
+        date: tx.date,
+        entryNumber: tx.entry_number || "N/A",
+        description: tx.memo || tx.account || "A/R Invoice",
+        debit: Number(tx.debit) || 0,
+        credit: 0,
+        balance: Number(tx.debit) || 0,
+        invoiceNumber: tx.number,
+        isOpen: true,
+        originalAmount: Number(tx.debit) || 0,
+        paidAmount: 0,
+        remainingBalance: Number(tx.debit) || 0,
+        type: 'invoice' as const
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date)) // Sort by date for FIFO
+
+    const payments = transactions
+      .filter(tx => (Number(tx.credit) || 0) > 0) // Credits are payments
+      .map(tx => ({
+        date: tx.date,
+        entryNumber: tx.entry_number || "N/A",
+        description: tx.memo || tx.account || "A/R Payment",
+        debit: 0,
+        credit: Number(tx.credit) || 0,
+        balance: 0,
+        invoiceNumber: null,
+        isOpen: false,
+        originalAmount: Number(tx.credit) || 0,
+        paidAmount: Number(tx.credit) || 0,
+        remainingBalance: 0,
+        type: 'payment' as const
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    // Apply FIFO payment allocation
+    let remainingPayment = 0
+    const result: ARTransaction[] = []
+
+    // Add all payments first to track total payment pool
+    payments.forEach(payment => {
+      remainingPayment += payment.credit
+    })
+
+    // Allocate payments to invoices using FIFO
+    invoices.forEach(invoice => {
+      if (remainingPayment > 0) {
+        const paymentToApply = Math.min(remainingPayment, invoice.remainingBalance)
+        invoice.paidAmount += paymentToApply
+        invoice.remainingBalance -= paymentToApply
+        invoice.isOpen = invoice.remainingBalance > 0
+        remainingPayment -= paymentToApply
+      }
+      
+      // Only include open invoices in the result
+      if (invoice.isOpen) {
+        result.push(invoice)
+      }
+    })
+
+    return result.sort((a, b) => a.date.localeCompare(b.date))
+  }
     try {
       setIsLoading(true)
       setError(null)
@@ -131,33 +226,30 @@ export default function AccountsReceivablePage() {
           const daysOutstanding = calculateDaysOutstanding(data.lastInvoiceDate)
           const status = getAgingStatus(daysOutstanding)
           
-          // Process transactions for running balance
-          let runningBalance = 0
-          const processedTransactions: ARTransaction[] = data.transactions.map((tx: any) => {
-            const debit = Number(tx.debit) || 0
-            const credit = Number(tx.credit) || 0
-            runningBalance += (debit - credit)
-            
-            return {
-              date: tx.date,
-              entryNumber: tx.entry_number || "N/A",
-              description: tx.memo || tx.account || "A/R Transaction",
-              debit,
-              credit,
-              balance: runningBalance,
-              invoiceNumber: tx.number
-            }
-          })
+          // Process transactions with smart payment allocation
+          const openInvoices = allocatePaymentsToInvoices(data.transactions)
+          const openBalance = openInvoices.reduce((sum, inv) => sum + inv.remainingBalance, 0)
 
-          arRecords.push({
-            customer,
-            property: data.transactions[0]?.customer || "General", // Use customer field as property
-            balance: data.balance,
-            lastInvoiceDate: data.lastInvoiceDate,
-            daysOutstanding,
-            status,
-            transactions: processedTransactions
-          })
+          // Only include customers with open invoices
+          if (openBalance > 0) {
+            const lastInvoiceDate = openInvoices.length > 0 
+              ? openInvoices[openInvoices.length - 1].date 
+              : data.lastInvoiceDate
+            
+            const daysOutstanding = calculateDaysOutstanding(lastInvoiceDate)
+            const status = getAgingStatus(daysOutstanding)
+            const aging = calculateAgingBreakdown(openInvoices)
+
+            arRecords.push({
+              customer,
+              balance: openBalance,
+              lastInvoiceDate,
+              daysOutstanding,
+              status,
+              transactions: openInvoices,
+              aging
+            })
+          }
         }
       })
 
@@ -210,8 +302,7 @@ export default function AccountsReceivablePage() {
 
     if (searchTerm) {
       filtered = filtered.filter(record => 
-        record.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        record.property.toLowerCase().includes(searchTerm.toLowerCase())
+        record.customer.toLowerCase().includes(searchTerm.toLowerCase())
       )
     }
 
@@ -470,17 +561,20 @@ export default function AccountsReceivablePage() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Customer
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Property
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Current (0-30)
                       </th>
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Balance
+                        31-60 Days
                       </th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Days Outstanding
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        61-90 Days
                       </th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Status
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        90+ Days
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Total Balance
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Last Invoice
@@ -496,19 +590,28 @@ export default function AccountsReceivablePage() {
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                           {record.customer}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {record.property}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium text-gray-900">
-                          {formatCurrency(record.balance)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-center text-gray-500">
-                          {record.daysOutstanding} days
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(record.status)}`}>
-                            {record.status}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                          <span className={`font-medium ${record.aging.current > 0 ? 'text-green-600' : 'text-gray-300'}`}>
+                            {record.aging.current > 0 ? formatCurrency(record.aging.current) : '-'}
                           </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                          <span className={`font-medium ${record.aging.days30 > 0 ? 'text-yellow-600' : 'text-gray-300'}`}>
+                            {record.aging.days30 > 0 ? formatCurrency(record.aging.days30) : '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                          <span className={`font-medium ${record.aging.days60 > 0 ? 'text-orange-600' : 'text-gray-300'}`}>
+                            {record.aging.days60 > 0 ? formatCurrency(record.aging.days60) : '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                          <span className={`font-medium ${record.aging.days90 > 0 ? 'text-red-600' : 'text-gray-300'}`}>
+                            {record.aging.days90 > 0 ? formatCurrency(record.aging.days90) : '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-gray-900">
+                          {formatCurrency(record.balance)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {(() => {
@@ -549,10 +652,10 @@ export default function AccountsReceivablePage() {
               <div className="flex justify-between items-center">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">
-                    A/R Transactions - {selectedCustomerData.customer}
+                    Open Invoices - {selectedCustomerData.customer}
                   </h3>
                   <p className="text-sm text-gray-600">
-                    Current balance: {formatCurrency(selectedCustomerData.balance)}
+                    Outstanding balance: {formatCurrency(selectedCustomerData.balance)} • {selectedCustomerData.transactions.length} open invoices
                   </p>
                 </div>
                 <button
@@ -573,9 +676,9 @@ export default function AccountsReceivablePage() {
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Entry #</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice #</th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Debit</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Credit</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Balance</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Original</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Paid</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Remaining</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -597,14 +700,14 @@ export default function AccountsReceivablePage() {
                         <td className="px-4 py-3 text-sm text-gray-900">
                           {transaction.description}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-red-600">
-                          {transaction.debit > 0 ? formatCurrency(transaction.debit) : '-'}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
+                          {formatCurrency(transaction.originalAmount)}
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-green-600">
-                          {transaction.credit > 0 ? formatCurrency(transaction.credit) : '-'}
+                          {formatCurrency(transaction.paidAmount)}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900">
-                          {formatCurrency(transaction.balance)}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-red-600">
+                          {formatCurrency(transaction.remainingBalance)}
                         </td>
                       </tr>
                     ))}
