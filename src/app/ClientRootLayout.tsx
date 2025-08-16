@@ -3,11 +3,12 @@
 import type React from "react"
 import { Inter } from "next/font/google"
 import "./globals.css"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { BarChart3, DollarSign, TrendingUp, CreditCard, FileText, Users, Menu, X, BarChart2, Settings } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import Image from "next/image"
+import LoadingScreenSpinner from './LoadingScreen'
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -70,7 +71,36 @@ export default function ClientRootLayout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarVisible, setSidebarVisible] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const pathname = usePathname()
+
+  // Loading effect on app initialization
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsLoading(false)
+    }, 1500) // 1.5 seconds loading
+
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Show loading screen during initialization
+  if (isLoading) {
+    return (
+      <html lang="en">
+        <head>
+          <link rel="icon" type="image/png" href="/favicon.png" />
+          <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+          <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+          <meta name="apple-mobile-web-app-capable" content="yes" />
+          <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+          <meta name="theme-color" content="#56B6E9" />
+        </head>
+        <body className={inter.className}>
+          <LoadingScreenSpinner />
+        </body>
+      </html>
+    )
+  }
 
   // Render mobile dashboard without global navigation
   if (pathname?.startsWith("/mobile-dashboard")) {
