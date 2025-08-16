@@ -53,7 +53,7 @@ const navigation = [
   { name: "Balance Sheet", href: "/balance-sheet", icon: FileText },
   { name: "P&L", href: "/financials", icon: TrendingUp },
   { name: "Cash Flow", href: "/cash-flow", icon: DollarSign },
-    { name: "A/R", href: "/accounts-receivable", icon: CreditCard },
+  { name: "A/R", href: "/accounts-receivable", icon: CreditCard },
   { name: "A/P", href: "/accounts-payable", icon: Users },
   {
     name: "Comparative Analysis",
@@ -76,6 +76,14 @@ export default function ClientRootLayout({
   if (pathname?.startsWith("/mobile-dashboard")) {
     return (
       <html lang="en">
+        <head>
+          <link rel="icon" type="image/png" href="/favicon.png" />
+          <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+          <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+          <meta name="apple-mobile-web-app-capable" content="yes" />
+          <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+          <meta name="theme-color" content="#56B6E9" />
+        </head>
         <body className={inter.className}>{children}</body>
       </html>
     )
@@ -84,6 +92,14 @@ export default function ClientRootLayout({
   if (pathname === "/login") {
     return (
       <html lang="en">
+        <head>
+          <link rel="icon" type="image/png" href="/favicon.png" />
+          <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+          <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+          <meta name="apple-mobile-web-app-capable" content="yes" />
+          <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+          <meta name="theme-color" content="#56B6E9" />
+        </head>
         <body className={inter.className}>{children}</body>
       </html>
     )
@@ -91,6 +107,14 @@ export default function ClientRootLayout({
 
   return (
     <html lang="en">
+      <head>
+        <link rel="icon" type="image/png" href="/favicon.png" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+        <meta name="theme-color" content="#56B6E9" />
+      </head>
       <body className={inter.className}>
         <div className="min-h-screen bg-gray-50">
           {/* Hover area to reveal sidebar */}
