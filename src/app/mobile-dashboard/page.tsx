@@ -1388,7 +1388,7 @@ export default function EnhancedMobileDashboard() {
                 </span>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-                {reportType === "pl" ? (
+                {reportType === "pl" && (
                   <>
                     <div onClick={() => showRanking("revenue")} style={{
                       background: 'white',
@@ -2956,110 +2956,4 @@ export default function EnhancedMobileDashboard() {
       )}
     </div>
   );
-}600' }}>
-                          PROFIT STAR
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {properties.find(p => (p.netIncome || 0) === Math.max(...properties.map(prop => prop.netIncome || 0)))?.name}
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : reportType === "cf" ? (
-                  <>
-                    <div onClick={() => showRanking("operating")} style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.primary}33`,
-                      cursor: 'pointer'
-                    }}>
-                      <span style={{ fontSize: '20px' }}>💰</span>
-                      <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.primary, fontWeight: '600' }}>
-                          CASH KING
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {cashKing}
-                        </div>
-                      </div>
-                    </div>
-                    <div onClick={() => showRanking("netCash")} style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.success}33`,
-                      cursor: 'pointer'
-                    }}>
-                      <span style={{ fontSize: '20px' }}>⚡</span>
-                      <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.success, fontWeight: '600' }}>
-                          FLOW MASTER
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {flowMaster}
-                        </div>
-                      </div>
-                    </div>
-                    <div onClick={() => showRanking("investing")} style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.warning}33`,
-                      cursor: 'pointer'
-                    }}>
-                      <span style={{ fontSize: '20px' }}>🎯</span>
-                      <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.warning, fontWeight: '600' }}>
-                          EFFICIENCY ACE
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {properties.find(p => (p.investing || 0) === Math.min(...properties.map(prop => prop.investing || 0)))?.name}
-                        </div>
-                      </div>
-                    </div>
-                    <div onClick={() => showRanking("stability")} style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.secondary}33`,
-                      cursor: 'pointer'
-                    }}>
-                      <span style={{ fontSize: '20px' }}>💪</span>
-                      <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.secondary, fontWeight: '600' }}>
-                          STABILITY PRO
-                        </div>
-                        <div style={{ fontSize: '10px', color: '#64748b' }}>
-                          {properties.length ? properties[Math.floor(Math.random() * properties.length)].name : "N/A"}
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div onClick={() => showRanking("arTotal")} style={{
-                      background: 'white',
-                      borderRadius: '8px',
-                      padding: '10px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      border: `1px solid ${BRAND_COLORS.primary}33`,
-                      cursor: 'pointer'
-                    }}>
-                      <span style={{ fontSize: '20px' }}>💰</span>
-                      <div>
-                        <div style={{ fontSize: '11px', color: BRAND_COLORS.primary, fontWeight: '
+}
