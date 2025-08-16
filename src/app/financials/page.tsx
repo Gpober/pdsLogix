@@ -1433,6 +1433,7 @@ export default function FinancialsPage() {
   );
   const netIncome = grossProfit - totalExpenses;
   const grossProfitPercent = totalIncome !== 0 ? grossProfit / totalIncome : 0;
+  const netIncomePercent = totalIncome !== 0 ? netIncome / totalIncome : 0;
 
   // Get current date range for header display
   const { startDate: currentStartDate, endDate: currentEndDate } =
@@ -1838,7 +1839,7 @@ export default function FinancialsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600">
-                      Total Income
+                      Revenue
                     </p>
                     <p className="text-2xl font-bold text-green-600">
                       {formatCurrency(totalIncome)}
@@ -1860,19 +1861,36 @@ export default function FinancialsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600">
-                      Total Expenses
+                      Gross Profit
                     </p>
-                    <p className="text-2xl font-bold text-red-600">
-                      {formatCurrency(totalExpenses)}
+                    <p
+                      className={`text-2xl font-bold ${
+                        grossProfit >= 0 ? "text-green-600" : "text-red-600"
+                      }`}
+                    >
+                      {formatCurrency(grossProfit)}
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      {formatPercentage(grossProfitPercent)}
                     </p>
                   </div>
                   <div
                     className="p-3 rounded-full"
-                    style={{ backgroundColor: BRAND_COLORS.danger + "20" }}
+                    style={{
+                      backgroundColor:
+                        (grossProfit >= 0
+                          ? BRAND_COLORS.success
+                          : BRAND_COLORS.danger) + "20",
+                    }}
                   >
                     <BarChart3
                       className="w-6 h-6"
-                      style={{ color: BRAND_COLORS.danger }}
+                      style={{
+                        color:
+                          grossProfit >= 0
+                            ? BRAND_COLORS.success
+                            : BRAND_COLORS.danger,
+                      }}
                     />
                   </div>
                 </div>
@@ -1888,6 +1906,9 @@ export default function FinancialsPage() {
                       className={`text-2xl font-bold ${netIncome >= 0 ? "text-green-600" : "text-red-600"}`}
                     >
                       {formatCurrency(netIncome)}
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      {formatPercentage(netIncomePercent)}
                     </p>
                   </div>
                   <div
