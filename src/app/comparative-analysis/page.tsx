@@ -164,56 +164,58 @@ export default function EnhancedComparativeAnalysis() {
     return { revenue, cogs, grossProfit, opEx, netIncome };
   };
 
-  const generateInsights = (dataA: KPIs, dataB: KPIs): Insight[] => {
+  const generateInsights = (dataA: KPIs, dataB: KPIs, labelA: string, labelB: string): Insight[] => {
     const insights: Insight[] = [];
     
-    // Revenue analysis
-    const revChange = dataB.revenue !== 0 ? ((dataA.revenue - dataB.revenue) / Math.abs(dataB.revenue)) * 100 : 0;
-    if (Math.abs(revChange) > 10) {
+    // Revenue comparison - focus on dollar amounts
+    const revDifference = dataA.revenue - dataB.revenue;
+    if (Math.abs(revDifference) > 10000) { // Only show if difference is meaningful ($10k+)
+      const winner = revDifference > 0 ? labelA : labelB;
+      const loser = revDifference > 0 ? labelB : labelA;
       insights.push({
-        type: revChange > 0 ? 'positive' : 'negative',
-        title: `Revenue ${revChange > 0 ? 'Growth' : 'Decline'}`,
-        description: `Revenue ${revChange > 0 ? 'increased' : 'decreased'} by ${Math.abs(revChange).toFixed(1)}%, indicating ${revChange > 0 ? 'strong business growth' : 'potential market challenges or operational issues'}.`,
-        impact: Math.abs(revChange) > 25 ? 'high' : Math.abs(revChange) > 15 ? 'medium' : 'low'
+        type: revDifference > 0 ? 'positive' : 'negative',
+        title: `${winner} Outperforming in Revenue`,
+        description: `${winner} generated ${formatCurrency(Math.abs(revDifference))} more revenue than ${loser}. This represents a significant performance gap that should be investigated.`,
+        impact: Math.abs(revDifference) > 100000 ? 'high' : Math.abs(revDifference) > 50000 ? 'medium' : 'low'
       });
     }
 
-    // Margin analysis
-    const marginA = dataA.revenue ? (dataA.grossProfit / dataA.revenue) * 100 : 0;
-    const marginB = dataB.revenue ? (dataB.grossProfit / dataB.revenue) * 100 : 0;
-    const marginChange = marginA - marginB;
-    
-    if (Math.abs(marginChange) > 2) {
+    // Profit comparison - focus on dollar amounts
+    const profitDifference = dataA.netIncome - dataB.netIncome;
+    if (Math.abs(profitDifference) > 5000) { // Only show if difference is meaningful ($5k+)
+      const winner = profitDifference > 0 ? labelA : labelB;
+      const loser = profitDifference > 0 ? labelB : labelA;
       insights.push({
-        type: marginChange > 0 ? 'positive' : 'warning',
-        title: `Gross Margin ${marginChange > 0 ? 'Improvement' : 'Compression'}`,
-        description: `Gross margin ${marginChange > 0 ? 'improved' : 'declined'} by ${Math.abs(marginChange).toFixed(1)} percentage points, suggesting ${marginChange > 0 ? 'better cost management or pricing power' : 'increased costs or pricing pressure'}.`,
-        impact: Math.abs(marginChange) > 5 ? 'high' : 'medium'
+        type: profitDifference > 0 ? 'positive' : 'negative',
+        title: `${winner} More Profitable`,
+        description: `${winner} made ${formatCurrency(Math.abs(profitDifference))} more profit than ${loser}. This shows ${winner} is operating more efficiently or has better cost control.`,
+        impact: Math.abs(profitDifference) > 50000 ? 'high' : Math.abs(profitDifference) > 25000 ? 'medium' : 'low'
       });
     }
 
-    // Expense efficiency
-    const expenseRatioA = dataA.revenue ? Math.abs(dataA.opEx / dataA.revenue) * 100 : 0;
-    const expenseRatioB = dataB.revenue ? Math.abs(dataB.opEx / dataB.revenue) * 100 : 0;
-    const expenseChange = expenseRatioA - expenseRatioB;
-    
-    if (Math.abs(expenseChange) > 3) {
+    // Cost efficiency comparison
+    const expenseDifference = Math.abs(dataA.opEx) - Math.abs(dataB.opEx);
+    if (Math.abs(expenseDifference) > 5000) { // Only show if difference is meaningful ($5k+)
+      const moreEfficient = expenseDifference < 0 ? labelA : labelB;
+      const lessEfficient = expenseDifference < 0 ? labelB : labelA;
       insights.push({
-        type: expenseChange < 0 ? 'positive' : 'warning',
-        title: `Operational Efficiency ${expenseChange < 0 ? 'Gains' : 'Concerns'}`,
-        description: `Operating expenses as % of revenue ${expenseChange < 0 ? 'decreased' : 'increased'} by ${Math.abs(expenseChange).toFixed(1)} points, indicating ${expenseChange < 0 ? 'improved operational leverage' : 'potential cost control challenges'}.`,
-        impact: Math.abs(expenseChange) > 5 ? 'high' : 'medium'
+        type: 'neutral',
+        title: `${moreEfficient} Operating More Efficiently`,
+        description: `${moreEfficient} spent ${formatCurrency(Math.abs(expenseDifference))} less on operating expenses than ${lessEfficient}. This cost advantage contributes to better profitability.`,
+        impact: Math.abs(expenseDifference) > 25000 ? 'high' : Math.abs(expenseDifference) > 15000 ? 'medium' : 'low'
       });
     }
 
-    // Profitability
-    const profitChange = dataB.netIncome !== 0 ? ((dataA.netIncome - dataB.netIncome) / Math.abs(dataB.netIncome)) * 100 : 0;
-    if (Math.abs(profitChange) > 15) {
+    // Gross profit comparison
+    const grossProfitDifference = dataA.grossProfit - dataB.grossProfit;
+    if (Math.abs(grossProfitDifference) > 10000) { // Only show if difference is meaningful ($10k+)
+      const winner = grossProfitDifference > 0 ? labelA : labelB;
+      const loser = grossProfitDifference > 0 ? labelB : labelA;
       insights.push({
-        type: profitChange > 0 ? 'positive' : 'negative',
-        title: `Bottom Line ${profitChange > 0 ? 'Acceleration' : 'Pressure'}`,
-        description: `Net income ${profitChange > 0 ? 'surged' : 'fell'} by ${Math.abs(profitChange).toFixed(1)}%, ${profitChange > 0 ? 'demonstrating strong operational performance and strategic execution' : 'highlighting the need for strategic cost management or revenue optimization'}.`,
-        impact: 'high'
+        type: grossProfitDifference > 0 ? 'positive' : 'warning',
+        title: `${winner} Generating More Gross Profit`,
+        description: `${winner} achieved ${formatCurrency(Math.abs(grossProfitDifference))} more gross profit than ${loser}. This indicates better pricing, lower costs, or higher sales volume.`,
+        impact: Math.abs(grossProfitDifference) > 75000 ? 'high' : Math.abs(grossProfitDifference) > 35000 ? 'medium' : 'low'
       });
     }
 
@@ -366,7 +368,7 @@ export default function EnhancedComparativeAnalysis() {
       setWeeklyData(aggregateWeekly(linesA, linesB));
       setAllLinesA(linesA);
       setAllLinesB(linesB);
-      setInsights(generateInsights(kpiA, kpiB));
+      setInsights(generateInsights(kpiA, kpiB, labelA, labelB));
     } catch (e: any) {
       setError(e.message);
     } finally {
