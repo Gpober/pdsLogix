@@ -67,6 +67,8 @@ export default function AccountsReceivablePage() {
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
   const [selectedAgingFilter, setSelectedAgingFilter] = useState<string | undefined>(undefined)
+  const [selectedJournalEntry, setSelectedJournalEntry] = useState<any>(null)
+  const [showJournalModal, setShowJournalModal] = useState(false)
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("en-US", {
@@ -341,10 +343,36 @@ export default function AccountsReceivablePage() {
     let filtered = arGroupedData
 
     if (searchTerm) {
-      filtered = filtered.filter(group => 
-        group.parentCustomer.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        group.subCustomers.some(sub => sub.customer.toLowerCase().includes(searchTerm.toLowerCase()))
-      )
+      filtered = filtered
+        .map(group => {
+          // Check if parent name matches or any sub-customer matches
+          const parentMatches = group.parentCustomer.toLowerCase().includes(searchTerm.toLowerCase())
+          const matchingSubCustomers = group.subCustomers.filter(sub => 
+            sub.customer.toLowerCase().includes(searchTerm.toLowerCase())
+          )
+          
+          if (parentMatches || matchingSubCustomers.length > 0) {
+            // If parent matches, show all sub-customers
+            // If only some sub-customers match, show only those
+            return {
+              ...group,
+              subCustomers: parentMatches ? group.subCustomers : matchingSubCustomers,
+              // Recalculate totals if we're filtering sub-customers
+              ...(parentMatches ? {} : {
+                totalBalance: matchingSubCustomers.reduce((sum, sub) => sum + sub.balance, 0),
+                totalInvoiceCount: matchingSubCustomers.reduce((sum, sub) => sum + sub.invoiceCount, 0),
+                totalAging: {
+                  current: matchingSubCustomers.reduce((sum, sub) => sum + sub.aging.current, 0),
+                  days30: matchingSubCustomers.reduce((sum, sub) => sum + sub.aging.days30, 0),
+                  days60: matchingSubCustomers.reduce((sum, sub) => sum + sub.aging.days60, 0),
+                  days90: matchingSubCustomers.reduce((sum, sub) => sum + sub.aging.days90, 0),
+                }
+              })
+            }
+          }
+          return null
+        })
+        .filter(group => group !== null) as ARParentGroup[]
     }
 
     if (selectedPeriod !== "All") {
@@ -360,10 +388,53 @@ export default function AccountsReceivablePage() {
     return filtered
   }, [arGroupedData, searchTerm, selectedPeriod])
 
+  // Calculate totals for the bottom row
+  const tableTotals = useMemo(() => {
+    return filteredData.reduce((totals, group) => ({
+      current: totals.current + group.totalAging.current,
+      days30: totals.days30 + group.totalAging.days30,
+      days60: totals.days60 + group.totalAging.days60,
+      days90: totals.days90 + group.totalAging.days90,
+      totalBalance: totals.totalBalance + group.totalBalance,
+      totalInvoices: totals.totalInvoices + group.totalInvoiceCount
+    }), {
+      current: 0,
+      days30: 0,
+      days60: 0,
+      days90: 0,
+      totalBalance: 0,
+      totalInvoices: 0
+    })
+  }, [filteredData])
+
   const showCustomerTransactions = (customer: string, agingFilter?: string) => {
     setSelectedCustomer(customer)
     setSelectedAgingFilter(agingFilter)
     setShowTransactionModal(true)
+  }
+
+  const showJournalEntry = async (invoiceNumber: string) => {
+    if (!invoiceNumber) return
+    
+    try {
+      // Fetch the complete journal entry using the invoice number
+      const { data: journalEntry, error } = await supabase
+        .from("journal_entry_lines")
+        .select("*")
+        .eq("number", invoiceNumber)
+        .order("line_number", { ascending: true })
+
+      if (error) throw error
+      
+      if (journalEntry && journalEntry.length > 0) {
+        setSelectedJournalEntry(journalEntry)
+        setShowJournalModal(true)
+      } else {
+        console.log("No journal entry found for invoice number:", invoiceNumber)
+      }
+    } catch (err) {
+      console.error("Error fetching journal entry:", err)
+    }
   }
 
   const showParentTransactions = (parentCustomer: string, agingFilter?: string) => {
@@ -834,6 +905,33 @@ export default function AccountsReceivablePage() {
                       </React.Fragment>
                     ))}
                   </tbody>
+                  
+                  {/* Totals Footer */}
+                  <tfoot className="bg-gray-100 border-t-2 border-gray-300">
+                    <tr>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-gray-900">
+                        TOTALS ({filteredData.length} groups)
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-green-700">
+                        {formatCurrency(tableTotals.current)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-yellow-700">
+                        {formatCurrency(tableTotals.days30)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-orange-700">
+                        {formatCurrency(tableTotals.days60)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-red-700">
+                        {formatCurrency(tableTotals.days90)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-gray-900 text-lg">
+                        {formatCurrency(tableTotals.totalBalance)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-bold text-gray-700">
+                        {tableTotals.totalInvoices}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             ) : (
@@ -902,8 +1000,17 @@ export default function AccountsReceivablePage() {
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
                           {invoice.type}
                         </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                          {invoice.number || '-'}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm">
+                          {invoice.number ? (
+                            <button
+                              onClick={() => showJournalEntry(invoice.number)}
+                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            >
+                              {invoice.number}
+                            </button>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600">
                           {invoice.location || '-'}
@@ -925,6 +1032,107 @@ export default function AccountsReceivablePage() {
                       </tr>
                     ))}
                   </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Journal Entry Detail Modal */}
+      {showJournalModal && selectedJournalEntry && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-6xl w-full max-h-[80vh] flex flex-col">
+            <div className="p-6 border-b border-gray-200 flex-shrink-0">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    Journal Entry Details
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    Invoice #{selectedJournalEntry[0]?.number} • Entry #{selectedJournalEntry[0]?.entry_number} • Date: {formatDateSafe(selectedJournalEntry[0]?.date)} • {selectedJournalEntry.length} lines
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowJournalModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-auto p-6">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Line</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Vendor</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Debit</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {selectedJournalEntry.map((line: any, index: number) => (
+                      <tr key={index} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                          {line.line_number || index + 1}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          <div>
+                            <div className="font-medium">{line.account_type || line.account}</div>
+                            {line.account_code && (
+                              <div className="text-xs text-gray-500">{line.account_code}</div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {line.memo || line.description || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {line.customer || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {line.vendor || line.name || '-'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
+                          {line.debit > 0 ? (
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(line.debit)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
+                          {line.credit > 0 ? (
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(line.credit)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50">
+                    <tr>
+                      <td colSpan={5} className="px-4 py-3 text-sm font-medium text-gray-900">
+                        Totals:
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
+                        {formatCurrency(selectedJournalEntry.reduce((sum: number, line: any) => sum + (line.debit || 0), 0))}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
+                        {formatCurrency(selectedJournalEntry.reduce((sum: number, line: any) => sum + (line.credit || 0), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>
