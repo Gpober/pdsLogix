@@ -6,13 +6,13 @@ const LoadingScreenSpinner = () => {
   return (
     <div className="fixed inset-0 bg-white flex flex-col items-center justify-center z-50">
       <div className="flex flex-col items-center space-y-8">
-        {/* I AM CFO Logo */}
+        {/* I AM CFO Logo - 2x Larger */}
         <div className="relative">
           <Image
             src="/iamcfo-logo.jpg"
             alt="I AM CFO"
-            width={220}
-            height={88}
+            width={440}
+            height={176}
             className="object-contain"
             priority
           />
