@@ -18,8 +18,14 @@ const accountMappings: Record<string, string> = {
   savings: "Savings",
   "savings account": "Savings",
   bank: "Bank",
-  "accounts receivable": "Accounts Receivable",
-  "accounts payable": "Accounts Payable",
+  "accounts receivable": "Accounts Receivable (A/R)",
+  "a/r": "Accounts Receivable (A/R)",
+  "ar": "Accounts Receivable (A/R)",
+  "receivables": "Accounts Receivable (A/R)",
+  "accounts payable": "Accounts Payable (A/P)",
+  "a/p": "Accounts Payable (A/P)",
+  "ap": "Accounts Payable (A/P)",
+  "payables": "Accounts Payable (A/P)",
   inventory: "Inventory",
 }
 
@@ -47,13 +53,13 @@ export default function SettingsPage() {
         setAvailableAccountTypes(uniqueTypes.sort())
       } catch (err) {
         console.error("Error loading account types:", err)
-        // Fallback to some basic types if database query fails
+        // Fallback to standardized types with exact A/R and A/P labels
         setAvailableAccountTypes([
           "Bank",
-          "Accounts Receivable", 
+          "Accounts Receivable (A/R)", 
           "Other Current Assets",
           "Fixed Assets",
-          "Accounts Payable",
+          "Accounts Payable (A/P)",
           "Credit Card",
           "Other Current Liabilities",
           "Long Term Liabilities",
@@ -141,7 +147,15 @@ export default function SettingsPage() {
       const mapped =
         accountMappings[cleanAccount.toLowerCase()] || cleanAccount
 
-      const cleanType = rawType?.toString().replace(/^"|"$/g, "").trim() || ""
+      let cleanType = rawType?.toString().replace(/^"|"$/g, "").trim() || ""
+      
+      // Apply account type mapping for standardized A/R and A/P labels
+      if (cleanType) {
+        const mappedType = accountMappings[cleanType.toLowerCase()]
+        if (mappedType) {
+          cleanType = mappedType
+        }
+      }
 
       const amountStr = rawAmount.toString().replace(/[$,()"\s]/g, "")
       let amt = parseFloat(amountStr)
