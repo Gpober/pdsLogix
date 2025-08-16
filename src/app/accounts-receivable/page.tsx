@@ -352,9 +352,43 @@ export default function AccountsReceivablePage() {
     return filtered
   }, [arData, searchTerm, selectedPeriod])
 
-  const showCustomerTransactions = (customer: string) => {
+  const showCustomerTransactions = (customer: string, agingFilter?: string) => {
     setSelectedCustomer(customer)
+    setSelectedAgingFilter(agingFilter)
     setShowTransactionModal(true)
+  }
+
+  const [selectedAgingFilter, setSelectedAgingFilter] = useState<string | undefined>(undefined)
+  const [selectedJournalEntry, setSelectedJournalEntry] = useState<any>(null)
+  const [showJournalModal, setShowJournalModal] = useState(false)
+
+  const showJournalEntry = async (entryNumber: string) => {
+    try {
+      // Fetch the complete journal entry
+      const { data: journalEntry, error } = await supabase
+        .from("journal_entry_lines")
+        .select("*")
+        .eq("entry_number", entryNumber)
+        .order("line_number", { ascending: true })
+
+      if (error) throw error
+      
+      setSelectedJournalEntry(journalEntry)
+      setShowJournalModal(true)
+    } catch (err) {
+      console.error("Error fetching journal entry:", err)
+    }
+  }
+
+  // Filter transactions based on aging filter
+  const getFilteredTransactions = (transactions: ARTransaction[], agingFilter?: string) => {
+    if (!agingFilter || agingFilter === 'all') return transactions
+    
+    return transactions.filter(transaction => {
+      const days = calculateDaysOutstanding(transaction.date, asOfDate)
+      const status = getAgingStatus(days)
+      return status === agingFilter
+    })
   }
 
   const getStatusColor = (status: string) => {
@@ -368,6 +402,7 @@ export default function AccountsReceivablePage() {
   }
 
   const selectedCustomerData = selectedCustomer ? arData.find(r => r.customer === selectedCustomer) : null
+  const filteredTransactions = selectedCustomerData ? getFilteredTransactions(selectedCustomerData.transactions, selectedAgingFilter) : []
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -630,9 +665,6 @@ export default function AccountsReceivablePage() {
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Last Invoice
                       </th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Actions
-                      </th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -642,39 +674,63 @@ export default function AccountsReceivablePage() {
                           {record.customer}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          <span className={`font-medium ${record.aging.current > 0 ? 'text-green-600' : 'text-gray-300'}`}>
-                            {record.aging.current > 0 ? formatCurrency(record.aging.current) : '-'}
-                          </span>
+                          {record.aging.current > 0 ? (
+                            <button
+                              onClick={() => showCustomerTransactions(record.customer, 'current')}
+                              className="font-medium text-green-600 hover:text-green-800 hover:underline cursor-pointer"
+                            >
+                              {formatCurrency(record.aging.current)}
+                            </button>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          <span className={`font-medium ${record.aging.days30 > 0 ? 'text-yellow-600' : 'text-gray-300'}`}>
-                            {record.aging.days30 > 0 ? formatCurrency(record.aging.days30) : '-'}
-                          </span>
+                          {record.aging.days30 > 0 ? (
+                            <button
+                              onClick={() => showCustomerTransactions(record.customer, '30-60')}
+                              className="font-medium text-yellow-600 hover:text-yellow-800 hover:underline cursor-pointer"
+                            >
+                              {formatCurrency(record.aging.days30)}
+                            </button>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          <span className={`font-medium ${record.aging.days60 > 0 ? 'text-orange-600' : 'text-gray-300'}`}>
-                            {record.aging.days60 > 0 ? formatCurrency(record.aging.days60) : '-'}
-                          </span>
+                          {record.aging.days60 > 0 ? (
+                            <button
+                              onClick={() => showCustomerTransactions(record.customer, '60-90')}
+                              className="font-medium text-orange-600 hover:text-orange-800 hover:underline cursor-pointer"
+                            >
+                              {formatCurrency(record.aging.days60)}
+                            </button>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                          <span className={`font-medium ${record.aging.days90 > 0 ? 'text-red-600' : 'text-gray-300'}`}>
-                            {record.aging.days90 > 0 ? formatCurrency(record.aging.days90) : '-'}
-                          </span>
+                          {record.aging.days90 > 0 ? (
+                            <button
+                              onClick={() => showCustomerTransactions(record.customer, '90+')}
+                              className="font-medium text-red-600 hover:text-red-800 hover:underline cursor-pointer"
+                            >
+                              {formatCurrency(record.aging.days90)}
+                            </button>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-gray-900">
-                          {formatCurrency(record.balance)}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                          <button
+                            onClick={() => showCustomerTransactions(record.customer, 'all')}
+                            className="font-bold text-gray-900 hover:text-blue-600 hover:underline cursor-pointer"
+                          >
+                            {formatCurrency(record.balance)}
+                          </button>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {formatDateSafe(record.lastInvoiceDate)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <button
-                            onClick={() => showCustomerTransactions(record.customer)}
-                            className="inline-flex items-center px-3 py-1 border border-transparent text-xs leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                          >
-                            <Eye className="w-3 h-3 mr-1" />
-                            View
-                          </button>
                         </td>
                       </tr>
                     ))}
@@ -699,10 +755,19 @@ export default function AccountsReceivablePage() {
               <div className="flex justify-between items-center">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">
-                    Open Invoices - {selectedCustomerData.customer}
+                    {selectedAgingFilter && selectedAgingFilter !== 'all' 
+                      ? `${selectedAgingFilter === 'current' ? 'Current (0-30)' : 
+                          selectedAgingFilter === '30-60' ? '31-60 Days' :
+                          selectedAgingFilter === '60-90' ? '61-90 Days' :
+                          '90+ Days'} Invoices - ${selectedCustomerData.customer}`
+                      : `All Open Invoices - ${selectedCustomerData.customer}`
+                    }
                   </h3>
                   <p className="text-sm text-gray-600">
-                    Outstanding balance as of {formatDateSafe(asOfDate)}: {formatCurrency(selectedCustomerData.balance)} • {selectedCustomerData.transactions.length} open invoices
+                    {selectedAgingFilter && selectedAgingFilter !== 'all'
+                      ? `Showing ${filteredTransactions.length} invoices in this aging category • Total: ${formatCurrency(filteredTransactions.reduce((sum, t) => sum + t.remainingBalance, 0))}`
+                      : `Outstanding balance as of ${formatDateSafe(asOfDate)}: ${formatCurrency(selectedCustomerData.balance)} • ${selectedCustomerData.transactions.length} open invoices`
+                    }
                   </p>
                 </div>
                 <button
@@ -730,7 +795,7 @@ export default function AccountsReceivablePage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {selectedCustomerData.transactions.map((transaction, index) => {
+                    {filteredTransactions.map((transaction, index) => {
                       const daysOld = calculateDaysOutstanding(transaction.date, asOfDate)
                       const agingStatus = getAgingStatus(daysOld)
                       
@@ -739,8 +804,13 @@ export default function AccountsReceivablePage() {
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                             {formatDateSafe(transaction.date)}
                           </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                            {transaction.entryNumber}
+                          <td className="px-4 py-3 whitespace-nowrap text-sm">
+                            <button
+                              onClick={() => showJournalEntry(transaction.entryNumber)}
+                              className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                            >
+                              {transaction.entryNumber}
+                            </button>
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                             {transaction.invoiceNumber || '-'}
@@ -766,6 +836,98 @@ export default function AccountsReceivablePage() {
                       )
                     })}
                   </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Journal Entry Detail Modal */}
+      {showJournalModal && selectedJournalEntry && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-5xl w-full max-h-[80vh] flex flex-col">
+            <div className="p-6 border-b border-gray-200 flex-shrink-0">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    Journal Entry Details
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    Entry #{selectedJournalEntry[0]?.entry_number} • Date: {formatDateSafe(selectedJournalEntry[0]?.date)} • {selectedJournalEntry.length} lines
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowJournalModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-auto p-6">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Line</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Debit</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Credit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {selectedJournalEntry.map((line: any, index: number) => (
+                      <tr key={index} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                          {line.line_number || index + 1}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {line.account_type || line.account}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-900">
+                          {line.memo || line.description || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-600">
+                          {line.customer || line.vendor || line.name || '-'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
+                          {line.debit > 0 ? (
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(line.debit)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
+                          {line.credit > 0 ? (
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(line.credit)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50">
+                    <tr>
+                      <td colSpan={4} className="px-4 py-3 text-sm font-medium text-gray-900">
+                        Totals:
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
+                        {formatCurrency(selectedJournalEntry.reduce((sum: number, line: any) => sum + (line.debit || 0), 0))}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-bold text-gray-900">
+                        {formatCurrency(selectedJournalEntry.reduce((sum: number, line: any) => sum + (line.credit || 0), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </div>
