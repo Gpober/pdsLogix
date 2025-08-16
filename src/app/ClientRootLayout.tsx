@@ -53,13 +53,13 @@ const navigation = [
   { name: "Balance Sheet", href: "/balance-sheet", icon: FileText },
   { name: "P&L", href: "/financials", icon: TrendingUp },
   { name: "Cash Flow", href: "/cash-flow", icon: DollarSign },
+    { name: "A/R", href: "/accounts-receivable", icon: CreditCard },
+  { name: "A/P", href: "/accounts-payable", icon: Users },
   {
     name: "Comparative Analysis",
     href: "/comparative-analysis",
     icon: BarChart2,
   },
-   { name: "A/R", href: "/accounts-receivable", icon: CreditCard },
-  { name: "A/P", href: "/accounts-payable", icon: Users },
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
