@@ -6,6 +6,7 @@ import {
   Download,
   RefreshCw,
   TrendingUp,
+  TrendingDown,
   LucidePieChart,
   BarChart3,
   ChevronDown,
@@ -231,6 +232,9 @@ export default function FinancialsPage() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [plAccounts, setPlAccounts] = useState<PLAccount[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [previousTotals, setPreviousTotals] = useState<
+    { income: number; expenses: number; netIncome: number } | null
+  >(null);
   const [availableProperties, setAvailableProperties] = useState<string[]>([
     "All Customers",
   ]);
@@ -443,6 +447,86 @@ export default function FinancialsPage() {
     return { startDate, endDate };
   };
 
+  const calculatePreviousDateRange = () => {
+    if (timePeriod === "Custom") return null;
+
+    let startDate: string;
+    let endDate: string;
+    const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    const monthIndex = monthsList.indexOf(selectedMonth);
+    const year = Number.parseInt(selectedYear);
+
+    if (timePeriod === "YTD") {
+      const prevYear = year - 1;
+      startDate = `${prevYear}-01-01`;
+      let lastDay = daysInMonth[monthIndex];
+      if (
+        monthIndex === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      endDate = `${prevYear}-${String(monthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    } else if (timePeriod === "Monthly") {
+      let prevMonth = monthIndex - 1;
+      let prevYear = year;
+      if (prevMonth < 0) {
+        prevMonth = 11;
+        prevYear -= 1;
+      }
+      startDate = `${prevYear}-${String(prevMonth + 1).padStart(2, "0")}-01`;
+      let lastDay = daysInMonth[prevMonth];
+      if (
+        prevMonth === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      endDate = `${prevYear}-${String(prevMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    } else if (timePeriod === "Quarterly") {
+      const quarter = Math.floor(monthIndex / 3);
+      let prevQuarter = quarter - 1;
+      let prevYear = year;
+      if (prevQuarter < 0) {
+        prevQuarter = 3;
+        prevYear -= 1;
+      }
+      const quarterStartMonth = prevQuarter * 3;
+      startDate = `${prevYear}-${String(quarterStartMonth + 1).padStart(2, "0")}-01`;
+      const quarterEndMonth = quarterStartMonth + 2;
+      let lastDay = daysInMonth[quarterEndMonth];
+      if (
+        quarterEndMonth === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      endDate = `${prevYear}-${String(quarterEndMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+    } else if (timePeriod === "Trailing 12") {
+      let endMonth = monthIndex;
+      let endYear = year - 1;
+      let lastDay = daysInMonth[endMonth];
+      if (
+        endMonth === 1 &&
+        ((endYear % 4 === 0 && endYear % 100 !== 0) || endYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      endDate = `${endYear}-${String(endMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      let startMonth = endMonth - 11;
+      let startYear = endYear;
+      if (startMonth < 0) {
+        startMonth += 12;
+        startYear -= 1;
+      }
+      startDate = `${startYear}-${String(startMonth + 1).padStart(2, "0")}-01`;
+    } else {
+      return null;
+    }
+
+    return { startDate, endDate };
+  };
+
   // CORRECTED: P&L Classification using account_type field
   const classifyPLAccount = (
     accountType: string,
@@ -587,6 +671,103 @@ export default function FinancialsPage() {
         plTransactions,
       );
       setPlAccounts(processedAccounts);
+
+      // Fetch previous period totals for KPI percentage change
+      const prevRange = calculatePreviousDateRange();
+      if (prevRange) {
+        let prevQuery = supabase
+          .from("journal_entry_lines")
+          .select(
+            `
+         entry_number,
+         class,
+         date,
+         account,
+         account_type,
+         debit,
+         credit,
+         memo,
+         customer,
+         vendor,
+         name,
+         entry_bank_account,
+         normal_balance,
+         report_category,
+         is_cash_account,
+         detail_type,
+         account_behavior
+       `,
+          )
+          .gte("date", prevRange.startDate)
+          .lte("date", prevRange.endDate)
+          .order("date", { ascending: true });
+
+        if (selectedProperty !== "All Customers") {
+          prevQuery = prevQuery.eq("customer", selectedProperty);
+        }
+
+        const { data: prevTransactions, error: prevError } = await prevQuery;
+        if (!prevError && prevTransactions) {
+          const prevFiltered = prevTransactions.filter((tx) =>
+            isDateInRange(tx.date, prevRange.startDate, prevRange.endDate),
+          );
+
+          const prevPLTransactions = prevFiltered.filter((tx) => {
+            const classification = classifyPLAccount(
+              tx.account_type,
+              tx.account,
+              tx.report_category,
+            );
+            return classification !== null;
+          });
+
+          const prevProcessedAccounts = await processPLTransactionsEnhanced(
+            prevPLTransactions,
+          );
+
+          const prevIncome = prevProcessedAccounts.filter(
+            (acc) => acc.category === "INCOME",
+          );
+          const prevCogs = prevProcessedAccounts.filter(
+            (acc) =>
+              acc.category === "EXPENSES" &&
+              acc.account_type?.toLowerCase().includes("cost of goods sold"),
+          );
+          const prevExpenses = prevProcessedAccounts.filter(
+            (acc) =>
+              acc.category === "EXPENSES" &&
+              !acc.account_type?.toLowerCase().includes("cost of goods sold"),
+          );
+
+          const groupedPrevIncome = groupParentSubAccounts(prevIncome);
+          const groupedPrevCogs = groupParentSubAccounts(prevCogs);
+          const groupedPrevExpenses = groupParentSubAccounts(prevExpenses);
+
+          const prevTotalIncome = groupedPrevIncome.reduce(
+            (sum, group) => sum + group.combinedAmount,
+            0,
+          );
+          const prevTotalCogs = groupedPrevCogs.reduce(
+            (sum, group) => sum + group.combinedAmount,
+            0,
+          );
+          const prevTotalExpenses = groupedPrevExpenses.reduce(
+            (sum, group) => sum + group.combinedAmount,
+            0,
+          );
+          const prevNetIncome = prevTotalIncome - prevTotalCogs - prevTotalExpenses;
+
+          setPreviousTotals({
+            income: prevTotalIncome,
+            expenses: prevTotalExpenses,
+            netIncome: prevNetIncome,
+          });
+        } else {
+          setPreviousTotals(null);
+        }
+      } else {
+        setPreviousTotals(null);
+      }
 
       smartLog(
         `✅ Processed ${processedAccounts.length} P&L accounts using timezone-independent strategy`,
@@ -1434,6 +1615,19 @@ export default function FinancialsPage() {
   const netIncome = grossProfit - totalExpenses;
   const grossProfitPercent = totalIncome !== 0 ? grossProfit / totalIncome : 0;
 
+  const incomeChange =
+    previousTotals && previousTotals.income !== 0
+      ? (totalIncome - previousTotals.income) / previousTotals.income
+      : null;
+  const expenseChange =
+    previousTotals && previousTotals.expenses !== 0
+      ? (totalExpenses - previousTotals.expenses) / previousTotals.expenses
+      : null;
+  const netIncomeChange =
+    previousTotals && previousTotals.netIncome !== 0
+      ? (netIncome - previousTotals.netIncome) / previousTotals.netIncome
+      : null;
+
   // Get current date range for header display
   const { startDate: currentStartDate, endDate: currentEndDate } =
     calculateDateRange();
@@ -1843,6 +2037,22 @@ export default function FinancialsPage() {
                     <p className="text-2xl font-bold text-green-600">
                       {formatCurrency(totalIncome)}
                     </p>
+                    {incomeChange !== null && (
+                      <p
+                        className={`mt-1 text-sm flex items-center ${
+                          incomeChange >= 0
+                            ? "text-green-600"
+                            : "text-red-600"
+                        }`}
+                      >
+                        {incomeChange >= 0 ? (
+                          <TrendingUp className="w-4 h-4 mr-1" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4 mr-1" />
+                        )}
+                        {formatPercentage(Math.abs(incomeChange))}
+                      </p>
+                    )}
                   </div>
                   <div
                     className="p-3 rounded-full"
@@ -1865,6 +2075,22 @@ export default function FinancialsPage() {
                     <p className="text-2xl font-bold text-red-600">
                       {formatCurrency(totalExpenses)}
                     </p>
+                    {expenseChange !== null && (
+                      <p
+                        className={`mt-1 text-sm flex items-center ${
+                          expenseChange <= 0
+                            ? "text-green-600"
+                            : "text-red-600"
+                        }`}
+                      >
+                        {expenseChange <= 0 ? (
+                          <TrendingDown className="w-4 h-4 mr-1" />
+                        ) : (
+                          <TrendingUp className="w-4 h-4 mr-1" />
+                        )}
+                        {formatPercentage(Math.abs(expenseChange))}
+                      </p>
+                    )}
                   </div>
                   <div
                     className="p-3 rounded-full"
@@ -1889,6 +2115,22 @@ export default function FinancialsPage() {
                     >
                       {formatCurrency(netIncome)}
                     </p>
+                    {netIncomeChange !== null && (
+                      <p
+                        className={`mt-1 text-sm flex items-center ${
+                          netIncomeChange >= 0
+                            ? "text-green-600"
+                            : "text-red-600"
+                        }`}
+                      >
+                        {netIncomeChange >= 0 ? (
+                          <TrendingUp className="w-4 h-4 mr-1" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4 mr-1" />
+                        )}
+                        {formatPercentage(Math.abs(netIncomeChange))}
+                      </p>
+                    )}
                   </div>
                   <div
                     className="p-3 rounded-full"
