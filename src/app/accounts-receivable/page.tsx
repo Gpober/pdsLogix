@@ -169,6 +169,7 @@ export default function AccountsReceivablePage() {
 
     return result.sort((a, b) => a.date.localeCompare(b.date))
   }
+  const fetchARData = async () => {
     try {
       setIsLoading(true)
       setError(null)
@@ -258,7 +259,6 @@ export default function AccountsReceivablePage() {
 
       console.log(`✅ Processed ${arRecords.length} customers with outstanding A/R`)
       setArData(arRecords)
-      
     } catch (err) {
       console.error("❌ Error fetching A/R data:", err)
       setError(err instanceof Error ? err.message : "Unknown error")
