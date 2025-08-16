@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Menu,
   X,
@@ -10,6 +10,10 @@ import {
   AlertTriangle,
   CheckCircle,
   Target,
+  Mic,
+  MicOff,
+  Bot,
+  MessageCircle,
   type LucideIcon,
 } from "lucide-react";
 
@@ -202,6 +206,166 @@ export default function EnhancedMobileDashboard() {
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
+
+  // Siri AI States
+  const [isListening, setIsListening] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [response, setResponse] = useState('');
+  const [showModal, setShowModal] = useState(false);
+  const [recognition, setRecognition] = useState<any>(null);
+  const [holdTimer, setHoldTimer] = useState<NodeJS.Timeout | null>(null);
+  const [isHolding, setIsHolding] = useState(false);
+  
+  const buttonRef = useRef<HTMLDivElement>(null);
+  const holdStartTime = useRef<number>(0);
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'webkitSpeechRecognition' in window) {
+      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+      const recognitionInstance = new SpeechRecognition();
+      
+      recognitionInstance.continuous = true;
+      recognitionInstance.interimResults = true;
+      recognitionInstance.lang = 'en-US';
+      
+      recognitionInstance.onresult = (event: any) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+        
+        setTranscript(finalTranscript + interimTranscript);
+        
+        if (finalTranscript) {
+          processAIQuery(finalTranscript);
+        }
+      };
+      
+      recognitionInstance.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+        setIsProcessing(false);
+      };
+      
+      recognitionInstance.onend = () => {
+        setIsListening(false);
+      };
+      
+      setRecognition(recognitionInstance);
+    }
+  }, []);
+
+  const processAIQuery = async (query: string) => {
+    if (!query.trim()) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      const response = await fetch('/api/ai-chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: query,
+          context: {
+            platform: 'I AM CFO',
+            userType: 'property_manager',
+            requestType: 'voice_query',
+            currentData: {
+              reportType,
+              properties,
+              selectedProperty,
+              companyTotals
+            }
+          }
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to get AI response');
+      }
+      
+      const data = await response.json();
+      setResponse(data.response);
+      
+      // Speak the response if speech synthesis is available
+      if ('speechSynthesis' in window && data.response) {
+        const utterance = new SpeechSynthesisUtterance(data.response);
+        utterance.rate = 0.9;
+        utterance.pitch = 1;
+        utterance.volume = 0.8;
+        window.speechSynthesis.speak(utterance);
+      }
+      
+    } catch (error) {
+      console.error('Error processing AI query:', error);
+      setResponse('Sorry, I encountered an error processing your request. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleHoldStart = () => {
+    setIsHolding(true);
+    holdStartTime.current = Date.now();
+    
+    const timer = setTimeout(() => {
+      if (recognition && !isListening) {
+        setIsListening(true);
+        setTranscript('');
+        setResponse('');
+        setShowModal(true);
+        recognition.start();
+      }
+    }, 150); // Short delay to feel like Siri
+    
+    setHoldTimer(timer);
+  };
+
+  const handleHoldEnd = () => {
+    setIsHolding(false);
+    
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      setHoldTimer(null);
+    }
+    
+    const holdDuration = Date.now() - holdStartTime.current;
+    
+    if (holdDuration < 150) {
+      // Short tap - just show modal without voice
+      setShowModal(true);
+      return;
+    }
+    
+    // Long hold - stop listening
+    if (recognition && isListening) {
+      recognition.stop();
+      setIsListening(false);
+    }
+  };
+
+  const closeModal = () => {
+    if (recognition && isListening) {
+      recognition.stop();
+    }
+    setShowModal(false);
+    setIsListening(false);
+    setIsProcessing(false);
+    setTranscript('');
+    setResponse('');
+  };
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -950,7 +1114,16 @@ export default function EnhancedMobileDashboard() {
             transform: translateY(0);
           }
         }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+        }
+        @keyframes ripple {
+          0% { transform: scale(0.8); opacity: 1; }
+          100% { transform: scale(2.4); opacity: 0; }
+        }
       `}</style>
+
       {/* Enhanced Header */}
       <header style={{
         background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
@@ -1460,8 +1633,8 @@ export default function EnhancedMobileDashboard() {
                       </div>
                     </div>
                   </>
-            ) : (
-              <>
+                ) : (
+                  <>
                     <div onClick={() => showRanking("arTotal")} style={{
                       background: 'white',
                       borderRadius: '8px',
@@ -2590,6 +2763,8 @@ export default function EnhancedMobileDashboard() {
           )}
         </div>
       )}
+
+      {/* Journal Modal */}
       {showJournalModal && (
         <div
           style={{
@@ -2651,6 +2826,312 @@ export default function EnhancedMobileDashboard() {
                 <tbody>
                   {journalEntryLines.map((line, idx) => (
                     <tr key={idx} style={{ borderTop: `1px solid ${BRAND_COLORS.gray[100]}` }}>
+                      <td style={{ padding: '8px', fontSize: '12px', color: '#475569' }}>{line.customer || ''}</td>
+                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '12px', color: BRAND_COLORS.danger }}>
+                        {formatCurrency(Number(line.debit || 0))}
+                      </td>
+                      <td style={{ padding: '8px', textAlign: 'right', fontSize: '12px', color: BRAND_COLORS.success }}>
+                        {formatCurrency(Number(line.credit || 0))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Siri AI Modal */}
+      {showModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            backdropFilter: 'blur(10px)'
+          }}
+          onClick={closeModal}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+              borderRadius: '24px',
+              padding: '32px',
+              margin: '20px',
+              maxWidth: '400px',
+              width: '90%',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              border: '1px solid rgba(255,255,255,0.3)',
+              backdropFilter: 'blur(20px)',
+              textAlign: 'center'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+                  borderRadius: '12px',
+                  padding: '8px',
+                  boxShadow: `0 4px 16px ${BRAND_COLORS.primary}40`
+                }}>
+                  <Bot size={20} style={{ color: 'white' }} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: BRAND_COLORS.accent }}>
+                    I AM CFO AI
+                  </h3>
+                  <p style={{ fontSize: '12px', margin: 0, color: '#64748b' }}>
+                    Your Financial Assistant
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={closeModal}
+                style={{
+                  background: 'rgba(0,0,0,0.1)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '8px',
+                  cursor: 'pointer',
+                  color: '#64748b'
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Status */}
+            <div style={{ marginBottom: '24px' }}>
+              {isListening ? (
+                <div>
+                  <div style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.tertiary})`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 16px',
+                    animation: 'pulse 2s infinite',
+                    boxShadow: `0 0 30px ${BRAND_COLORS.primary}60`
+                  }}>
+                    <Mic size={32} style={{ color: 'white' }} />
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.primary, margin: 0 }}>
+                    Listening...
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
+                    Ask me about your financial data
+                  </p>
+                </div>
+              ) : isProcessing ? (
+                <div>
+                  <div style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.warning}, #f59e0b)`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 16px',
+                    animation: 'pulse 1.5s infinite',
+                    boxShadow: '0 0 30px rgba(245, 158, 11, 0.6)'
+                  }}>
+                    <MessageCircle size={32} style={{ color: 'white' }} />
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.warning, margin: 0 }}>
+                    Processing...
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
+                    Analyzing your request
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.gray[200]}, ${BRAND_COLORS.gray[100]})`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 16px',
+                    border: `3px solid ${BRAND_COLORS.primary}`
+                  }}>
+                    <MicOff size={32} style={{ color: BRAND_COLORS.primary }} />
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.accent, margin: 0 }}>
+                    Ready to Help
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
+                    Hold the button to ask a question
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Transcript */}
+            {transcript && (
+              <div style={{
+                background: 'rgba(255,255,255,0.8)',
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '16px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                textAlign: 'left'
+              }}>
+                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 8px', fontWeight: '600' }}>
+                  You said:
+                </p>
+                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, fontStyle: 'italic' }}>
+                  "{transcript}"
+                </p>
+              </div>
+            )}
+
+            {/* Response */}
+            {response && (
+              <div style={{
+                background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '16px',
+                border: `1px solid ${BRAND_COLORS.primary}30`,
+                textAlign: 'left'
+              }}>
+                <p style={{ fontSize: '12px', color: BRAND_COLORS.primary, margin: '0 0 8px', fontWeight: '600' }}>
+                  I AM CFO AI:
+                </p>
+                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, lineHeight: '1.5' }}>
+                  {response}
+                </p>
+              </div>
+            )}
+
+            {/* Example Questions */}
+            {!transcript && !response && (
+              <div style={{
+                background: 'rgba(255,255,255,0.6)',
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '16px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                textAlign: 'left'
+              }}>
+                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 12px', fontWeight: '600' }}>
+                  Try asking:
+                </p>
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                    "What's our total revenue this month?"
+                  </p>
+                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                    "Which customer has the highest profit margin?"
+                  </p>
+                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                    "Show me overdue receivables"
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Instructions */}
+            <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: '1.4' }}>
+              Hold the microphone button below to speak, or tap to close
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Siri-Style AI Button */}
+      <div
+        ref={buttonRef}
+        onMouseDown={handleHoldStart}
+        onMouseUp={handleHoldEnd}
+        onMouseLeave={handleHoldEnd}
+        onTouchStart={handleHoldStart}
+        onTouchEnd={handleHoldEnd}
+        style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          width: '64px',
+          height: '64px',
+          borderRadius: '50%',
+          background: isHolding 
+            ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})` 
+            : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: isHolding 
+            ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20` 
+            : `0 8px 32px ${BRAND_COLORS.primary}40`,
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          transform: isHolding ? 'scale(1.1)' : 'scale(1)',
+          zIndex: 1000,
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          MozUserSelect: 'none'
+        }}
+        onMouseOver={(e) => {
+          if (!isHolding) {
+            e.currentTarget.style.transform = 'scale(1.05)';
+            e.currentTarget.style.boxShadow = `0 12px 40px ${BRAND_COLORS.primary}50`;
+          }
+        }}
+        onMouseOut={(e) => {
+          if (!isHolding) {
+            e.currentTarget.style.transform = 'scale(1)';
+            e.currentTarget.style.boxShadow = `0 8px 32px ${BRAND_COLORS.primary}40`;
+          }
+        }}
+      >
+        {isListening ? (
+          <div style={{ position: 'relative' }}>
+            <Mic size={28} style={{ color: 'white' }} />
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              border: '2px solid rgba(255,255,255,0.6)',
+              animation: 'ripple 1.5s infinite'
+            }} />
+          </div>
+        ) : (
+          <Bot size={28} style={{ color: 'white' }} />
+        )}
+      </div>
+    </div>
+  );
+}8px', fontSize: '12px', color: '#0f172a' }}>
+                        {new Date(line.date).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
+                      </td>
+                      <td style={{ padding: '8px', fontSize: '12px', color: '#0f172a' }}>{line.account}</td>
+                      <td style={{ padding: '8px', fontSize: '12px', color: '#475569' }}>{line.memo || ''}</td>
                       <td style={{ padding: '8px', fontSize: '12px', color: '#0f172a' }}>
                         {new Date(line.date).toLocaleDateString('en-US', {
                           month: 'short',
@@ -2675,6 +3156,286 @@ export default function EnhancedMobileDashboard() {
           </div>
         </div>
       )}
+
+      {/* Siri AI Modal */}
+      {showModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            backdropFilter: 'blur(10px)'
+          }}
+          onClick={closeModal}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
+              borderRadius: '24px',
+              padding: '32px',
+              margin: '20px',
+              maxWidth: '400px',
+              width: '90%',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              border: '1px solid rgba(255,255,255,0.3)',
+              backdropFilter: 'blur(20px)',
+              textAlign: 'center'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+                  borderRadius: '12px',
+                  padding: '8px',
+                  boxShadow: `0 4px 16px ${BRAND_COLORS.primary}40`
+                }}>
+                  <Bot size={20} style={{ color: 'white' }} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: BRAND_COLORS.accent }}>
+                    I AM CFO AI
+                  </h3>
+                  <p style={{ fontSize: '12px', margin: 0, color: '#64748b' }}>
+                    Your Financial Assistant
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={closeModal}
+                style={{
+                  background: 'rgba(0,0,0,0.1)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '8px',
+                  cursor: 'pointer',
+                  color: '#64748b'
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Status */}
+            <div style={{ marginBottom: '24px' }}>
+              {isListening ? (
+                <div>
+                  <div style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.tertiary})`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 16px',
+                    animation: 'pulse 2s infinite',
+                    boxShadow: `0 0 30px ${BRAND_COLORS.primary}60`
+                  }}>
+                    <Mic size={32} style={{ color: 'white' }} />
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.primary, margin: 0 }}>
+                    Listening...
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
+                    Ask me about your financial data
+                  </p>
+                </div>
+              ) : isProcessing ? (
+                <div>
+                  <div style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.warning}, #f59e0b)`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 16px',
+                    animation: 'pulse 1.5s infinite',
+                    boxShadow: '0 0 30px rgba(245, 158, 11, 0.6)'
+                  }}>
+                    <MessageCircle size={32} style={{ color: 'white' }} />
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.warning, margin: 0 }}>
+                    Processing...
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
+                    Analyzing your request
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div style={{
+                    width: '80px',
+                    height: '80px',
+                    borderRadius: '50%',
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.gray[200]}, ${BRAND_COLORS.gray[100]})`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    margin: '0 auto 16px',
+                    border: `3px solid ${BRAND_COLORS.primary}`
+                  }}>
+                    <MicOff size={32} style={{ color: BRAND_COLORS.primary }} />
+                  </div>
+                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.accent, margin: 0 }}>
+                    Ready to Help
+                  </p>
+                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
+                    Hold the button to ask a question
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Transcript */}
+            {transcript && (
+              <div style={{
+                background: 'rgba(255,255,255,0.8)',
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '16px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                textAlign: 'left'
+              }}>
+                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 8px', fontWeight: '600' }}>
+                  You said:
+                </p>
+                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, fontStyle: 'italic' }}>
+                  "{transcript}"
+                </p>
+              </div>
+            )}
+
+            {/* Response */}
+            {response && (
+              <div style={{
+                background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '16px',
+                border: `1px solid ${BRAND_COLORS.primary}30`,
+                textAlign: 'left'
+              }}>
+                <p style={{ fontSize: '12px', color: BRAND_COLORS.primary, margin: '0 0 8px', fontWeight: '600' }}>
+                  I AM CFO AI:
+                </p>
+                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, lineHeight: '1.5' }}>
+                  {response}
+                </p>
+              </div>
+            )}
+
+            {/* Example Questions */}
+            {!transcript && !response && (
+              <div style={{
+                background: 'rgba(255,255,255,0.6)',
+                borderRadius: '12px',
+                padding: '16px',
+                marginBottom: '16px',
+                border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                textAlign: 'left'
+              }}>
+                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 12px', fontWeight: '600' }}>
+                  Try asking:
+                </p>
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                    "What's our total revenue this month?"
+                  </p>
+                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                    "Which customer has the highest profit margin?"
+                  </p>
+                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                    "Show me overdue receivables"
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Instructions */}
+            <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: '1.4' }}>
+              Hold the microphone button below to speak, or tap to close
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Siri-Style AI Button */}
+      <div
+        ref={buttonRef}
+        onMouseDown={handleHoldStart}
+        onMouseUp={handleHoldEnd}
+        onMouseLeave={handleHoldEnd}
+        onTouchStart={handleHoldStart}
+        onTouchEnd={handleHoldEnd}
+        style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          width: '64px',
+          height: '64px',
+          borderRadius: '50%',
+          background: isHolding 
+            ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})` 
+            : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+          border: 'none',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: isHolding 
+            ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20` 
+            : `0 8px 32px ${BRAND_COLORS.primary}40`,
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+          transform: isHolding ? 'scale(1.1)' : 'scale(1)',
+          zIndex: 1000,
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          MozUserSelect: 'none'
+        }}
+        onMouseOver={(e) => {
+          if (!isHolding) {
+            e.currentTarget.style.transform = 'scale(1.05)';
+            e.currentTarget.style.boxShadow = `0 12px 40px ${BRAND_COLORS.primary}50`;
+          }
+        }}
+        onMouseOut={(e) => {
+          if (!isHolding) {
+            e.currentTarget.style.transform = 'scale(1)';
+            e.currentTarget.style.boxShadow = `0 8px 32px ${BRAND_COLORS.primary}40`;
+          }
+        }}
+      >
+        {isListening ? (
+          <div style={{ position: 'relative' }}>
+            <Mic size={28} style={{ color: 'white' }} />
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              border: '2px solid rgba(255,255,255,0.6)',
+              animation: 'ripple 1.5s infinite'
+            }} />
+          </div>
+        ) : (
+          <Bot size={28} style={{ color: 'white' }} />
+        )}
+      </div>
     </div>
   );
 }
