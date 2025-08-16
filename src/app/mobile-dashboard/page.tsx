@@ -14,6 +14,21 @@ import {
 } from "lucide-react";
 
 import { supabase } from "@/lib/supabaseClient";
+import SiriStyleAICFO from '@/components/SiriStyleAICFO'
+
+export default function MobileDashboard() {
+  return (
+    <div>
+      {/* Your existing mobile dashboard content */}
+      <div className="min-h-screen bg-gray-50">
+        {/* Your charts, data, navigation, etc. */}
+      </div>
+      
+      {/* Add the Siri-style AI button */}
+      <SiriStyleAICFO />
+    </div>
+  )
+}
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
