@@ -40,6 +40,12 @@ interface PropertySummary {
   operating?: number;
   financing?: number;
   investing?: number;
+  current?: number;
+  days30?: number;
+  days60?: number;
+  days90?: number;
+  over90?: number;
+  total?: number;
 }
 
 interface Category {
@@ -56,6 +62,16 @@ interface Transaction {
   customer?: string | null;
   entryNumber?: string;
   invoiceNumber?: string | null;
+}
+
+interface ARTransaction {
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  amount: number;
+  daysOutstanding: number;
+  customer: string;
+  memo?: string | null;
 }
 
 interface JournalRow {
@@ -88,6 +104,28 @@ interface JournalEntryLine {
 const getMonthName = (m: number) =>
   new Date(0, m - 1).toLocaleString("en-US", { month: "long" });
 
+const calculateDaysOutstanding = (dueDate: string) => {
+  const due = new Date(dueDate);
+  const today = new Date();
+  const diff = today.getTime() - due.getTime();
+  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+};
+
+const getAgingBucket = (days: number): string => {
+  if (days <= 30) return "current";
+  if (days <= 60) return "31-60";
+  if (days <= 90) return "61-90";
+  if (days <= 120) return "91-120";
+  return "120+";
+};
+
+const getAgingColor = (days: number) => {
+  if (days <= 30) return BRAND_COLORS.success;
+  if (days <= 60) return BRAND_COLORS.warning;
+  if (days <= 90) return "#f59e0b";
+  return BRAND_COLORS.danger;
+};
+
 type Insight = {
   title: string;
   message: string;
@@ -104,7 +142,10 @@ type RankingMetric =
   | "netCash"
   | "investing"
   | "stability"
-  | "cogs";
+  | "cogs"
+  | "arTotal"
+  | "arCurrent"
+  | "arOverdue";
 
 const insights: Insight[] = [
   {
@@ -129,7 +170,7 @@ const insights: Insight[] = [
 
 export default function EnhancedMobileDashboard() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [reportType, setReportType] = useState<"pl" | "cf">("pl");
+  const [reportType, setReportType] = useState<"pl" | "cf" | "ar">("pl");
   const [reportPeriod, setReportPeriod] = useState<
     "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
   >("Monthly");
@@ -155,6 +196,7 @@ export default function EnhancedMobileDashboard() {
     investing: [],
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [arTransactions, setArTransactions] = useState<ARTransaction[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
@@ -165,6 +207,33 @@ export default function EnhancedMobileDashboard() {
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
     [transactions],
   );
+
+  const arTransactionTotal = useMemo(
+    () => arTransactions.reduce((sum, t) => sum + t.amount, 0),
+    [arTransactions],
+  );
+
+  const filteredARTransactions = useMemo(() => {
+    return arTransactions.filter((t) => {
+      const bucket = getAgingBucket(t.daysOutstanding);
+      if (selectedCategory === "90+") {
+        return bucket === "91-120" || bucket === "120+";
+      }
+      return bucket === selectedCategory;
+    });
+  }, [arTransactions, selectedCategory]);
+
+  const filteredARTotal = useMemo(
+    () => filteredARTransactions.reduce((sum, t) => sum + t.amount, 0),
+    [filteredARTransactions],
+  );
+
+  const bucketLabels: Record<string, string> = {
+    current: "Current (0-30 Days)",
+    "31-60": "31-60 Days",
+    "61-90": "61-90 Days",
+    "90+": "90+ Days",
+  };
 
   const plTotals = useMemo(() => {
     const revenue = plData.revenue.reduce((sum, c) => sum + c.total, 0);
@@ -283,19 +352,49 @@ export default function EnhancedMobileDashboard() {
 
   useEffect(() => {
     const load = async () => {
+      if (reportType === "ar") {
+        const { data } = await supabase
+          .from("ar_aging_detail")
+          .select("*")
+          .gt("open_balance", 0);
+        const map: Record<string, PropertySummary> = {};
+        (data || []).forEach((rec: any) => {
+          const customer = rec.customer || "General";
+          if (!map[customer]) {
+            map[customer] = {
+              name: customer,
+              current: 0,
+              days30: 0,
+              days60: 0,
+              days90: 0,
+              over90: 0,
+              total: 0,
+            };
+          }
+          const amt = Number(rec.open_balance) || 0;
+          const days = calculateDaysOutstanding(rec.due_date);
+          const bucket = getAgingBucket(days);
+          if (bucket === "current") map[customer].current = (map[customer].current || 0) + amt;
+          else if (bucket === "31-60") map[customer].days30 = (map[customer].days30 || 0) + amt;
+          else if (bucket === "61-90") map[customer].days60 = (map[customer].days60 || 0) + amt;
+          else if (bucket === "91-120") map[customer].days90 = (map[customer].days90 || 0) + amt;
+          else map[customer].over90 = (map[customer].over90 || 0) + amt;
+          map[customer].total = (map[customer].total || 0) + amt;
+        });
+        setProperties(Object.values(map));
+        return;
+      }
+
       const { start, end } = getDateRange();
-      
-      // Enhanced query to mirror cash flow component structure
+
       const selectColumns = "account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
-      
+
       let query = supabase
         .from("journal_entry_lines")
         .select(selectColumns)
         .gte("date", start)
         .lte("date", end);
 
-      // Apply cash flow logic - only include transactions with bank account source
-      // and exclude cash account transactions (following cash flow component logic)
       if (reportType === "cf") {
         query = query
           .not("entry_bank_account", "is", null)
@@ -305,25 +404,25 @@ export default function EnhancedMobileDashboard() {
 
       const { data } = await query;
       const map: Record<string, PropertySummary> = {};
-      
+
       ((data as JournalRow[]) || []).forEach((row) => {
         const customer = row.customer || "General";
         if (!map[customer]) {
-          map[customer] = { 
-            name: customer, 
-            revenue: 0, 
+          map[customer] = {
+            name: customer,
+            revenue: 0,
             cogs: 0,
-            expenses: 0, 
-            netIncome: 0, 
-            operating: 0, 
+            expenses: 0,
+            netIncome: 0,
+            operating: 0,
             financing: 0,
-            investing: 0
+            investing: 0,
           };
         }
-        
+
         const debit = Number(row.debit) || 0;
         const credit = Number(row.credit) || 0;
-        
+
         if (reportType === "pl") {
           const t = (row.account_type || "").toLowerCase();
           if (t.includes("income") || t.includes("revenue")) {
@@ -335,18 +434,15 @@ export default function EnhancedMobileDashboard() {
             const amt = debit - credit;
             map[customer].expenses = (map[customer].expenses || 0) + amt;
           }
-          // Calculate net income
           map[customer].netIncome = (map[customer].revenue || 0) - (map[customer].cogs || 0) - (map[customer].expenses || 0);
         } else {
-          // Enhanced cash flow calculation mirroring cash flow component
           const classification = classifyTransaction(row.account_type, row.report_category);
-          
+
           if (classification !== "other" && classification !== "transfer") {
-            // Mirror cash flow component calculation logic
-            const cashImpact = row.report_category === "transfer" 
-              ? debit - credit  // Reverse for transfers
-              : row.normal_balance || credit - debit;  // Normal for others
-              
+            const cashImpact = row.report_category === "transfer"
+              ? debit - credit
+              : row.normal_balance || credit - debit;
+
             if (classification === "operating") {
               map[customer].operating = (map[customer].operating || 0) + cashImpact;
             } else if (classification === "financing") {
@@ -357,13 +453,13 @@ export default function EnhancedMobileDashboard() {
           }
         }
       });
-      
+
       const list = Object.values(map).filter((p) => {
         return reportType === "pl"
           ? (p.revenue || 0) !== 0 || (p.cogs || 0) !== 0 || (p.expenses || 0) !== 0 || (p.netIncome || 0) !== 0
           : (p.operating || 0) !== 0 || (p.financing || 0) !== 0 || (p.investing || 0) !== 0;
       });
-      
+
       const finalList =
         map["General"] && !list.find((p) => p.name === "General")
           ? [...list, map["General"]]
@@ -414,6 +510,40 @@ export default function EnhancedMobileDashboard() {
     }, properties[0]).name;
   }, [properties, reportType]);
 
+  const arKing = useMemo(() => {
+    if (reportType !== "ar" || !properties.length) return null;
+    return properties.reduce((max, p) =>
+      (p.total || 0) > (max.total || 0) ? p : max,
+    properties[0]).name;
+  }, [properties, reportType]);
+
+  const currentChamp = useMemo(() => {
+    if (reportType !== "ar" || !properties.length) return null;
+    return properties.reduce((max, p) => {
+      const ratioP = p.total ? (p.current || 0) / (p.total || 1) : 0;
+      const ratioM = max.total ? (max.current || 0) / (max.total || 1) : 0;
+      return ratioP > ratioM ? p : max;
+    }, properties[0]).name;
+  }, [properties, reportType]);
+
+  const overdueAlert = useMemo(() => {
+    if (reportType !== "ar" || !properties.length) return null;
+    return properties.reduce((max, p) => {
+      const overdueP = (p.total || 0) - (p.current || 0);
+      const overdueM = (max.total || 0) - (max.current || 0);
+      return overdueP > overdueM ? p : max;
+    }, properties[0]).name;
+  }, [properties, reportType]);
+
+  const avgDays = useMemo(() => {
+    if (reportType !== "ar" || !properties.length) return 0;
+    const weighted = properties.reduce((sum, p) =>
+      sum + ((p.current || 0) * 15 + (p.days30 || 0) * 45 + (p.days60 || 0) * 75 + (p.days90 || 0) * 105 + (p.over90 || 0) * 135),
+    0);
+    const total = properties.reduce((sum, p) => sum + (p.total || 0), 0);
+    return total ? Math.round(weighted / total) : 0;
+  }, [properties, reportType]);
+
   const companyTotals = properties.reduce(
     (acc, p) => {
       if (reportType === "pl") {
@@ -421,15 +551,35 @@ export default function EnhancedMobileDashboard() {
         acc.cogs += p.cogs || 0;
         acc.expenses += p.expenses || 0;
         acc.net += p.netIncome || 0;
-      } else {
+      } else if (reportType === "cf") {
         acc.operating += p.operating || 0;
         acc.financing += p.financing || 0;
         acc.investing += p.investing || 0;
         acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
+      } else {
+        acc.current += p.current || 0;
+        acc.days30 += p.days30 || 0;
+        acc.days60 += p.days60 || 0;
+        acc.days90 += p.days90 || 0;
+        acc.over90 += p.over90 || 0;
+        acc.net += p.total || 0;
       }
       return acc;
     },
-    { revenue: 0, cogs: 0, expenses: 0, net: 0, operating: 0, financing: 0, investing: 0 },
+    {
+      revenue: 0,
+      cogs: 0,
+      expenses: 0,
+      net: 0,
+      operating: 0,
+      financing: 0,
+      investing: 0,
+      current: 0,
+      days30: 0,
+      days60: 0,
+      days90: 0,
+      over90: 0,
+    },
   );
 
   const formatCurrency = (n: number) =>
@@ -458,6 +608,9 @@ export default function EnhancedMobileDashboard() {
     netCash: "Net Cash",
     investing: "Investing",
     stability: "Net Cash",
+    arTotal: "Total A/R",
+    arCurrent: "Current Ratio",
+    arOverdue: "Overdue A/R",
   };
 
   const rankedProperties = useMemo(() => {
@@ -492,6 +645,20 @@ export default function EnhancedMobileDashboard() {
         );
       case "investing":
         return arr.sort((a, b) => (a.investing || 0) - (b.investing || 0));
+      case "arTotal":
+        return arr.sort((a, b) => (b.total || 0) - (a.total || 0));
+      case "arCurrent":
+        return arr.sort((a, b) => {
+          const rA = a.total ? (a.current || 0) / (a.total || 1) : 0;
+          const rB = b.total ? (b.current || 0) / (b.total || 1) : 0;
+          return rB - rA;
+        });
+      case "arOverdue":
+        return arr.sort(
+          (a, b) =>
+            ((b.total || 0) - (b.current || 0)) -
+            ((a.total || 0) - (a.current || 0)),
+        );
       default:
         return arr;
     }
@@ -517,6 +684,13 @@ export default function EnhancedMobileDashboard() {
         return formatCompactCurrency(p.revenue || 0);
       case "growth":
         return formatCompactCurrency(p.revenue || 0);
+      case "arTotal":
+        return formatCompactCurrency(p.total || 0);
+      case "arCurrent":
+        const rc = p.total ? (p.current || 0) / (p.total || 1) : 0;
+        return `${(rc * 100).toFixed(1)}%`;
+      case "arOverdue":
+        return formatCompactCurrency((p.total || 0) - (p.current || 0));
       case "netIncome":
       default:
         return formatCompactCurrency(p.netIncome || 0);
@@ -528,10 +702,16 @@ export default function EnhancedMobileDashboard() {
     setView("summary");
   };
 
+  const showARTransactions = (bucket: string) => {
+    setSelectedCategory(bucket);
+    setView("detail");
+  };
+
   const handlePropertySelect = async (name: string | null) => {
     setSelectedProperty(name);
     if (reportType === "pl") await loadPL(name);
-    else await loadCF(name);
+    else if (reportType === "cf") await loadCF(name);
+    else await loadAR(name);
     setView("report");
   };
 
@@ -634,11 +814,32 @@ export default function EnhancedMobileDashboard() {
       .map(([name, total]) => ({ name, total }))
       .sort((a, b) => b.total - a.total);
       
-    setCfData({ 
-      operating: operatingArr, 
+    setCfData({
+      operating: operatingArr,
       financing: financingArr,
-      investing: investingArr 
+      investing: investingArr
     });
+  };
+
+  const loadAR = async (propertyName: string | null = selectedProperty) => {
+    let query = supabase
+      .from("ar_aging_detail")
+      .select("*")
+      .gt("open_balance", 0);
+    if (propertyName) {
+      query = query.eq("customer", propertyName);
+    }
+    const { data } = await query;
+    const list: ARTransaction[] = (data as any[] || []).map((rec) => ({
+      invoiceNumber: rec.number || "",
+      invoiceDate: rec.date,
+      dueDate: rec.due_date,
+      amount: Number(rec.open_balance) || 0,
+      daysOutstanding: calculateDaysOutstanding(rec.due_date),
+      customer: rec.customer,
+      memo: rec.memo || null,
+    }));
+    setArTransactions(list);
   };
 
   const handleCategory = async (
@@ -784,10 +985,10 @@ export default function EnhancedMobileDashboard() {
         {/* Dashboard Summary */}
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-            {reportType === "pl" ? "P&L Dashboard" : "Cash Flow Dashboard"}
+            {reportType === "pl" ? "P&L Dashboard" : reportType === "cf" ? "Cash Flow Dashboard" : "A/R Aging Report"}
           </h1>
           <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {getMonthName(month)} {year} • {properties.length} Customers
+            {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`} • {properties.length} Customers
           </p>
         </div>
 
@@ -846,7 +1047,7 @@ export default function EnhancedMobileDashboard() {
                 <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Income</div>
               </div>
             </div>
-          ) : (
+          ) : reportType === "cf" ? (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
               <div>
                 <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
@@ -871,6 +1072,39 @@ export default function EnhancedMobileDashboard() {
                   {formatCompactCurrency(companyTotals.net)}
                 </div>
                 <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.current)}
+                </div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>Current</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.days30)}
+                </div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>31-60</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.days60)}
+                </div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>61-90</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.days90)}
+                </div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>91-120</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.over90)}
+                </div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>120+</div>
               </div>
             </div>
           )}
@@ -905,103 +1139,108 @@ export default function EnhancedMobileDashboard() {
                 fontSize: '16px'
               }}
               value={reportType}
-              onChange={(e) => setReportType(e.target.value as "pl" | "cf")}
+              onChange={(e) => setReportType(e.target.value as "pl" | "cf" | "ar")}
             >
               <option value="pl">P&L Statement</option>
               <option value="cf">Cash Flow Statement</option>
+              <option value="ar">A/R Aging Report</option>
             </select>
           </div>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-              Report Period
-            </label>
-            <select
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                borderRadius: '8px',
-                fontSize: '16px'
-              }}
-              value={reportPeriod}
-              onChange={(e) =>
-                setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
-              }
-            >
-              <option value="Monthly">Monthly</option>
-              <option value="Custom">Custom Range</option>
-              <option value="Year to Date">Year to Date</option>
-              <option value="Trailing 12">Trailing 12 Months</option>
-              <option value="Quarterly">Quarterly</option>
-            </select>
-          </div>
-          {reportPeriod === "Custom" ? (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
-              />
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
-              />
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <select
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={month}
-                onChange={(e) => setMonth(Number(e.target.value))}
-              >
-                {Array.from({ length: 12 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    {new Date(0, i).toLocaleString("en", { month: "long" })}
-                  </option>
-                ))}
-              </select>
-              <select
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={year}
-                onChange={(e) => setYear(Number(e.target.value))}
-              >
-                {Array.from({ length: 5 }, (_, i) => {
-                  const y = new Date().getFullYear() - 2 + i;
-                  return (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
+          {reportType !== "ar" && (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
+                  Report Period
+                </label>
+                <select
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                    borderRadius: '8px',
+                    fontSize: '16px'
+                  }}
+                  value={reportPeriod}
+                  onChange={(e) =>
+                    setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
+                  }
+                >
+                  <option value="Monthly">Monthly</option>
+                  <option value="Custom">Custom Range</option>
+                  <option value="Year to Date">Year to Date</option>
+                  <option value="Trailing 12">Trailing 12 Months</option>
+                  <option value="Quarterly">Quarterly</option>
+                </select>
+              </div>
+              {reportPeriod === "Custom" ? (
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                  <input
+                    type="date"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={customStart}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                  />
+                  <input
+                    type="date"
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={customEnd}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                  <select
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={month}
+                    onChange={(e) => setMonth(Number(e.target.value))}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => (
+                      <option key={i + 1} value={i + 1}>
+                        {new Date(0, i).toLocaleString("en", { month: "long" })}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '16px'
+                    }}
+                    value={year}
+                    onChange={(e) => setYear(Number(e.target.value))}
+                  >
+                    {Array.from({ length: 5 }, (_, i) => {
+                      const y = new Date().getFullYear() - 2 + i;
+                      return (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+            </>
           )}
           <button
             style={{
@@ -1138,7 +1377,7 @@ export default function EnhancedMobileDashboard() {
                       </div>
                     </div>
                   </>
-                ) : (
+                ) : reportType === "cf" ? (
                   <>
                     <div onClick={() => showRanking("operating")} style={{
                       background: 'white',
@@ -1221,6 +1460,88 @@ export default function EnhancedMobileDashboard() {
                       </div>
                     </div>
                   </>
+            ) : (
+              <>
+                    <div onClick={() => showRanking("arTotal")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.primary}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>💰</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.primary, fontWeight: '600' }}>
+                          A/R KING
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {arKing}
+                        </div>
+                      </div>
+                    </div>
+                    <div onClick={() => showRanking("arCurrent")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.success}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>⏰</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.success, fontWeight: '600' }}>
+                          CURRENT CHAMP
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {currentChamp}
+                        </div>
+                      </div>
+                    </div>
+                    <div onClick={() => showRanking("arOverdue")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.danger}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>⚠️</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.danger, fontWeight: '600' }}>
+                          OVERDUE ALERT
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {overdueAlert}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.accent}33`
+                    }}>
+                      <span style={{ fontSize: '20px' }}>📊</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.accent, fontWeight: '600' }}>
+                          AVG DAYS
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {avgDays}
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -1265,6 +1586,9 @@ export default function EnhancedMobileDashboard() {
               const isCogsChamp = p.name === cogsChamp;
               const isCashKing = p.name === cashKing;
               const isFlowMaster = p.name === flowMaster;
+              const isArKing = p.name === arKing;
+              const isCurrentChamp = p.name === currentChamp;
+              const isOverdueAlert = p.name === overdueAlert;
               
               return (
                 <div
@@ -1374,9 +1698,38 @@ export default function EnhancedMobileDashboard() {
                           <span style={{ fontSize: '16px' }}>⚡</span>
                         </div>
                       )}
+                      {reportType === "ar" && isArKing && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, #0ea5e9)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(14,165,233,0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>💰</span>
+                        </div>
+                      )}
+                      {reportType === "ar" && isCurrentChamp && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.success}, #22c55e)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(34,197,94,0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>⏰</span>
+                        </div>
+                      )}
+                      {reportType === "ar" && isOverdueAlert && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.danger}, #ef4444)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(239,68,68,0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>⚠️</span>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  
                   {reportType === "pl" ? (
                     <div style={{ display: 'grid', gap: '6px' }}>
                       <div style={{ 
@@ -1456,10 +1809,10 @@ export default function EnhancedMobileDashboard() {
                         </span>
                       </div>
                     </div>
-                  ) : (
+                  ) : reportType === "cf" ? (
                     <div style={{ display: 'grid', gap: '8px' }}>
-                      <div style={{ 
-                        display: 'flex', 
+                      <div style={{
+                        display: 'flex',
                         justifyContent: 'space-between',
                         padding: '6px 10px',
                         background: `${BRAND_COLORS.primary}08`,
@@ -1467,8 +1820,8 @@ export default function EnhancedMobileDashboard() {
                         border: `1px solid ${BRAND_COLORS.primary}20`
                       }}>
                         <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Operating</span>
-                        <span style={{ 
-                          fontSize: '12px', 
+                        <span style={{
+                          fontSize: '12px',
                           fontWeight: '700',
                           color: BRAND_COLORS.primary,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
@@ -1476,8 +1829,8 @@ export default function EnhancedMobileDashboard() {
                           {formatCompactCurrency(p.operating || 0)}
                         </span>
                       </div>
-                      <div style={{ 
-                        display: 'flex', 
+                      <div style={{
+                        display: 'flex',
                         justifyContent: 'space-between',
                         padding: '6px 10px',
                         background: `${BRAND_COLORS.secondary}08`,
@@ -1485,8 +1838,8 @@ export default function EnhancedMobileDashboard() {
                         border: `1px solid ${BRAND_COLORS.secondary}20`
                       }}>
                         <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Financing</span>
-                        <span style={{ 
-                          fontSize: '12px', 
+                        <span style={{
+                          fontSize: '12px',
                           fontWeight: '700',
                           color: BRAND_COLORS.secondary,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
@@ -1494,8 +1847,8 @@ export default function EnhancedMobileDashboard() {
                           {formatCompactCurrency(p.financing || 0)}
                         </span>
                       </div>
-                      <div style={{ 
-                        display: 'flex', 
+                      <div style={{
+                        display: 'flex',
                         justifyContent: 'space-between',
                         padding: '6px 10px',
                         background: `${BRAND_COLORS.warning}08`,
@@ -1503,8 +1856,8 @@ export default function EnhancedMobileDashboard() {
                         border: `1px solid ${BRAND_COLORS.warning}20`
                       }}>
                         <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Investing</span>
-                        <span style={{ 
-                          fontSize: '12px', 
+                        <span style={{
+                          fontSize: '12px',
                           fontWeight: '700',
                           color: BRAND_COLORS.warning,
                           textShadow: '0 1px 2px rgba(0,0,0,0.1)'
@@ -1512,8 +1865,8 @@ export default function EnhancedMobileDashboard() {
                           {formatCompactCurrency(p.investing || 0)}
                         </span>
                       </div>
-                      <div style={{ 
-                        display: 'flex', 
+                      <div style={{
+                        display: 'flex',
                         justifyContent: 'space-between',
                         padding: '10px',
                         background: `linear-gradient(135deg, ${BRAND_COLORS.accent}10, ${BRAND_COLORS.primary}05)`,
@@ -1522,13 +1875,66 @@ export default function EnhancedMobileDashboard() {
                         boxShadow: `0 4px 12px ${BRAND_COLORS.accent}20`
                       }}>
                         <span style={{ fontSize: '12px', fontWeight: '700', color: BRAND_COLORS.accent }}>Net Cash</span>
-                        <span style={{ 
-                          fontSize: '14px', 
+                        <span style={{
+                          fontSize: '14px',
                           fontWeight: '800',
                           color: ((p.operating || 0) + (p.financing || 0) + (p.investing || 0)) >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
                           textShadow: '0 1px 3px rgba(0,0,0,0.2)'
                         }}>
                           {formatCompactCurrency((p.operating || 0) + (p.financing || 0) + (p.investing || 0))}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: '6px' }}>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.success}20`,
+                        borderRadius: '6px'
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Current</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: BRAND_COLORS.success }}>
+                          {formatCompactCurrency(p.current || 0)}
+                        </span>
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.warning}20`,
+                        borderRadius: '6px'
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>31-60</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: BRAND_COLORS.warning }}>
+                          {formatCompactCurrency(p.days30 || 0)}
+                        </span>
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.danger}20`,
+                        borderRadius: '6px'
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>61+</span>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: BRAND_COLORS.danger }}>
+                          {formatCompactCurrency((p.days60 || 0) + (p.days90 || 0) + (p.over90 || 0))}
+                        </span>
+                      </div>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '10px',
+                        background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
+                        borderRadius: '8px',
+                        border: `2px solid ${BRAND_COLORS.primary}30`,
+                        boxShadow: `0 4px 12px ${BRAND_COLORS.primary}20`
+                      }}>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: BRAND_COLORS.accent }}>Total A/R</span>
+                        <span style={{ fontSize: '14px', fontWeight: '800', color: BRAND_COLORS.primary }}>
+                          {formatCompactCurrency(p.total || 0)}
                         </span>
                       </div>
                     </div>
@@ -1557,14 +1963,14 @@ export default function EnhancedMobileDashboard() {
                 color: BRAND_COLORS.accent
               }}
             >
-              Company Total Net {reportType === "pl" ? "Income" : "Cash"}
+              Company Total {reportType === "pl" ? "Net Income" : reportType === "cf" ? "Net Cash" : "A/R"}
             </span>
             <div
               style={{
                 fontSize: '20px',
                 fontWeight: '800',
                 marginTop: '4px',
-                color: companyTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                color: reportType === "ar" ? BRAND_COLORS.primary : companyTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
               }}
             >
               {formatCompactCurrency(companyTotals.net)}
@@ -1605,7 +2011,7 @@ export default function EnhancedMobileDashboard() {
               Top Customers by {rankingLabels[rankingMetric]}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
-              {getMonthName(month)} {year}
+              {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
             </p>
           </div>
 
@@ -1660,10 +2066,10 @@ export default function EnhancedMobileDashboard() {
             color: 'white'
           }}>
             <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : "Cash Flow Statement"}
+              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : reportType === "cf" ? "Cash Flow Statement" : "A/R Aging"}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
-              {getMonthName(month)} {year}
+              {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
             </p>
           </div>
 
@@ -1830,7 +2236,7 @@ export default function EnhancedMobileDashboard() {
               Net Income: {formatCurrency(plTotals.net)}
             </div>
             </>
-          ) : (
+          ) : reportType === "cf" ? (
             <>
               <div style={{ display: 'grid', gap: '16px' }}>
                 <div style={{
@@ -2005,10 +2411,37 @@ export default function EnhancedMobileDashboard() {
             >
               Net Cash Flow: {formatCurrency(cfTotals.net)}
             </div>
-            </>
-          )}
-        </div>
-      )}
+              </>
+            ) : (
+              <div style={{ display: 'grid', gap: '12px' }}>
+                <div onClick={() => showARTransactions('current')} style={{ background: `${BRAND_COLORS.success}20`, borderRadius: '8px', padding: '16px', cursor: 'pointer' }}>
+                  <div style={{ fontWeight: '600', color: BRAND_COLORS.success }}>Current (0-30 Days)</div>
+                  <div style={{ fontSize: '20px', fontWeight: '700', textAlign: 'right', color: BRAND_COLORS.success }}>
+                    {formatCurrency((selectedProperty ? properties.find(p=>p.name===selectedProperty) : companyTotals).current || 0)}
+                  </div>
+                </div>
+                <div onClick={() => showARTransactions('31-60')} style={{ background: `${BRAND_COLORS.warning}20`, borderRadius: '8px', padding: '16px', cursor: 'pointer' }}>
+                  <div style={{ fontWeight: '600', color: BRAND_COLORS.warning }}>31-60 Days</div>
+                  <div style={{ fontSize: '20px', fontWeight: '700', textAlign: 'right', color: BRAND_COLORS.warning }}>
+                    {formatCurrency((selectedProperty ? properties.find(p=>p.name===selectedProperty) : companyTotals).days30 || 0)}
+                  </div>
+                </div>
+                <div onClick={() => showARTransactions('61-90')} style={{ background: `#f59e0b20`, borderRadius: '8px', padding: '16px', cursor: 'pointer' }}>
+                  <div style={{ fontWeight: '600', color: '#f59e0b' }}>61-90 Days</div>
+                  <div style={{ fontSize: '20px', fontWeight: '700', textAlign: 'right', color: '#f59e0b' }}>
+                    {formatCurrency((selectedProperty ? properties.find(p=>p.name===selectedProperty) : companyTotals).days60 || 0)}
+                  </div>
+                </div>
+                <div onClick={() => showARTransactions('90+')} style={{ background: `${BRAND_COLORS.danger}20`, borderRadius: '8px', padding: '16px', cursor: 'pointer' }}>
+                  <div style={{ fontWeight: '600', color: BRAND_COLORS.danger }}>90+ Days</div>
+                  <div style={{ fontSize: '20px', fontWeight: '700', textAlign: 'right', color: BRAND_COLORS.danger }}>
+                    {formatCurrency(((selectedProperty ? properties.find(p=>p.name===selectedProperty) : companyTotals).days90 || 0) + ((selectedProperty ? properties.find(p=>p.name===selectedProperty) : companyTotals).over90 || 0))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
       {view === "detail" && (
         <div>
@@ -2025,125 +2458,136 @@ export default function EnhancedMobileDashboard() {
               cursor: 'pointer'
             }}
           >
-            <ChevronLeft size={20} style={{ marginRight: '4px' }} /> 
-            Back to {reportType === "pl" ? "P&L" : "Cash Flow"}
+            <ChevronLeft size={20} style={{ marginRight: '4px' }} />
+            Back to {reportType === "pl" ? "P&L" : reportType === "cf" ? "Cash Flow" : "A/R"}
           </button>
-          
-          <div style={{
-            background: `linear-gradient(135deg, ${BRAND_COLORS.accent}, ${BRAND_COLORS.secondary})`,
-            borderRadius: '12px',
-            padding: '20px',
-            marginBottom: '24px',
-            color: 'white'
-          }}>
-            <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>
-              {selectedCategory}
-            </h2>
-            <p style={{ fontSize: '14px', opacity: 0.9 }}>
-              Transaction Details • {getMonthName(month)} {year}
-            </p>
-          </div>
 
-          <div style={{ display: 'grid', gap: '12px' }}>
-            {transactions.map((t, idx) => (
-              <div
-                key={idx}
-                style={{
-                  background: 'white',
-                  borderRadius: '8px',
-                  padding: '16px',
-                  border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                  boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                  cursor: 'pointer',
-                }}
-                onClick={() => openJournalEntry(t.entryNumber)}
-              >
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
-                  <div style={{ fontWeight: '600' }}>DATE</div>
-                  <div style={{ fontWeight: '600' }}>PAYEE/CUSTOMER</div>
-                  <div style={{ fontWeight: '600' }}>INVOICE #</div>
-                  <div style={{ fontWeight: '600' }}>MEMO</div>
-                  <div style={{ fontWeight: '600', textAlign: 'right' }}>AMOUNT</div>
-                </div>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', alignItems: 'center' }}>
-                  <div style={{ fontSize: '14px', fontWeight: '500' }}>
-                    {new Date(t.date).toLocaleDateString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </div>
-                  
-                  <div>
-                    {t.payee && (
-                      <div style={{ fontSize: '13px', color: '#475569', fontWeight: '500' }}>{t.payee}</div>
-                    )}
-                    {t.customer && (
-                      <div
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: '600',
-                          color: BRAND_COLORS.accent,
-                          background: `${BRAND_COLORS.primary}20`,
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          display: 'inline-block',
-                          marginTop: '2px',
-                        }}
-                      >
-                        {t.customer}
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div style={{ fontSize: '13px', color: '#475569' }}>
-                    {t.invoiceNumber || '-'}
-                  </div>
-                  
-                  <div style={{ fontSize: '12px', color: '#64748b' }}>
-                    {t.memo || '-'}
-                  </div>
-                  
-                  <div style={{ textAlign: 'right' }}>
-                    <span
-                      style={{
-                        fontSize: '16px',
-                        fontWeight: '600',
-                        color: t.amount >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
-                      }}
-                    >
-                      {formatCurrency(t.amount)}
-                    </span>
-                  </div>
-                </div>
-                
-                <div
-                  style={{
-                    fontSize: '11px',
-                    color: '#64748b',
-                    textAlign: 'right',
-                    borderTop: `1px solid ${BRAND_COLORS.gray[100]}`,
-                    paddingTop: '8px',
-                    marginTop: '8px',
-                  }}
-                >
-                  Running Total: {formatCurrency(t.running)}
-                </div>
+          {reportType === "ar" ? (
+            <>
+              <div style={{
+                background: `linear-gradient(135deg, ${BRAND_COLORS.accent}, ${BRAND_COLORS.secondary})`,
+                borderRadius: '12px',
+                padding: '20px',
+                marginBottom: '24px',
+                color: 'white'
+              }}>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>
+                  {bucketLabels[selectedCategory || ""]}
+                </h2>
+                <p style={{ fontSize: '14px', opacity: 0.9 }}>
+                  Invoice Details • As of Today
+                </p>
               </div>
-            ))}
-          </div>
-          <div
-            style={{
-              marginTop: '16px',
-              textAlign: 'right',
-              fontSize: '14px',
-              fontWeight: '600',
-              color: transactionTotal >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger,
-            }}
-          >
-            {reportType === "pl" ? "Total Net Income" : "Total Net Cash Flow"}: {formatCurrency(transactionTotal)}
-          </div>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {filteredARTransactions.map((t, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '16px',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: '600', marginBottom: '4px' }}>
+                      <span>{t.invoiceNumber} - {t.customer}</span>
+                      <span style={{ color: getAgingColor(t.daysOutstanding) }}>{formatCurrency(t.amount)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#64748b' }}>
+                      <span>
+                        {new Date(t.invoiceDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {" "}• Due {new Date(t.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </span>
+                      <span style={{ color: getAgingColor(t.daysOutstanding), fontWeight: '600' }}>
+                        {t.daysOutstanding} days
+                      </span>
+                    </div>
+                    {t.memo && <div style={{ fontSize: '12px', marginTop: '4px' }}>{t.memo}</div>}
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  marginTop: '16px',
+                  textAlign: 'right',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: BRAND_COLORS.primary,
+                }}
+              >
+                Total Outstanding: {formatCurrency(filteredARTotal)}
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{
+                background: `linear-gradient(135deg, ${BRAND_COLORS.accent}, ${BRAND_COLORS.secondary})`,
+                borderRadius: '12px',
+                padding: '20px',
+                marginBottom: '24px',
+                color: 'white'
+              }}>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px' }}>
+                  {selectedCategory}
+                </h2>
+                <p style={{ fontSize: '14px', opacity: 0.9 }}>
+                  Transaction Details • {getMonthName(month)} {year}
+                </p>
+              </div>
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {transactions.map((t, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '16px',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                      boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => openJournalEntry(t.entryNumber)}
+                  >
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
+                      <div style={{ fontWeight: '600' }}>DATE</div>
+                      <div style={{ fontWeight: '600' }}>PAYEE/CUSTOMER</div>
+                      <div style={{ fontWeight: '600' }}>INVOICE #</div>
+                      <div style={{ fontWeight: '600' }}>MEMO</div>
+                      <div style={{ fontWeight: '600', textAlign: 'right' }}>AMOUNT</div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', alignItems: 'center' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '500' }}>
+                        {new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </div>
+                      <div>
+                        {t.payee && <div style={{ fontSize: '13px', color: '#475569', fontWeight: '500' }}>{t.payee}</div>}
+                        {t.customer && <div style={{ fontSize: '11px', color: '#94a3b8' }}>{t.customer}</div>}
+                      </div>
+                      <div style={{ fontSize: '13px', fontWeight: '500', color: '#475569' }}>
+                        {t.invoiceNumber}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>{t.memo}</div>
+                      <div style={{ fontSize: '14px', fontWeight: '700', textAlign: 'right', color: t.amount >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger }}>
+                        {formatCurrency(t.amount)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  marginTop: '16px',
+                  textAlign: 'right',
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  color: transactionTotal >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                }}
+              >
+                {reportType === "pl" ? "Total Net Income" : "Total Net Cash Flow"}: {formatCurrency(transactionTotal)}
+              </div>
+            </>
+          )}
         </div>
       )}
       {showJournalModal && (
