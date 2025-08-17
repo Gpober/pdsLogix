@@ -1,19 +1,25 @@
 import { NextResponse } from 'next/server'
-import { createCFOCompletion } from '../../../lib/openai' // make sure this uses gpt-4o or gpt-4o-mini
+import { createCFOCompletion } from '../../../lib/openai' // ensure this uses gpt-4o or gpt-4o-mini
 
-export async function POST(request: Request) {
+export async function POST(request) {
   try {
-    // Safely parse JSON
-    const body = await request.json().catch(() => ({} as any))
-    const { message, userId, context: frontendContext } = body ?? {}
+    // Safely parse JSON body (avoid TS-style `as any`)
+    let body = {}
+    try {
+      body = await request.json()
+    } catch (_) {
+      body = {}
+    }
 
-    // Basic validation
+    const { message, userId, context: frontendContext } = body || {}
+
+    // Validate message
     if (!message || typeof message !== 'string' || !message.trim()) {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 })
     }
 
-    // Do NOT hard-require userId — use a safe fallback
-    const safeUserId = typeof userId === 'string' && userId.length ? userId : 'anon'
+    // Do NOT hard-require userId — fall back to anon
+    const safeUserId = (typeof userId === 'string' && userId.length) ? userId : 'anon'
 
     // Build enhanced context
     const enhancedContext = {
@@ -21,12 +27,12 @@ export async function POST(request: Request) {
       platform: 'mobile',
       userId: safeUserId,
       timestamp: new Date().toISOString(),
-      businessData: frontendContext?.currentData || {},
-      userType: frontendContext?.userType || 'business_owner',
-      ...frontendContext,
+      businessData: (frontendContext && frontendContext.currentData) || {},
+      userType: (frontendContext && frontendContext.userType) || 'business_owner',
+      ...(frontendContext || {}),
     }
 
-    // Call the AI
+    // Call your OpenAI helper
     const response = await createCFOCompletion(message, enhancedContext)
 
     return NextResponse.json({
@@ -36,12 +42,8 @@ export async function POST(request: Request) {
         platform: enhancedContext.platform,
       },
     })
-  } catch (error: any) {
-    console.error('❌ API Route Error:', {
-      message: error?.message,
-      stack: error?.stack,
-      where: 'ai-chat-mobile',
-    })
+  } catch (error) {
+    console.error('❌ API Route Error:', error?.message || error)
     return NextResponse.json(
       { error: error?.message || 'Failed to process AI request' },
       { status: 500 }
@@ -49,9 +51,11 @@ export async function POST(request: Request) {
   }
 }
 
-/** Simple query-type detector */
-function detectQueryType(message: string): string {
-  const s = message.toLowerCase()
+// -----------------------------
+// Simple query-type classifier
+// -----------------------------
+function detectQueryType(message) {
+  const s = String(message || '').toLowerCase()
 
   // A/R specific
   if (
