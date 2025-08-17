@@ -16,7 +16,8 @@ export const createCFOCompletion = async (message, context) => {
       'ar_analysis',
       'customer_analysis', 
       'financial_analysis',
-      'performance_analysis'
+      'performance_analysis',
+      'trend_analysis'  // Added for year-over-year comparisons
     ].includes(context.queryType)
 
     let messages = [
@@ -124,6 +125,32 @@ export const createCFOCompletion = async (message, context) => {
                   type: "string",
                   enum: ["current_month", "last_month", "current_quarter", "last_quarter"],
                   description: "Time period for financial analysis"
+                }
+              },
+              required: ["userId"]
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "getYearOverYearComparison",
+            description: "Compare current year performance vs last year including revenue, expenses, customer growth, and trends",
+            parameters: {
+              type: "object",
+              properties: {
+                userId: {
+                  type: "string",
+                  description: "The user ID to get comparison data for"
+                },
+                customerId: {
+                  type: "string",
+                  description: "Optional specific customer ID to compare"
+                },
+                metric: {
+                  type: "string",
+                  enum: ["all", "revenue", "expenses", "customers", "profit"],
+                  description: "Specific metric to focus comparison on"
                 }
               },
               required: ["userId"]
