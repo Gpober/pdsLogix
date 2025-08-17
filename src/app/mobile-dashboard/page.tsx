@@ -319,17 +319,26 @@ export default function EnhancedMobileDashboard() {
   const handleHoldStart = () => {
     setIsHolding(true);
     holdStartTime.current = Date.now();
-    
-    const timer = setTimeout(() => {
+
+    const timer = setTimeout(async () => {
       if (recognition && !isListening) {
-        setIsListening(true);
-        setTranscript('');
-        setResponse('');
-        setShowModal(true);
-        recognition.start();
+        try {
+          // Request microphone permission on user interaction for mobile browsers
+          if (navigator?.mediaDevices) {
+            await navigator.mediaDevices.getUserMedia({ audio: true });
+          }
+          setIsListening(true);
+          setTranscript('');
+          setResponse('');
+          setShowModal(true);
+          recognition.start();
+        } catch (err) {
+          console.error('Microphone access denied:', err);
+          setIsListening(false);
+        }
       }
     }, 150); // Short delay to feel like Siri
-    
+
     setHoldTimer(timer);
   };
 
