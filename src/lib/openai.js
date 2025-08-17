@@ -32,6 +32,8 @@ async function createChatCompletion(body) {
 
 export const createCFOCompletion = async (message, context) => {
   try {
+    console.log('🚀 Starting createCFOCompletion with:', { message, queryType: context.queryType })
+    
     // Determine if we need function calling based on query type
     const needsFunctionCalling = [
       'ar_analysis',
@@ -40,6 +42,8 @@ export const createCFOCompletion = async (message, context) => {
       'performance_analysis',
       'trend_analysis'  // Added for year-over-year comparisons
     ].includes(context.queryType)
+
+    console.log('🔧 Function calling needed:', needsFunctionCalling)
 
     let messages = [
       {
@@ -92,7 +96,7 @@ export const createCFOCompletion = async (message, context) => {
                   description: "Optional specific customer ID to analyze"
                 }
               },
-              required: []  // ← CHANGED: No required parameters (removed userId requirement)
+              required: []
             }
           }
         },
@@ -114,7 +118,7 @@ export const createCFOCompletion = async (message, context) => {
                   description: "Time period for payment history analysis"
                 }
               },
-              required: []  // ← CHANGED: No required parameters (removed userId requirement)
+              required: []
             }
           }
         },
@@ -136,7 +140,7 @@ export const createCFOCompletion = async (message, context) => {
                   description: "Time period for financial analysis"
                 }
               },
-              required: []  // ← CHANGED: No required parameters (removed userId requirement)
+              required: []
             }
           }
         },
@@ -158,7 +162,7 @@ export const createCFOCompletion = async (message, context) => {
                   description: "Specific metric to focus comparison on"
                 }
               },
-              required: []  // ← CHANGED: No required parameters (removed userId requirement)
+              required: []
             }
           }
         }
@@ -167,20 +171,24 @@ export const createCFOCompletion = async (message, context) => {
       completionOptions.tool_choice = "auto"
     }
 
-    console.log('🤖 OpenAI Request:', { 
-      query: message, 
-      functions: needsFunctionCalling,
-      queryType: context.queryType 
+    console.log('🤖 About to call OpenAI API with options:', {
+      model: completionOptions.model,
+      messageCount: completionOptions.messages.length,
+      hasTools: !!completionOptions.tools,
+      queryType: context.queryType
     })
 
     // First API call to OpenAI
     const completion = await createChatCompletion(completionOptions)
     
+    console.log('✅ OpenAI API responded successfully')
+    console.log('📝 Response preview:', completion.choices[0].message.content?.substring(0, 100))
+    
     let finalResponse = completion.choices[0].message
 
     // Handle function calls
     if (finalResponse.tool_calls) {
-      console.log('🔧 Function calls needed:', finalResponse.tool_calls.length)
+      console.log('🔧 Function calls detected:', finalResponse.tool_calls.length)
       
       // Add the assistant's message to conversation
       messages.push(finalResponse)
@@ -189,9 +197,6 @@ export const createCFOCompletion = async (message, context) => {
       for (const toolCall of finalResponse.tool_calls) {
         const functionName = toolCall.function.name
         const functionArgs = JSON.parse(toolCall.function.arguments)
-        
-        // ← REMOVED: userId injection logic (not needed for single user per DB)
-        // The functions no longer need or expect userId parameter
         
         console.log(`📊 Calling function: ${functionName}`, functionArgs)
         
@@ -204,10 +209,11 @@ export const createCFOCompletion = async (message, context) => {
             functionResult = { error: `Function ${functionName} not found` }
           }
         } catch (error) {
+          console.error(`❌ Function ${functionName} error:`, error)
           functionResult = { error: error.message }
         }
         
-        console.log(`📈 Function result:`, functionResult)
+        console.log(`📈 Function result for ${functionName}:`, functionResult?.success ? 'Success' : 'Error')
         
         // Add function result to conversation
         messages.push({
@@ -218,6 +224,8 @@ export const createCFOCompletion = async (message, context) => {
         })
       }
       
+      console.log('🔄 Making second OpenAI call with function results')
+      
       // Second API call with function results
       const finalCompletion = await createChatCompletion({
         model: "gpt-4",
@@ -227,6 +235,9 @@ export const createCFOCompletion = async (message, context) => {
       })
       
       finalResponse = finalCompletion.choices[0].message
+      console.log('✅ Final OpenAI response received')
+    } else {
+      console.log('💬 Direct response (no function calls needed)')
     }
 
     console.log('✅ AI Response generated:', finalResponse.content?.substring(0, 100) + '...')
@@ -234,13 +245,19 @@ export const createCFOCompletion = async (message, context) => {
     return finalResponse.content
 
   } catch (error) {
-    console.error('❌ OpenAI Error:', error)
+    console.error('❌ OpenAI Error Details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    })
     
     // Fallback response
     if (error.message?.includes('insufficient_quota')) {
       return "I'm temporarily unable to analyze your data due to API limits. Please try again in a moment."
     } else if (error.message?.includes('context_length_exceeded')) {
       return "Your query involves too much data. Please try asking about a specific customer or shorter time period."
+    } else if (error.message?.includes('API key')) {
+      return "There's an issue with the API configuration. Please contact support."
     } else {
       return "I encountered an issue analyzing your financial data. Please try rephrasing your question or contact support if this persists."
     }
