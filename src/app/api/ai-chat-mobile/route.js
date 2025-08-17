@@ -182,36 +182,51 @@ export const availableFunctions = {
         .eq('user_id', userId)
       
       if (customerId) {
-        query = query.eq('customer_id', customerId)
+        query = query.eq('customer', customerId)
       }
       
       const { data: arData, error } = await query
       if (error) throw error
       
-      // Process aging buckets
+      // Calculate aging buckets based on due_date vs current date
+      const currentDate = new Date()
+      
       const agingAnalysis = arData.reduce((acc, record) => {
-        const customer = record.customer_name || 'Unknown'
+        const customer = record.customer || 'Unknown'
+        const dueDate = new Date(record.due_date)
+        const daysPastDue = Math.floor((currentDate - dueDate) / (1000 * 60 * 60 * 24))
+        const openBalance = record.open_balance || record.amount || 0
         
         if (!acc[customer]) {
           acc[customer] = {
             customer_name: customer,
-            customer_id: record.customer_id,
-            current: 0,
-            days_1_30: 0,
-            days_31_60: 0,
-            days_61_90: 0,
-            days_over_90: 0,
-            total_outstanding: 0
+            current: 0,           // Not yet due
+            days_1_30: 0,        // 1-30 days past due
+            days_31_60: 0,       // 31-60 days past due
+            days_61_90: 0,       // 61-90 days past due
+            days_over_90: 0,     // Over 90 days past due
+            total_outstanding: 0,
+            invoice_count: 0,
+            oldest_invoice_days: 0
           }
         }
         
-        // Sum by aging bucket (adjust field names to match your table)
-        acc[customer].current += record.current || 0
-        acc[customer].days_1_30 += record.days_1_30 || 0
-        acc[customer].days_31_60 += record.days_31_60 || 0
-        acc[customer].days_61_90 += record.days_61_90 || 0
-        acc[customer].days_over_90 += record.days_over_90 || 0
-        acc[customer].total_outstanding += record.total || 0
+        // Categorize by aging bucket
+        if (daysPastDue <= 0) {
+          acc[customer].current += openBalance
+        } else if (daysPastDue <= 30) {
+          acc[customer].days_1_30 += openBalance
+        } else if (daysPastDue <= 60) {
+          acc[customer].days_31_60 += openBalance
+        } else if (daysPastDue <= 90) {
+          acc[customer].days_61_90 += openBalance
+        } else {
+          acc[customer].days_over_90 += openBalance
+        }
+        
+        acc[customer].total_outstanding += openBalance
+        acc[customer].invoice_count += 1
+        acc[customer].oldest_invoice_days = Math.max(acc[customer].oldest_invoice_days, daysPastDue)
         
         return acc
       }, {})
@@ -222,14 +237,23 @@ export const availableFunctions = {
       // Return summary for OpenAI
       return {
         success: true,
-        summary: "Current A/R aging analysis",
+        summary: "Current A/R aging analysis based on due dates",
         total_ar: totalAR,
         customer_count: customers.length,
+        total_invoices: arData.length,
         customers: customers,
+        aging_summary: {
+          current: customers.reduce((sum, c) => sum + c.current, 0),
+          days_1_30: customers.reduce((sum, c) => sum + c.days_1_30, 0),
+          days_31_60: customers.reduce((sum, c) => sum + c.days_31_60, 0),
+          days_61_90: customers.reduce((sum, c) => sum + c.days_61_90, 0),
+          days_over_90: customers.reduce((sum, c) => sum + c.days_over_90, 0)
+        },
         risk_analysis: {
           high_risk: customers.filter(c => c.days_over_90 > 1000),
           medium_risk: customers.filter(c => c.days_61_90 > 500),
-          current_good: customers.filter(c => c.current > c.days_1_30)
+          current_good: customers.filter(c => c.current > c.days_1_30),
+          worst_aging: customers.sort((a, b) => b.oldest_invoice_days - a.oldest_invoice_days).slice(0, 5)
         },
         insights: {
           largest_outstanding: customers.reduce((max, customer) => 
@@ -237,7 +261,11 @@ export const availableFunctions = {
           collection_priority: customers
             .filter(c => c.days_over_90 > 0)
             .sort((a, b) => b.days_over_90 - a.days_over_90)
-            .slice(0, 5)
+            .slice(0, 5),
+          aging_percentage: {
+            current_pct: totalAR > 0 ? (customers.reduce((sum, c) => sum + c.current, 0) / totalAR * 100) : 0,
+            past_due_pct: totalAR > 0 ? ((totalAR - customers.reduce((sum, c) => sum + c.current, 0)) / totalAR * 100) : 0
+          }
         }
       }
     } catch (error) {
@@ -252,15 +280,15 @@ export const availableFunctions = {
   // A/R Payment History Analysis Function
   getARPaymentHistory: async ({ userId, customerId = null, timeframe = '6_months' }) => {
     try {
-      // Query journal entries for A/R related transactions
+      // Query journal entries for A/R related transactions using correct field names
       let query = supabase
         .from('journal_entry_lines')
         .select('*')
         .eq('user_id', userId)
-        .or('account_name.ilike.%Accounts Receivable%,account_name.ilike.%A/R%,account_name.ilike.%AR%')
+        .or('account.ilike.%Accounts Receivable%,account.ilike.%A/R%,account.ilike.%AR%')
       
       if (customerId) {
-        query = query.eq('customer_id', customerId)
+        query = query.eq('customer', customerId)
       }
       
       // Date range based on timeframe
@@ -277,15 +305,15 @@ export const availableFunctions = {
       const { data: journalData, error } = await query
       if (error) throw error
       
-      // Process payment patterns
+      // Process payment patterns using correct field names
       const paymentAnalysis = journalData.reduce((acc, entry) => {
-        const customer = entry.customer_name || 'Unknown'
+        const customer = entry.customer || entry.name || 'Unknown'
         const month = entry.date.substring(0, 7) // YYYY-MM
         
         if (!acc[customer]) {
           acc[customer] = {
             customer_name: customer,
-            customer_id: entry.customer_id,
+            customer_id: entry.customer,
             total_invoiced: 0,
             total_paid: 0,
             payment_months: {},
@@ -372,7 +400,7 @@ export const availableFunctions = {
         .eq('user_id', userId)
       
       if (customerId) {
-        query = query.eq('customer_id', customerId)
+        query = query.eq('customer', customerId)
       }
       
       if (dateFilter.gte) {
@@ -385,14 +413,15 @@ export const availableFunctions = {
       const { data, error } = await query
       if (error) throw error
 
-      // Group by customer and calculate net income from journal entries
+      // Group by customer and calculate net income using correct field names
       const customerFinancials = data?.reduce((acc, entry) => {
-        const customerKey = entry.customer_name || entry.customer_id || 'Unallocated'
+        const customerKey = entry.customer || entry.name || 'Unallocated'
         
         if (!acc[customerKey]) {
           acc[customerKey] = {
             customer_name: customerKey,
-            customer_id: entry.customer_id,
+            customer_id: entry.customer,
+            property: entry.property,
             revenue: 0,
             expenses: 0,
             net_income: 0,
@@ -400,17 +429,19 @@ export const availableFunctions = {
           }
         }
 
-        // Revenue accounts (credit increases revenue)
-        if (entry.account_name?.includes('Income') || 
-            entry.account_name?.includes('Revenue') ||
-            entry.account_name?.includes('Sales')) {
+        // Revenue accounts (credit increases revenue) - using correct field name
+        if (entry.account?.includes('Income') || 
+            entry.account?.includes('Revenue') ||
+            entry.account?.includes('Sales') ||
+            entry.account_type?.includes('Income')) {
           acc[customerKey].revenue += entry.credit || 0
         }
 
-        // Expense accounts (debit increases expenses) 
-        if (entry.account_name?.includes('Expense') || 
-            entry.account_name?.includes('Cost') ||
-            entry.account_name?.includes('COGS')) {
+        // Expense accounts (debit increases expenses) - using correct field name
+        if (entry.account?.includes('Expense') || 
+            entry.account?.includes('Cost') ||
+            entry.account?.includes('COGS') ||
+            entry.account_type?.includes('Expense')) {
           acc[customerKey].expenses += entry.debit || 0
         }
 
