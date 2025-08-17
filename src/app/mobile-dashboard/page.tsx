@@ -330,7 +330,6 @@ export default function EnhancedMobileDashboard() {
       setTranscript('');
       setResponse('');
       setIsProcessing(false);
-      setShowModal(true);
       recognition.start();
     } catch (err) {
       console.error('Microphone access denied:', err);
@@ -350,6 +349,14 @@ export default function EnhancedMobileDashboard() {
       recognition.stop();
     }
     setShowModal(false);
+    setIsListening(false);
+    setIsProcessing(false);
+    setTranscript('');
+    setResponse('');
+  };
+
+  const openAIModal = () => {
+    setShowModal(true);
     setIsListening(false);
     setIsProcessing(false);
     setTranscript('');
@@ -3043,73 +3050,98 @@ export default function EnhancedMobileDashboard() {
             <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: '1.4' }}>
               Hold the microphone button below to speak, then release to stop
             </p>
+
+            {/* Microphone Button */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '16px' }}>
+              <div
+                onPointerDown={startListening}
+                onPointerUp={stopListening}
+                onPointerLeave={stopListening}
+                style={{
+                  width: '64px',
+                  height: '64px',
+                  borderRadius: '50%',
+                  background: isListening
+                    ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})`
+                    : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: isListening
+                    ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20`
+                    : `0 8px 32px ${BRAND_COLORS.primary}40`,
+                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                  transform: isListening ? 'scale(1.1)' : 'scale(1)',
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                  MozUserSelect: 'none'
+                }}
+              >
+                {isListening ? (
+                  <div style={{ position: 'relative' }}>
+                    <Mic size={28} style={{ color: 'white' }} />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        width: '40px',
+                        height: '40px',
+                        borderRadius: '50%',
+                        border: '2px solid rgba(255,255,255,0.6)',
+                        animation: 'ripple 1.5s infinite'
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <Mic size={28} style={{ color: 'white' }} />
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* Floating AI CFO Button */}
-      <div
-        ref={buttonRef}
-        onPointerDown={startListening}
-        onPointerUp={stopListening}
-        onPointerLeave={stopListening}
-        style={{
-          position: 'fixed',
-          bottom: '24px',
-          right: '24px',
-          width: '64px',
-          height: '64px',
-          borderRadius: '50%',
-          background: isListening
-            ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})`
-            : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
-          border: 'none',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: isListening
-            ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20`
-            : `0 8px 32px ${BRAND_COLORS.primary}40`,
-          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          transform: isListening ? 'scale(1.1)' : 'scale(1)',
-          zIndex: 1000,
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
-          MozUserSelect: 'none'
-        }}
-        onMouseOver={(e) => {
-          if (!isListening) {
+      {!showModal && (
+        <div
+          ref={buttonRef}
+          onClick={openAIModal}
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            width: '64px',
+            height: '64px',
+            borderRadius: '50%',
+            background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+            border: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: `0 8px 32px ${BRAND_COLORS.primary}40`,
+            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            zIndex: 1000,
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+            MozUserSelect: 'none'
+          }}
+          onMouseOver={(e) => {
             e.currentTarget.style.transform = 'scale(1.05)';
             e.currentTarget.style.boxShadow = `0 12px 40px ${BRAND_COLORS.primary}50`;
-          }
-        }}
-        onMouseOut={(e) => {
-          if (!isListening) {
+          }}
+          onMouseOut={(e) => {
             e.currentTarget.style.transform = 'scale(1)';
             e.currentTarget.style.boxShadow = `0 8px 32px ${BRAND_COLORS.primary}40`;
-          }
-        }}
-      >
-        {isListening ? (
-          <div style={{ position: 'relative' }}>
-            <Mic size={28} style={{ color: 'white' }} />
-            <div style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              border: '2px solid rgba(255,255,255,0.6)',
-              animation: 'ripple 1.5s infinite'
-            }} />
-          </div>
-        ) : (
+          }}
+        >
           <Bot size={28} style={{ color: 'white' }} />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
