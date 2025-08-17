@@ -11,7 +11,6 @@ import {
   CheckCircle,
   Target,
   Mic,
-  MicOff,
   Bot,
   MessageCircle,
   type LucideIcon,
@@ -2969,18 +2968,20 @@ export default function EnhancedMobileDashboard() {
                 </div>
               ) : (
                 <div>
-                  <div style={{
-                    width: '80px',
-                    height: '80px',
-                    borderRadius: '50%',
-                    background: `linear-gradient(135deg, ${BRAND_COLORS.gray[200]}, ${BRAND_COLORS.gray[100]})`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 16px',
-                    border: `3px solid ${BRAND_COLORS.primary}`
-                  }}>
-                    <MicOff size={32} style={{ color: BRAND_COLORS.primary }} />
+                  <div
+                    style={{
+                      width: '80px',
+                      height: '80px',
+                      borderRadius: '50%',
+                      background: `linear-gradient(135deg, ${BRAND_COLORS.gray[200]}, ${BRAND_COLORS.gray[100]})`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      margin: '0 auto 16px',
+                      border: `3px solid ${BRAND_COLORS.primary}`
+                    }}
+                  >
+                    <Mic size={32} style={{ color: BRAND_COLORS.primary }} />
                   </div>
                   <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.accent, margin: 0 }}>
                     Ready to Help
