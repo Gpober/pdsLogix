@@ -2,7 +2,7 @@
 // Instead, interact with the OpenAI REST API directly via fetch.
 // This keeps Vercel/Next.js builds lightweight and prevents "module not found" errors
 // when the `openai` package isn't installed.
-import { availableFunctions } from '../app/api/ai-chat-mobile/route.js'
+import { availableFunctions } from '../server/functions'
 
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('Missing OPENAI_API_KEY environment variable')
