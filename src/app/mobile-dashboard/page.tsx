@@ -318,18 +318,8 @@ export default function EnhancedMobileDashboard() {
     }
   };
 
-  const handleMicTap = async () => {
-    if (!recognition) return;
-
-    if (isListening) {
-      recognition.stop();
-      setIsListening(false);
-      setShowModal(false);
-      setIsProcessing(false);
-      setTranscript('');
-      setResponse('');
-      return;
-    }
+  const startListening = async () => {
+    if (!recognition || isListening) return;
 
     try {
       // Request microphone permission on user interaction for mobile browsers
@@ -339,12 +329,20 @@ export default function EnhancedMobileDashboard() {
       setIsListening(true);
       setTranscript('');
       setResponse('');
+      setIsProcessing(false);
       setShowModal(true);
       recognition.start();
     } catch (err) {
       console.error('Microphone access denied:', err);
       setIsListening(false);
     }
+  };
+
+  const stopListening = () => {
+    if (!recognition || !isListening) return;
+
+    recognition.stop();
+    setIsListening(false);
   };
 
   const closeModal = () => {
@@ -2970,7 +2968,7 @@ export default function EnhancedMobileDashboard() {
                     Ready to Help
                   </p>
                   <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Tap the button to ask a question
+                    Hold the button to ask a question
                   </p>
                 </div>
               )}
@@ -3043,7 +3041,7 @@ export default function EnhancedMobileDashboard() {
 
             {/* Instructions */}
             <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: '1.4' }}>
-              Tap the microphone button below to speak, or tap again to stop
+              Hold the microphone button below to speak, then release to stop
             </p>
           </div>
         </div>
@@ -3052,7 +3050,9 @@ export default function EnhancedMobileDashboard() {
       {/* Floating AI CFO Button */}
       <div
         ref={buttonRef}
-        onClick={handleMicTap}
+        onPointerDown={startListening}
+        onPointerUp={stopListening}
+        onPointerLeave={stopListening}
         style={{
           position: 'fixed',
           bottom: '24px',
