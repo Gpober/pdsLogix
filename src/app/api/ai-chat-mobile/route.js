@@ -483,5 +483,175 @@ export const availableFunctions = {
         details: error.message 
       }
     }
+  },
+
+  // NEW: Year-over-Year Comparison Function
+  getYearOverYearComparison: async ({ userId, customerId = null, metric = 'all' }) => {
+    try {
+      const currentYear = new Date().getFullYear()
+      const lastYear = currentYear - 1
+      
+      // Get current year data (full year to date)
+      const currentYearStart = `${currentYear}-01-01`
+      const currentYearEnd = new Date().toISOString().split('T')[0] // Today
+      
+      // Get same period last year
+      const lastYearStart = `${lastYear}-01-01`
+      const lastYearEnd = `${lastYear}-${new Date().toISOString().split('T')[0].substring(5)}` // Same date last year
+      
+      // Query current year data
+      let currentQuery = supabase
+        .from('journal_entry_lines')
+        .select('*')
+        .eq('user_id', userId)
+        .gte('date', currentYearStart)
+        .lte('date', currentYearEnd)
+      
+      if (customerId) {
+        currentQuery = currentQuery.eq('customer', customerId)
+      }
+      
+      // Query last year data
+      let lastYearQuery = supabase
+        .from('journal_entry_lines')
+        .select('*')
+        .eq('user_id', userId)
+        .gte('date', lastYearStart)
+        .lte('date', lastYearEnd)
+      
+      if (customerId) {
+        lastYearQuery = lastYearQuery.eq('customer', customerId)
+      }
+      
+      const [currentData, lastYearData] = await Promise.all([
+        currentQuery,
+        lastYearQuery
+      ])
+      
+      if (currentData.error || lastYearData.error) {
+        throw new Error(currentData.error?.message || lastYearData.error?.message)
+      }
+      
+      // Process current year financials
+      const processFinancials = (data, year) => {
+        const summary = {
+          year: year,
+          revenue: 0,
+          expenses: 0,
+          net_income: 0,
+          transaction_count: data.length,
+          customers: new Set(),
+          properties: new Set(),
+          monthly_breakdown: {}
+        }
+        
+        data.forEach(entry => {
+          const month = entry.date.substring(0, 7) // YYYY-MM
+          
+          if (!summary.monthly_breakdown[month]) {
+            summary.monthly_breakdown[month] = { revenue: 0, expenses: 0, net_income: 0 }
+          }
+          
+          // Track unique customers and properties
+          if (entry.customer) summary.customers.add(entry.customer)
+          if (entry.property) summary.properties.add(entry.property)
+          
+          // Revenue calculation
+          if (entry.account?.includes('Income') || 
+              entry.account?.includes('Revenue') ||
+              entry.account?.includes('Sales') ||
+              entry.account_type?.includes('Income')) {
+            summary.revenue += entry.credit || 0
+            summary.monthly_breakdown[month].revenue += entry.credit || 0
+          }
+          
+          // Expense calculation
+          if (entry.account?.includes('Expense') || 
+              entry.account?.includes('Cost') ||
+              entry.account?.includes('COGS') ||
+              entry.account_type?.includes('Expense')) {
+            summary.expenses += entry.debit || 0
+            summary.monthly_breakdown[month].expenses += entry.debit || 0
+          }
+        })
+        
+        summary.net_income = summary.revenue - summary.expenses
+        summary.customer_count = summary.customers.size
+        summary.property_count = summary.properties.size
+        
+        // Calculate net income for each month
+        Object.keys(summary.monthly_breakdown).forEach(month => {
+          summary.monthly_breakdown[month].net_income = 
+            summary.monthly_breakdown[month].revenue - summary.monthly_breakdown[month].expenses
+        })
+        
+        return summary
+      }
+      
+      const currentYearSummary = processFinancials(currentData.data, currentYear)
+      const lastYearSummary = processFinancials(lastYearData.data, lastYear)
+      
+      // Calculate changes and percentages
+      const calculateChange = (current, previous) => {
+        const change = current - previous
+        const percentChange = previous !== 0 ? ((change / previous) * 100) : (current > 0 ? 100 : 0)
+        return {
+          current,
+          previous,
+          change,
+          percent_change: percentChange,
+          trend: change > 0 ? 'up' : change < 0 ? 'down' : 'flat'
+        }
+      }
+      
+      return {
+        success: true,
+        summary: `Year-over-year comparison: ${currentYear} vs ${lastYear}`,
+        comparison_period: {
+          current_year: currentYear,
+          last_year: lastYear,
+          current_period: `${currentYearStart} to ${currentYearEnd}`,
+          comparison_period: `${lastYearStart} to ${lastYearEnd}`
+        },
+        financial_comparison: {
+          revenue: calculateChange(currentYearSummary.revenue, lastYearSummary.revenue),
+          expenses: calculateChange(currentYearSummary.expenses, lastYearSummary.expenses),
+          net_income: calculateChange(currentYearSummary.net_income, lastYearSummary.net_income),
+          profit_margin: {
+            current: currentYearSummary.revenue > 0 ? (currentYearSummary.net_income / currentYearSummary.revenue * 100) : 0,
+            previous: lastYearSummary.revenue > 0 ? (lastYearSummary.net_income / lastYearSummary.revenue * 100) : 0
+          }
+        },
+        business_metrics: {
+          customers: calculateChange(currentYearSummary.customer_count, lastYearSummary.customer_count),
+          properties: calculateChange(currentYearSummary.property_count, lastYearSummary.property_count),
+          transactions: calculateChange(currentYearSummary.transaction_count, lastYearSummary.transaction_count),
+          avg_revenue_per_customer: {
+            current: currentYearSummary.customer_count > 0 ? (currentYearSummary.revenue / currentYearSummary.customer_count) : 0,
+            previous: lastYearSummary.customer_count > 0 ? (lastYearSummary.revenue / lastYearSummary.customer_count) : 0
+          }
+        },
+        insights: {
+          strongest_growth: currentYearSummary.revenue > lastYearSummary.revenue ? 'revenue' : 'cost_control',
+          biggest_concern: currentYearSummary.expenses > lastYearSummary.expenses * 1.1 ? 'expense_growth' : null,
+          overall_performance: currentYearSummary.net_income > lastYearSummary.net_income ? 'improved' : 'declined',
+          key_metrics: {
+            revenue_growth: ((currentYearSummary.revenue - lastYearSummary.revenue) / (lastYearSummary.revenue || 1) * 100).toFixed(1),
+            expense_growth: ((currentYearSummary.expenses - lastYearSummary.expenses) / (lastYearSummary.expenses || 1) * 100).toFixed(1),
+            profit_growth: ((currentYearSummary.net_income - lastYearSummary.net_income) / (Math.abs(lastYearSummary.net_income) || 1) * 100).toFixed(1)
+          }
+        },
+        monthly_trends: {
+          current_year: currentYearSummary.monthly_breakdown,
+          last_year: lastYearSummary.monthly_breakdown
+        }
+      }
+    } catch (error) {
+      return { 
+        success: false, 
+        error: "Failed to perform year-over-year comparison", 
+        details: error.message 
+      }
+    }
   }
 }
