@@ -1,11 +1,11 @@
-// src/server/functions.ts
+// src/server/functions.js
 import { supabase } from '../lib/supabaseClient'
 
 export const availableFunctions = {
   // =========================
   // A/R Aging Analysis
   // =========================
-  getARAgingAnalysis: async ({ customerId = null }: { customerId?: string | null }) => {
+  getARAgingAnalysis: async ({ customerId = null } = {}) => {
     try {
       let query = supabase.from('ar_aging_detail').select('*')
       if (customerId) query = query.eq('customer', customerId)
@@ -25,7 +25,7 @@ export const availableFunctions = {
       }
 
       const currentDate = new Date()
-      const agingAnalysis: Record<string, any> = arData.reduce((acc: any, record: any) => {
+      const agingAnalysis = arData.reduce((acc, record) => {
         const customer = record.customer || 'Unknown'
         const dueDate = new Date(record.due_date)
         const daysPastDue = Math.floor((+currentDate - +dueDate) / (1000 * 60 * 60 * 24))
@@ -57,8 +57,8 @@ export const availableFunctions = {
         return acc
       }, {})
 
-      const customers = Object.values(agingAnalysis) as any[]
-      const totalAR = customers.reduce((sum, c: any) => sum + c.total_outstanding, 0)
+      const customers = Object.values(agingAnalysis)
+      const totalAR = customers.reduce((sum, c) => sum + c.total_outstanding, 0)
 
       return {
         success: true,
@@ -68,33 +68,38 @@ export const availableFunctions = {
         total_invoices: arData.length,
         customers,
         aging_summary: {
-          current: customers.reduce((s, c: any) => s + c.current, 0),
-          days_1_30: customers.reduce((s, c: any) => s + c.days_1_30, 0),
-          days_31_60: customers.reduce((s, c: any) => s + c.days_31_60, 0),
-          days_61_90: customers.reduce((s, c: any) => s + c.days_61_90, 0),
-          days_over_90: customers.reduce((s, c: any) => s + c.days_over_90, 0),
+          current: customers.reduce((s, c) => s + c.current, 0),
+          days_1_30: customers.reduce((s, c) => s + c.days_1_30, 0),
+          days_31_60: customers.reduce((s, c) => s + c.days_31_60, 0),
+          days_61_90: customers.reduce((s, c) => s + c.days_61_90, 0),
+          days_over_90: customers.reduce((s, c) => s + c.days_over_90, 0),
         },
         risk_analysis: {
-          high_risk: customers.filter((c: any) => c.days_over_90 > 1000),
-          medium_risk: customers.filter((c: any) => c.days_61_90 > 500),
-          current_good: customers.filter((c: any) => c.current > c.days_1_30),
-          worst_aging: [...customers].sort((a: any, b: any) => b.oldest_invoice_days - a.oldest_invoice_days).slice(0, 5),
+          high_risk: customers.filter(c => c.days_over_90 > 1000),
+          medium_risk: customers.filter(c => c.days_61_90 > 500),
+          current_good: customers.filter(c => c.current > c.days_1_30),
+          worst_aging: [...customers].sort((a, b) => b.oldest_invoice_days - a.oldest_invoice_days).slice(0, 5),
         },
         insights: {
           largest_outstanding: customers.reduce(
-            (max: any, c: any) => (c.total_outstanding > (max.total_outstanding || 0) ? c : max),
+            (max, c) => (c.total_outstanding > (max.total_outstanding || 0) ? c : max),
             {}
           ),
-          collection_priority: customers.filter((c: any) => c.days_over_90 > 0)
-            .sort((a: any, b: any) => b.days_over_90 - a.days_over_90)
+          collection_priority: customers
+            .filter(c => c.days_over_90 > 0)
+            .sort((a, b) => b.days_over_90 - a.days_over_90)
             .slice(0, 5),
           aging_percentage: {
-            current_pct: totalAR > 0 ? (customers.reduce((s, c: any) => s + c.current, 0) / totalAR) * 100 : 0,
-            past_due_pct: totalAR > 0 ? ((totalAR - customers.reduce((s, c: any) => s + c.current, 0)) / totalAR) * 100 : 0,
+            current_pct:
+              totalAR > 0 ? (customers.reduce((s, c) => s + c.current, 0) / totalAR) * 100 : 0,
+            past_due_pct:
+              totalAR > 0
+                ? ((totalAR - customers.reduce((s, c) => s + c.current, 0)) / totalAR) * 100
+                : 0,
           },
         },
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('❌ getARAgingAnalysis error:', error)
       return { success: false, error: 'Failed to analyze A/R aging', details: error.message }
     }
@@ -103,7 +108,7 @@ export const availableFunctions = {
   // =========================
   // A/R Payment History
   // =========================
-  getARPaymentHistory: async ({ customerId = null, timeframe = '6_months' }: { customerId?: string | null, timeframe?: '3_months'|'6_months'|'12_months' }) => {
+  getARPaymentHistory: async ({ customerId = null, timeframe = '6_months' } = {}) => {
     try {
       let query = supabase
         .from('journal_entry_lines')
@@ -131,32 +136,36 @@ export const availableFunctions = {
         }
       }
 
-      const paymentAnalysis: Record<string, any> = journalData.reduce((acc: any, entry: any) => {
+      const paymentAnalysis = journalData.reduce((acc, entry) => {
         const customer = entry.customer || entry.name || 'Unknown'
         const month = String(entry.date).substring(0, 7)
+
         if (!acc[customer]) {
           acc[customer] = {
             customer_name: customer,
             customer_id: entry.customer,
             total_invoiced: 0,
             total_paid: 0,
-            payment_months: {} as Record<string, number>,
+            payment_months: {},
             transaction_count: 0,
           }
         }
+
         if (entry.credit > 0) {
           acc[customer].total_paid += entry.credit
-          acc[customer].payment_months[month] = (acc[customer].payment_months[month] || 0) + entry.credit
+          acc[customer].payment_months[month] =
+            (acc[customer].payment_months[month] || 0) + entry.credit
         } else if (entry.debit > 0) {
           acc[customer].total_invoiced += entry.debit
         }
+
         acc[customer].transaction_count += 1
         return acc
       }, {})
 
-      const customers = Object.values(paymentAnalysis) as any[]
-      const overallInvoiced = customers.reduce((sum, c: any) => sum + c.total_invoiced, 0)
-      const overallPaid = customers.reduce((sum, c: any) => sum + c.total_paid, 0)
+      const customers = Object.values(paymentAnalysis)
+      const overallInvoiced = customers.reduce((sum, c) => sum + c.total_invoiced, 0)
+      const overallPaid = customers.reduce((sum, c) => sum + c.total_paid, 0)
 
       return {
         success: true,
@@ -169,19 +178,19 @@ export const availableFunctions = {
           collection_rate: overallInvoiced > 0 ? overallPaid / overallInvoiced : 0,
         },
         best_payers: customers
-          .filter((c: any) => c.total_invoiced > 0)
-          .map((c: any) => ({ ...c, payment_rate: c.total_paid / c.total_invoiced }))
-          .filter((c: any) => c.payment_rate > 0.95)
-          .sort((a: any, b: any) => b.total_paid - a.total_paid)
+          .filter(c => c.total_invoiced > 0)
+          .map(c => ({ ...c, payment_rate: c.total_paid / c.total_invoiced }))
+          .filter(c => c.payment_rate > 0.95)
+          .sort((a, b) => b.total_paid - a.total_paid)
           .slice(0, 5),
         slow_payers: customers
-          .filter((c: any) => c.total_invoiced > 0)
-          .map((c: any) => ({ ...c, payment_rate: c.total_paid / c.total_invoiced }))
-          .filter((c: any) => c.payment_rate < 0.8)
-          .sort((a: any, b: any) => a.payment_rate - b.payment_rate)
+          .filter(c => c.total_invoiced > 0)
+          .map(c => ({ ...c, payment_rate: c.total_paid / c.total_invoiced }))
+          .filter(c => c.payment_rate < 0.8)
+          .sort((a, b) => a.payment_rate - b.payment_rate)
           .slice(0, 5),
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('❌ getARPaymentHistory error:', error)
       return { success: false, error: 'Failed to analyze payment history', details: error.message }
     }
@@ -190,11 +199,11 @@ export const availableFunctions = {
   // =========================
   // Customer Net Income
   // =========================
-  getCustomerNetIncome: async ({ customerId = null, timeframe = 'current_month' }: { customerId?: string | null, timeframe?: 'current_month'|'last_month' }) => {
+  getCustomerNetIncome: async ({ customerId = null, timeframe = 'current_month' } = {}) => {
     try {
       const now = new Date()
-      let gte: string | undefined
-      let lte: string | undefined
+      let gte
+      let lte
 
       if (timeframe === 'current_month') {
         const start = new Date(now.getFullYear(), now.getMonth(), 1)
@@ -223,7 +232,7 @@ export const availableFunctions = {
         }
       }
 
-      const grouped: Record<string, any> = data.reduce((acc: any, entry: any) => {
+      const grouped = data.reduce((acc, entry) => {
         const key = entry.customer || entry.name || 'Unallocated'
         if (!acc[key]) {
           acc[key] = {
@@ -238,18 +247,14 @@ export const availableFunctions = {
         }
 
         if (
-          entry.account?.includes('Income') ||
-          entry.account?.includes('Revenue') ||
-          entry.account?.includes('Sales') ||
-          entry.account_type?.includes('Income')
+          (entry.account && (entry.account.includes('Income') || entry.account.includes('Revenue') || entry.account.includes('Sales'))) ||
+          (entry.account_type && entry.account_type.includes('Income'))
         ) {
           acc[key].revenue += entry.credit || 0
         }
         if (
-          entry.account?.includes('Expense') ||
-          entry.account?.includes('Cost') ||
-          entry.account?.includes('COGS') ||
-          entry.account_type?.includes('Expense')
+          (entry.account && (entry.account.includes('Expense') || entry.account.includes('Cost') || entry.account.includes('COGS'))) ||
+          (entry.account_type && entry.account_type.includes('Expense'))
         ) {
           acc[key].expenses += entry.debit || 0
         }
@@ -257,24 +262,24 @@ export const availableFunctions = {
         return acc
       }, {})
 
-      Object.values(grouped).forEach((c: any) => (c.net_income = c.revenue - c.expenses))
-      const customers = Object.values(grouped) as any[]
+      Object.values(grouped).forEach(c => { c.net_income = c.revenue - c.expenses })
+      const customers = Object.values(grouped)
 
       return {
         success: true,
         summary: `Customer net income analysis for ${timeframe}`,
         timeframe,
         total_customers: customers.length,
-        customers: customers.sort((a: any, b: any) => b.net_income - a.net_income),
+        customers: customers.sort((a, b) => b.net_income - a.net_income),
         company_totals: {
-          total_revenue: customers.reduce((s: number, c: any) => s + c.revenue, 0),
-          total_expenses: customers.reduce((s: number, c: any) => s + c.expenses, 0),
-          total_net_income: customers.reduce((s: number, c: any) => s + c.net_income, 0),
+          total_revenue: customers.reduce((s, c) => s + c.revenue, 0),
+          total_expenses: customers.reduce((s, c) => s + c.expenses, 0),
+          total_net_income: customers.reduce((s, c) => s + c.net_income, 0),
         },
-        top_performers: customers.filter((c: any) => c.net_income > 0).slice(0, 5),
-        underperformers: customers.filter((c: any) => c.net_income < 0).slice(0, 5),
+        top_performers: customers.filter(c => c.net_income > 0).slice(0, 5),
+        underperformers: customers.filter(c => c.net_income < 0).slice(0, 5),
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('❌ getCustomerNetIncome error:', error)
       return { success: false, error: 'Failed to analyze customer net income', details: error.message }
     }
@@ -283,7 +288,7 @@ export const availableFunctions = {
   // =========================
   // Year-over-Year Comparison
   // =========================
-  getYearOverYearComparison: async ({ customerId = null, metric = 'all' }: { customerId?: string | null, metric?: 'all'|'revenue'|'expenses'|'customers'|'profit' }) => {
+  getYearOverYearComparison: async ({ customerId = null, metric = 'all' } = {}) => {
     try {
       const currentYear = new Date().getFullYear()
       const lastYear = currentYear - 1
@@ -298,7 +303,6 @@ export const availableFunctions = {
         .select('*')
         .gte('date', currentYearStart)
         .lte('date', currentYearEnd)
-
       if (customerId) currentQuery = currentQuery.eq('customer', customerId)
 
       let lastYearQuery = supabase
@@ -306,7 +310,6 @@ export const availableFunctions = {
         .select('*')
         .gte('date', lastYearStart)
         .lte('date', lastYearEnd)
-
       if (customerId) lastYearQuery = lastYearQuery.eq('customer', customerId)
 
       const [currentData, lastYearData] = await Promise.all([currentQuery, lastYearQuery])
@@ -314,19 +317,19 @@ export const availableFunctions = {
         throw new Error(currentData.error?.message || lastYearData.error?.message)
       }
 
-      const processFinancials = (rows: any[], year: number) => {
-        const summary: any = {
+      const processFinancials = (rows, year) => {
+        const summary = {
           year,
           revenue: 0,
           expenses: 0,
           net_income: 0,
           transaction_count: rows.length,
-          customers: new Set<string>(),
-          properties: new Set<string>(),
-          monthly_breakdown: {} as Record<string, { revenue: number; expenses: number; net_income: number }>,
+          customers: new Set(),
+          properties: new Set(),
+          monthly_breakdown: {},
         }
 
-        rows.forEach((entry: any) => {
+        rows.forEach(entry => {
           const month = String(entry.date).substring(0, 7)
           if (!summary.monthly_breakdown[month]) {
             summary.monthly_breakdown[month] = { revenue: 0, expenses: 0, net_income: 0 }
@@ -335,19 +338,15 @@ export const availableFunctions = {
           if (entry.property) summary.properties.add(entry.property)
 
           if (
-            entry.account?.includes('Income') ||
-            entry.account?.includes('Revenue') ||
-            entry.account?.includes('Sales') ||
-            entry.account_type?.includes('Income')
+            (entry.account && (entry.account.includes('Income') || entry.account.includes('Revenue') || entry.account.includes('Sales'))) ||
+            (entry.account_type && entry.account_type.includes('Income'))
           ) {
             summary.revenue += entry.credit || 0
             summary.monthly_breakdown[month].revenue += entry.credit || 0
           }
           if (
-            entry.account?.includes('Expense') ||
-            entry.account?.includes('Cost') ||
-            entry.account?.includes('COGS') ||
-            entry.account_type?.includes('Expense')
+            (entry.account && (entry.account.includes('Expense') || entry.account.includes('Cost') || entry.account.includes('COGS'))) ||
+            (entry.account_type && entry.account_type.includes('Expense'))
           ) {
             summary.expenses += entry.debit || 0
             summary.monthly_breakdown[month].expenses += entry.debit || 0
@@ -358,7 +357,7 @@ export const availableFunctions = {
         summary.customer_count = summary.customers.size
         summary.property_count = summary.properties.size
 
-        Object.keys(summary.monthly_breakdown).forEach((m) => {
+        Object.keys(summary.monthly_breakdown).forEach(m => {
           summary.monthly_breakdown[m].net_income =
             summary.monthly_breakdown[m].revenue - summary.monthly_breakdown[m].expenses
         })
@@ -368,7 +367,7 @@ export const availableFunctions = {
       const cur = processFinancials(currentData.data || [], currentYear)
       const prev = processFinancials(lastYearData.data || [], lastYear)
 
-      const calc = (a: number, b: number) => {
+      const calc = (a, b) => {
         const change = a - b
         const pct = b !== 0 ? (change / b) * 100 : a > 0 ? 100 : 0
         return { current: a, previous: b, change, percent_change: pct, trend: change > 0 ? 'up' : change < 0 ? 'down' : 'flat' }
@@ -416,7 +415,7 @@ export const availableFunctions = {
           last_year: prev.monthly_breakdown,
         },
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('❌ getYearOverYearComparison error:', error)
       return { success: false, error: 'Failed to perform year-over-year comparison', details: error.message }
     }
