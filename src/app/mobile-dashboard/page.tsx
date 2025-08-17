@@ -273,7 +273,7 @@ export default function EnhancedMobileDashboard() {
     setIsProcessing(true);
     
     try {
-      const response = await fetch('/api/ai-chat', {
+      const response = await fetch('/api/ai-chat-mobile', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
