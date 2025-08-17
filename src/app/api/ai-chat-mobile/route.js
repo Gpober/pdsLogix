@@ -179,19 +179,19 @@ function detectQueryType(message) {
 }
 
 // =============================================================================
-// SUPABASE FUNCTION CALLING FUNCTIONS (NEW)
+// SUPABASE FUNCTION CALLING FUNCTIONS - CORRECTED FOR SINGLE USER PER DATABASE
 // These functions will be called by OpenAI to get real data from your tables
 // =============================================================================
 
 export const availableFunctions = {
   
-  // A/R Aging Analysis Function
-  getARAgingAnalysis: async ({ userId, customerId = null }) => {
+  // A/R Aging Analysis Function - CORRECTED
+  getARAgingAnalysis: async ({ customerId = null }) => {  // ← REMOVED userId parameter
     try {
       let query = supabase
         .from('ar_aging_detail')
         .select('*')
-        .eq('user_id', userId)
+        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
       
       if (customerId) {
         query = query.eq('customer', customerId)
@@ -199,6 +199,18 @@ export const availableFunctions = {
       
       const { data: arData, error } = await query
       if (error) throw error
+      
+      // Handle empty data case
+      if (!arData || arData.length === 0) {
+        return {
+          success: true,
+          summary: "No A/R data found",
+          total_ar: 0,
+          customer_count: 0,
+          total_invoices: 0,
+          message: "No open invoices or aging data available"
+        }
+      }
       
       // Calculate aging buckets based on due_date vs current date
       const currentDate = new Date()
@@ -289,14 +301,14 @@ export const availableFunctions = {
     }
   },
 
-  // A/R Payment History Analysis Function
-  getARPaymentHistory: async ({ userId, customerId = null, timeframe = '6_months' }) => {
+  // A/R Payment History Analysis Function - CORRECTED
+  getARPaymentHistory: async ({ customerId = null, timeframe = '6_months' }) => {  // ← REMOVED userId parameter
     try {
-      // Query journal entries for A/R related transactions using correct field names
+      // Query journal entries for A/R related transactions
       let query = supabase
         .from('journal_entry_lines')
         .select('*')
-        .eq('user_id', userId)
+        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
         .or('account.ilike.%Accounts Receivable%,account.ilike.%A/R%,account.ilike.%AR%')
       
       if (customerId) {
@@ -316,6 +328,16 @@ export const availableFunctions = {
       
       const { data: journalData, error } = await query
       if (error) throw error
+      
+      // Handle empty data case
+      if (!journalData || journalData.length === 0) {
+        return {
+          success: true,
+          summary: `No A/R payment data found for ${timeframe}`,
+          timeframe: timeframe,
+          message: "No A/R transactions found in the specified period"
+        }
+      }
       
       // Process payment patterns using correct field names
       const paymentAnalysis = journalData.reduce((acc, entry) => {
@@ -387,8 +409,8 @@ export const availableFunctions = {
     }
   },
 
-  // Customer Net Income Function (Enhanced for A/R context)
-  getCustomerNetIncome: async ({ userId, customerId = null, timeframe = 'current_month' }) => {
+  // Customer Net Income Function - CORRECTED
+  getCustomerNetIncome: async ({ customerId = null, timeframe = 'current_month' }) => {  // ← REMOVED userId parameter
     try {
       // Date filtering logic
       let dateFilter = {}
@@ -409,7 +431,7 @@ export const availableFunctions = {
       let query = supabase
         .from('journal_entry_lines')
         .select('*')
-        .eq('user_id', userId)
+        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
       
       if (customerId) {
         query = query.eq('customer', customerId)
@@ -425,8 +447,18 @@ export const availableFunctions = {
       const { data, error } = await query
       if (error) throw error
 
+      // Handle empty data case
+      if (!data || data.length === 0) {
+        return {
+          success: true,
+          summary: `No financial data found for ${timeframe}`,
+          timeframe: timeframe,
+          message: "No transactions found in the specified period"
+        }
+      }
+
       // Group by customer and calculate net income using correct field names
-      const customerFinancials = data?.reduce((acc, entry) => {
+      const customerFinancials = data.reduce((acc, entry) => {
         const customerKey = entry.customer || entry.name || 'Unallocated'
         
         if (!acc[customerKey]) {
@@ -459,7 +491,7 @@ export const availableFunctions = {
 
         acc[customerKey].transaction_count += 1
         return acc
-      }, {}) || {}
+      }, {})
 
       // Calculate net income for each customer
       Object.values(customerFinancials).forEach(customer => {
@@ -497,8 +529,8 @@ export const availableFunctions = {
     }
   },
 
-  // NEW: Year-over-Year Comparison Function
-  getYearOverYearComparison: async ({ userId, customerId = null, metric = 'all' }) => {
+  // Year-over-Year Comparison Function - CORRECTED
+  getYearOverYearComparison: async ({ customerId = null, metric = 'all' }) => {  // ← REMOVED userId parameter
     try {
       const currentYear = new Date().getFullYear()
       const lastYear = currentYear - 1
@@ -515,7 +547,7 @@ export const availableFunctions = {
       let currentQuery = supabase
         .from('journal_entry_lines')
         .select('*')
-        .eq('user_id', userId)
+        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
         .gte('date', currentYearStart)
         .lte('date', currentYearEnd)
       
@@ -527,7 +559,7 @@ export const availableFunctions = {
       let lastYearQuery = supabase
         .from('journal_entry_lines')
         .select('*')
-        .eq('user_id', userId)
+        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
         .gte('date', lastYearStart)
         .lte('date', lastYearEnd)
       
@@ -544,6 +576,16 @@ export const availableFunctions = {
         throw new Error(currentData.error?.message || lastYearData.error?.message)
       }
       
+      // Handle empty data case
+      if ((!currentData.data || currentData.data.length === 0) && 
+          (!lastYearData.data || lastYearData.data.length === 0)) {
+        return {
+          success: true,
+          summary: `No financial data found for year-over-year comparison`,
+          message: "No transactions found for either year"
+        }
+      }
+
       // Process current year financials
       const processFinancials = (data, year) => {
         const summary = {
@@ -600,8 +642,8 @@ export const availableFunctions = {
         return summary
       }
       
-      const currentYearSummary = processFinancials(currentData.data, currentYear)
-      const lastYearSummary = processFinancials(lastYearData.data, lastYear)
+      const currentYearSummary = processFinancials(currentData.data || [], currentYear)
+      const lastYearSummary = processFinancials(lastYearData.data || [], lastYear)
       
       // Calculate changes and percentages
       const calculateChange = (current, previous) => {
