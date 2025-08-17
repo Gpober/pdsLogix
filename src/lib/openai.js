@@ -74,7 +74,7 @@ export const createCFOCompletion = async (message, context) => {
     ]
 
     let completionOptions = {
-      model: "gpt-4",
+      model: 'gpt-4o',
       messages: messages,
       temperature: 0.3,
       max_tokens: 500
@@ -228,7 +228,7 @@ export const createCFOCompletion = async (message, context) => {
       
       // Second API call with function results
       const finalCompletion = await createChatCompletion({
-        model: "gpt-4",
+        model: 'gpt-4o',
         messages: messages,
         temperature: 0.3,
         max_tokens: 800
