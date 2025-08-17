@@ -155,11 +155,23 @@ function detectQueryType(message) {
     return 'expense_analysis'
   }
   
-  // Trend/Forecast queries
+  // Trend/Forecast queries (ENHANCED for year-over-year)
   if (messageLower.includes('trend') || 
       messageLower.includes('forecast') || 
       messageLower.includes('future') || 
-      messageLower.includes('predict')) {
+      messageLower.includes('predict') ||
+      messageLower.includes('compared to last year') ||
+      messageLower.includes('vs last year') ||
+      messageLower.includes('year over year') ||
+      messageLower.includes('year-over-year') ||
+      messageLower.includes('this year vs') ||
+      messageLower.includes('compared to') ||
+      messageLower.includes('previous year') ||
+      messageLower.includes('how am i doing') ||
+      messageLower.includes('growth') ||
+      messageLower.includes('improvement') ||
+      messageLower.includes('better than') ||
+      messageLower.includes('worse than')) {
     return 'trend_analysis'
   }
   
