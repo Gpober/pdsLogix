@@ -1,6 +1,14 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  type MouseEvent,
+  type TouchEvent,
+} from "react";
 import {
   Menu,
   X,
@@ -315,7 +323,11 @@ export default function EnhancedMobileDashboard() {
     }
   };
 
-  const handleHoldStart = () => {
+  const handleHoldStart = (
+    e: TouchEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
     setIsHolding(true);
     holdStartTime.current = Date.now();
 
@@ -341,7 +353,11 @@ export default function EnhancedMobileDashboard() {
     setHoldTimer(timer);
   };
 
-  const handleHoldEnd = () => {
+  const handleHoldEnd = (
+    e: TouchEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
     setIsHolding(false);
     
     if (holdTimer) {
@@ -2896,7 +2912,7 @@ export default function EnhancedMobileDashboard() {
                 </div>
                 <div>
                   <h3 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: BRAND_COLORS.accent }}>
-                    I AM CFO AI
+                    AI CFO
                   </h3>
                   <p style={{ fontSize: '12px', margin: 0, color: '#64748b' }}>
                     Your Financial Assistant
@@ -3023,7 +3039,7 @@ export default function EnhancedMobileDashboard() {
                 textAlign: 'left'
               }}>
                 <p style={{ fontSize: '12px', color: BRAND_COLORS.primary, margin: '0 0 8px', fontWeight: '600' }}>
-                  I AM CFO AI:
+                  AI CFO:
                 </p>
                 <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, lineHeight: '1.5' }}>
                   {response}
