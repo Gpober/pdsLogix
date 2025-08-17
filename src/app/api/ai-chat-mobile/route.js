@@ -4,9 +4,14 @@ import { supabase } from '../../../lib/supabaseClient'
 
 export async function POST(request) {
   try {
-    const { message, userId, context: frontendContext } = await request.json()
+    const body = await request.json()
+    console.log('📥 Received request body:', body)
+    
+    const { message, userId, context: frontendContext } = body
+    console.log('🔍 Parsed values:', { message, userId, frontendContext })
     
     if (!message?.trim()) {
+      console.log('❌ Missing message')
       return NextResponse.json(
         { error: 'Message is required' },
         { status: 400 }
@@ -14,6 +19,7 @@ export async function POST(request) {
     }
 
     if (!userId) {
+      console.log('❌ Missing userId')
       return NextResponse.json(
         { error: 'User ID is required' },
         { status: 400 }
@@ -32,9 +38,12 @@ export async function POST(request) {
     }
 
     console.log('🎤 AI Chat Request:', { message, context: enhancedContext })
+    console.log('🎤 About to call createCFOCompletion')
 
     // Generate AI response with enhanced context and function calling
     const response = await createCFOCompletion(message, enhancedContext)
+    
+    console.log('✅ createCFOCompletion returned:', response?.substring(0, 100))
     
     return NextResponse.json({ 
       response,
@@ -45,7 +54,11 @@ export async function POST(request) {
     })
 
   } catch (error) {
-    console.error('❌ AI Chat Error:', error)
+    console.error('❌ AI Chat Error Details:', {
+      message: error.message,
+      stack: error.stack,
+      where: 'API Route'
+    })
     return NextResponse.json(
       { error: error.message || 'Failed to process AI request' },
       { status: 500 }
@@ -186,12 +199,13 @@ function detectQueryType(message) {
 export const availableFunctions = {
   
   // A/R Aging Analysis Function - CORRECTED
-  getARAgingAnalysis: async ({ customerId = null }) => {  // ← REMOVED userId parameter
+  getARAgingAnalysis: async ({ customerId = null }) => {
     try {
+      console.log('📊 Executing getARAgingAnalysis with customerId:', customerId)
+      
       let query = supabase
         .from('ar_aging_detail')
         .select('*')
-        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
       
       if (customerId) {
         query = query.eq('customer', customerId)
@@ -199,6 +213,8 @@ export const availableFunctions = {
       
       const { data: arData, error } = await query
       if (error) throw error
+      
+      console.log('📈 AR data retrieved:', arData?.length, 'records')
       
       // Handle empty data case
       if (!arData || arData.length === 0) {
@@ -224,11 +240,11 @@ export const availableFunctions = {
         if (!acc[customer]) {
           acc[customer] = {
             customer_name: customer,
-            current: 0,           // Not yet due
-            days_1_30: 0,        // 1-30 days past due
-            days_31_60: 0,       // 31-60 days past due
-            days_61_90: 0,       // 61-90 days past due
-            days_over_90: 0,     // Over 90 days past due
+            current: 0,
+            days_1_30: 0,
+            days_31_60: 0,
+            days_61_90: 0,
+            days_over_90: 0,
             total_outstanding: 0,
             invoice_count: 0,
             oldest_invoice_days: 0
@@ -257,6 +273,8 @@ export const availableFunctions = {
       
       const customers = Object.values(agingAnalysis)
       const totalAR = customers.reduce((sum, customer) => sum + customer.total_outstanding, 0)
+      
+      console.log('📋 AR analysis completed - Total AR:', totalAR, 'Customers:', customers.length)
       
       // Return summary for OpenAI
       return {
@@ -293,6 +311,7 @@ export const availableFunctions = {
         }
       }
     } catch (error) {
+      console.error('❌ getARAgingAnalysis error:', error)
       return { 
         success: false, 
         error: "Failed to analyze A/R aging", 
@@ -302,13 +321,13 @@ export const availableFunctions = {
   },
 
   // A/R Payment History Analysis Function - CORRECTED
-  getARPaymentHistory: async ({ customerId = null, timeframe = '6_months' }) => {  // ← REMOVED userId parameter
+  getARPaymentHistory: async ({ customerId = null, timeframe = '6_months' }) => {
     try {
-      // Query journal entries for A/R related transactions
+      console.log('📊 Executing getARPaymentHistory with:', { customerId, timeframe })
+      
       let query = supabase
         .from('journal_entry_lines')
         .select('*')
-        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
         .or('account.ilike.%Accounts Receivable%,account.ilike.%A/R%,account.ilike.%AR%')
       
       if (customerId) {
@@ -329,6 +348,8 @@ export const availableFunctions = {
       const { data: journalData, error } = await query
       if (error) throw error
       
+      console.log('📈 Journal data retrieved:', journalData?.length, 'records')
+      
       // Handle empty data case
       if (!journalData || journalData.length === 0) {
         return {
@@ -339,10 +360,10 @@ export const availableFunctions = {
         }
       }
       
-      // Process payment patterns using correct field names
+      // Process payment patterns
       const paymentAnalysis = journalData.reduce((acc, entry) => {
         const customer = entry.customer || entry.name || 'Unknown'
-        const month = entry.date.substring(0, 7) // YYYY-MM
+        const month = entry.date.substring(0, 7)
         
         if (!acc[customer]) {
           acc[customer] = {
@@ -370,6 +391,8 @@ export const availableFunctions = {
       const customers = Object.values(paymentAnalysis)
       const overallInvoiced = customers.reduce((sum, c) => sum + c.total_invoiced, 0)
       const overallPaid = customers.reduce((sum, c) => sum + c.total_paid, 0)
+      
+      console.log('📋 Payment analysis completed - Total invoiced:', overallInvoiced, 'Total paid:', overallPaid)
       
       return {
         success: true,
@@ -401,6 +424,7 @@ export const availableFunctions = {
           .slice(0, 5)
       }
     } catch (error) {
+      console.error('❌ getARPaymentHistory error:', error)
       return { 
         success: false, 
         error: "Failed to analyze payment history", 
@@ -410,8 +434,10 @@ export const availableFunctions = {
   },
 
   // Customer Net Income Function - CORRECTED
-  getCustomerNetIncome: async ({ customerId = null, timeframe = 'current_month' }) => {  // ← REMOVED userId parameter
+  getCustomerNetIncome: async ({ customerId = null, timeframe = 'current_month' }) => {
     try {
+      console.log('📊 Executing getCustomerNetIncome with:', { customerId, timeframe })
+      
       // Date filtering logic
       let dateFilter = {}
       const now = new Date()
@@ -431,7 +457,6 @@ export const availableFunctions = {
       let query = supabase
         .from('journal_entry_lines')
         .select('*')
-        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
       
       if (customerId) {
         query = query.eq('customer', customerId)
@@ -447,6 +472,8 @@ export const availableFunctions = {
       const { data, error } = await query
       if (error) throw error
 
+      console.log('📈 Financial data retrieved:', data?.length, 'records')
+
       // Handle empty data case
       if (!data || data.length === 0) {
         return {
@@ -457,7 +484,7 @@ export const availableFunctions = {
         }
       }
 
-      // Group by customer and calculate net income using correct field names
+      // Group by customer and calculate net income
       const customerFinancials = data.reduce((acc, entry) => {
         const customerKey = entry.customer || entry.name || 'Unallocated'
         
@@ -473,7 +500,7 @@ export const availableFunctions = {
           }
         }
 
-        // Revenue accounts (credit increases revenue) - using correct field name
+        // Revenue accounts
         if (entry.account?.includes('Income') || 
             entry.account?.includes('Revenue') ||
             entry.account?.includes('Sales') ||
@@ -481,7 +508,7 @@ export const availableFunctions = {
           acc[customerKey].revenue += entry.credit || 0
         }
 
-        // Expense accounts (debit increases expenses) - using correct field name
+        // Expense accounts
         if (entry.account?.includes('Expense') || 
             entry.account?.includes('Cost') ||
             entry.account?.includes('COGS') ||
@@ -499,6 +526,8 @@ export const availableFunctions = {
       })
 
       const customers = Object.values(customerFinancials)
+      
+      console.log('📋 Customer analysis completed - Total customers:', customers.length)
       
       return {
         success: true,
@@ -521,6 +550,7 @@ export const availableFunctions = {
           .slice(0, 5)
       }
     } catch (error) {
+      console.error('❌ getCustomerNetIncome error:', error)
       return { 
         success: false, 
         error: "Failed to analyze customer net income", 
@@ -530,24 +560,22 @@ export const availableFunctions = {
   },
 
   // Year-over-Year Comparison Function - CORRECTED
-  getYearOverYearComparison: async ({ customerId = null, metric = 'all' }) => {  // ← REMOVED userId parameter
+  getYearOverYearComparison: async ({ customerId = null, metric = 'all' }) => {
     try {
+      console.log('📊 Executing getYearOverYearComparison with:', { customerId, metric })
+      
       const currentYear = new Date().getFullYear()
       const lastYear = currentYear - 1
       
-      // Get current year data (full year to date)
       const currentYearStart = `${currentYear}-01-01`
-      const currentYearEnd = new Date().toISOString().split('T')[0] // Today
-      
-      // Get same period last year
+      const currentYearEnd = new Date().toISOString().split('T')[0]
       const lastYearStart = `${lastYear}-01-01`
-      const lastYearEnd = `${lastYear}-${new Date().toISOString().split('T')[0].substring(5)}` // Same date last year
+      const lastYearEnd = `${lastYear}-${new Date().toISOString().split('T')[0].substring(5)}`
       
       // Query current year data
       let currentQuery = supabase
         .from('journal_entry_lines')
         .select('*')
-        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
         .gte('date', currentYearStart)
         .lte('date', currentYearEnd)
       
@@ -559,7 +587,6 @@ export const availableFunctions = {
       let lastYearQuery = supabase
         .from('journal_entry_lines')
         .select('*')
-        // ← REMOVED .eq('user_id', userId) line - not needed for single user per DB
         .gte('date', lastYearStart)
         .lte('date', lastYearEnd)
       
@@ -576,6 +603,8 @@ export const availableFunctions = {
         throw new Error(currentData.error?.message || lastYearData.error?.message)
       }
       
+      console.log('📈 Year-over-year data retrieved - Current:', currentData.data?.length, 'Last year:', lastYearData.data?.length)
+      
       // Handle empty data case
       if ((!currentData.data || currentData.data.length === 0) && 
           (!lastYearData.data || lastYearData.data.length === 0)) {
@@ -586,7 +615,7 @@ export const availableFunctions = {
         }
       }
 
-      // Process current year financials
+      // Process financials function
       const processFinancials = (data, year) => {
         const summary = {
           year: year,
@@ -600,13 +629,12 @@ export const availableFunctions = {
         }
         
         data.forEach(entry => {
-          const month = entry.date.substring(0, 7) // YYYY-MM
+          const month = entry.date.substring(0, 7)
           
           if (!summary.monthly_breakdown[month]) {
             summary.monthly_breakdown[month] = { revenue: 0, expenses: 0, net_income: 0 }
           }
           
-          // Track unique customers and properties
           if (entry.customer) summary.customers.add(entry.customer)
           if (entry.property) summary.properties.add(entry.property)
           
@@ -633,7 +661,6 @@ export const availableFunctions = {
         summary.customer_count = summary.customers.size
         summary.property_count = summary.properties.size
         
-        // Calculate net income for each month
         Object.keys(summary.monthly_breakdown).forEach(month => {
           summary.monthly_breakdown[month].net_income = 
             summary.monthly_breakdown[month].revenue - summary.monthly_breakdown[month].expenses
@@ -657,6 +684,8 @@ export const availableFunctions = {
           trend: change > 0 ? 'up' : change < 0 ? 'down' : 'flat'
         }
       }
+      
+      console.log('📋 Year-over-year analysis completed')
       
       return {
         success: true,
@@ -701,6 +730,7 @@ export const availableFunctions = {
         }
       }
     } catch (error) {
+      console.error('❌ getYearOverYearComparison error:', error)
       return { 
         success: false, 
         error: "Failed to perform year-over-year comparison", 
