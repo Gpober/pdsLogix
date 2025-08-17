@@ -16,9 +16,7 @@ import {
   AlertTriangle,
   CheckCircle,
   Target,
-  Mic,
   Bot,
-  MessageCircle,
   type LucideIcon,
 } from "lucide-react";
 
@@ -212,156 +210,17 @@ export default function EnhancedMobileDashboard() {
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
 
-  // AI CFO States
-  const [isListening, setIsListening] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [transcript, setTranscript] = useState('');
-  const [response, setResponse] = useState('');
+  // AI CFO State
   const [showModal, setShowModal] = useState(false);
-  const [recognition, setRecognition] = useState<any>(null);
 
   const buttonRef = useRef<HTMLDivElement>(null);
 
-  // Initialize speech recognition
-  useEffect(() => {
-    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const recognitionInstance = new SpeechRecognition();
-      
-      recognitionInstance.continuous = true;
-      recognitionInstance.interimResults = true;
-      recognitionInstance.lang = 'en-US';
-      
-      recognitionInstance.onresult = (event: any) => {
-        let finalTranscript = '';
-        let interimTranscript = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript;
-          } else {
-            interimTranscript += transcript;
-          }
-        }
-        
-        setTranscript(finalTranscript + interimTranscript);
-        
-        if (finalTranscript) {
-          processAIQuery(finalTranscript);
-          recognitionInstance.stop();
-        }
-      };
-      
-      recognitionInstance.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-        setIsProcessing(false);
-      };
-      
-      recognitionInstance.onend = () => {
-        setIsListening(false);
-      };
-      
-      setRecognition(recognitionInstance);
-    }
-  }, []);
-
-  const processAIQuery = async (query: string) => {
-    if (!query.trim()) return;
-    
-    setIsProcessing(true);
-    
-    try {
-      const response = await fetch('/api/ai-chat-mobile', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: query,
-          context: {
-            platform: 'I AM CFO',
-            userType: 'property_manager',
-            requestType: 'voice_query',
-            currentData: {
-              reportType,
-              properties,
-              selectedProperty,
-              companyTotals
-            }
-          }
-        }),
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to get AI response');
-      }
-      
-      const data = await response.json();
-      setResponse(data.response);
-      
-      // Speak the response if speech synthesis is available
-      if ('speechSynthesis' in window && data.response) {
-        const utterance = new SpeechSynthesisUtterance(data.response);
-        utterance.rate = 0.9;
-        utterance.pitch = 1;
-        utterance.volume = 0.8;
-        window.speechSynthesis.speak(utterance);
-      }
-      
-    } catch (error) {
-      console.error('Error processing AI query:', error);
-      setResponse('Sorry, I encountered an error processing your request. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const startListening = async () => {
-    if (!recognition || isListening) return;
-
-    try {
-      // Request microphone permission on user interaction for mobile browsers
-      if (navigator?.mediaDevices) {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-      }
-      setIsListening(true);
-      setTranscript('');
-      setResponse('');
-      setIsProcessing(false);
-      recognition.start();
-    } catch (err) {
-      console.error('Microphone access denied:', err);
-      setIsListening(false);
-    }
-  };
-
-  const stopListening = () => {
-    if (!recognition || !isListening) return;
-
-    recognition.stop();
-    setIsListening(false);
-  };
-
   const closeModal = () => {
-    if (recognition && isListening) {
-      recognition.stop();
-    }
     setShowModal(false);
-    setIsListening(false);
-    setIsProcessing(false);
-    setTranscript('');
-    setResponse('');
   };
 
   const openAIModal = () => {
     setShowModal(true);
-    setIsListening(false);
-    setIsProcessing(false);
-    setTranscript('');
-    setResponse('');
   };
 
   const transactionTotal = useMemo(
@@ -2907,200 +2766,87 @@ export default function EnhancedMobileDashboard() {
               </button>
             </div>
 
-            {/* Status */}
-            <div style={{ marginBottom: '24px' }}>
-              {isListening ? (
-                <div>
-                  <div style={{
-                    width: '80px',
-                    height: '80px',
-                    borderRadius: '50%',
-                    background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.tertiary})`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 16px',
-                    animation: 'pulse 2s infinite',
-                    boxShadow: `0 0 30px ${BRAND_COLORS.primary}60`
-                  }}>
-                    <Mic size={32} style={{ color: 'white' }} />
-                  </div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.primary, margin: 0 }}>
-                    Listening...
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Ask me about your financial data
-                  </p>
-                </div>
-              ) : isProcessing ? (
-                <div>
-                  <div style={{
-                    width: '80px',
-                    height: '80px',
-                    borderRadius: '50%',
-                    background: `linear-gradient(135deg, ${BRAND_COLORS.warning}, #f59e0b)`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 16px',
-                    animation: 'pulse 1.5s infinite',
-                    boxShadow: '0 0 30px rgba(245, 158, 11, 0.6)'
-                  }}>
-                    <MessageCircle size={32} style={{ color: 'white' }} />
-                  </div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.warning, margin: 0 }}>
-                    Processing...
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Analyzing your request
-                  </p>
-                </div>
-              ) : (
-                <div>
-                  <div
-                    style={{
-                      width: '80px',
-                      height: '80px',
-                      borderRadius: '50%',
-                      background: `linear-gradient(135deg, ${BRAND_COLORS.gray[200]}, ${BRAND_COLORS.gray[100]})`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 16px',
-                      border: `3px solid ${BRAND_COLORS.primary}`
-                    }}
-                  >
-                    <Mic size={32} style={{ color: BRAND_COLORS.primary }} />
-                  </div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.accent, margin: 0 }}>
-                    Ready to Help
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Hold the button to ask a question
-                  </p>
-                </div>
-              )}
+            {/* Siri Shortcut Info */}
+            <div style={{ marginBottom: '24px', textAlign: 'center' }}>
+              <div
+                style={{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '50%',
+                  background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 16px',
+                  boxShadow: `0 0 30px ${BRAND_COLORS.primary}60`
+                }}
+              >
+                <Bot size={32} style={{ color: 'white' }} />
+              </div>
+              <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.accent, margin: 0 }}>
+                Ask AI CFO with Siri
+              </p>
+              <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
+                Say “AI CFO” after adding the shortcut
+              </p>
             </div>
 
-            {/* Transcript */}
-            {transcript && (
-              <div style={{
-                background: 'rgba(255,255,255,0.8)',
-                borderRadius: '12px',
-                padding: '16px',
-                marginBottom: '16px',
-                border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                textAlign: 'left'
-              }}>
-                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 8px', fontWeight: '600' }}>
-                  You said:
-                </p>
-                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, fontStyle: 'italic' }}>
-                  "{transcript}"
-                </p>
-              </div>
-            )}
-
-            {/* Response */}
-            {response && (
-              <div style={{
-                background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
-                borderRadius: '12px',
-                padding: '16px',
-                marginBottom: '16px',
-                border: `1px solid ${BRAND_COLORS.primary}30`,
-                textAlign: 'left'
-              }}>
-                <p style={{ fontSize: '12px', color: BRAND_COLORS.primary, margin: '0 0 8px', fontWeight: '600' }}>
-                  AI CFO:
-                </p>
-                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, lineHeight: '1.5' }}>
-                  {response}
-                </p>
-              </div>
-            )}
-
             {/* Example Questions */}
-            {!transcript && !response && (
-              <div style={{
+            <div
+              style={{
                 background: 'rgba(255,255,255,0.6)',
                 borderRadius: '12px',
                 padding: '16px',
                 marginBottom: '16px',
                 border: `1px solid ${BRAND_COLORS.gray[200]}`,
                 textAlign: 'left'
-              }}>
-                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 12px', fontWeight: '600' }}>
-                  Try asking:
+              }}
+            >
+              <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 12px', fontWeight: '600' }}>
+                Try asking:
+              </p>
+              <div style={{ display: 'grid', gap: '8px' }}>
+                <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                  "What's our total revenue this month?"
                 </p>
-                <div style={{ display: 'grid', gap: '8px' }}>
-                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
-                    "What's our total revenue this month?"
-                  </p>
-                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
-                    "Which customer has the highest profit margin?"
-                  </p>
-                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
-                    "Show me overdue receivables"
-                  </p>
-                </div>
+                <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                  "Which customer has the highest profit margin?"
+                </p>
+                <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
+                  "Show me overdue receivables"
+                </p>
               </div>
-            )}
+            </div>
 
             {/* Instructions */}
             <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: '1.4' }}>
-              Hold the microphone button below to speak, then release to stop
+              Hold the Siri button and say “AI CFO,” or tap below to run the shortcut.
             </p>
 
-            {/* Microphone Button */}
+            {/* Siri Shortcut Button */}
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '16px' }}>
-              <div
-                onPointerDown={startListening}
-                onPointerUp={stopListening}
-                onPointerLeave={stopListening}
+              <a
+                href="shortcuts://run-shortcut?name=AI%20CFO"
                 style={{
                   width: '64px',
                   height: '64px',
                   borderRadius: '50%',
-                  background: isListening
-                    ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})`
-                    : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+                  background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
                   border: 'none',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: isListening
-                    ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20`
-                    : `0 8px 32px ${BRAND_COLORS.primary}40`,
+                  boxShadow: `0 8px 32px ${BRAND_COLORS.primary}40`,
                   transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                  transform: isListening ? 'scale(1.1)' : 'scale(1)',
                   userSelect: 'none',
                   WebkitUserSelect: 'none',
-                  MozUserSelect: 'none'
+                  MozUserSelect: 'none',
+                  textDecoration: 'none'
                 }}
               >
-                {isListening ? (
-                  <div style={{ position: 'relative' }}>
-                    <Mic size={28} style={{ color: 'white' }} />
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        border: '2px solid rgba(255,255,255,0.6)',
-                        animation: 'ripple 1.5s infinite'
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <Mic size={28} style={{ color: 'white' }} />
-                )}
-              </div>
+                <Bot size={28} style={{ color: 'white' }} />
+              </a>
             </div>
           </div>
         </div>
