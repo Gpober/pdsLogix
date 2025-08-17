@@ -250,6 +250,7 @@ export default function EnhancedMobileDashboard() {
         
         if (finalTranscript) {
           processAIQuery(finalTranscript);
+          recognitionInstance.stop();
         }
       };
       
