@@ -76,7 +76,7 @@ export const createCFOCompletion = async (message, context) => {
       max_tokens: 500
     }
 
-    // Add function calling if needed
+    // Add function calling if needed - CORRECTED for single user per DB
     if (needsFunctionCalling) {
       completionOptions.tools = [
         {
@@ -87,16 +87,12 @@ export const createCFOCompletion = async (message, context) => {
             parameters: {
               type: "object",
               properties: {
-                userId: {
-                  type: "string",
-                  description: "The user ID to get A/R data for"
-                },
                 customerId: {
                   type: "string",
                   description: "Optional specific customer ID to analyze"
                 }
               },
-              required: ["userId"]
+              required: []  // ← CHANGED: No required parameters (removed userId requirement)
             }
           }
         },
@@ -108,10 +104,6 @@ export const createCFOCompletion = async (message, context) => {
             parameters: {
               type: "object",
               properties: {
-                userId: {
-                  type: "string",
-                  description: "The user ID to get payment data for"
-                },
                 customerId: {
                   type: "string",
                   description: "Optional specific customer ID to analyze"
@@ -122,7 +114,7 @@ export const createCFOCompletion = async (message, context) => {
                   description: "Time period for payment history analysis"
                 }
               },
-              required: ["userId"]
+              required: []  // ← CHANGED: No required parameters (removed userId requirement)
             }
           }
         },
@@ -134,10 +126,6 @@ export const createCFOCompletion = async (message, context) => {
             parameters: {
               type: "object",
               properties: {
-                userId: {
-                  type: "string",
-                  description: "The user ID to get financial data for"
-                },
                 customerId: {
                   type: "string",
                   description: "Optional specific customer ID to analyze"
@@ -148,7 +136,7 @@ export const createCFOCompletion = async (message, context) => {
                   description: "Time period for financial analysis"
                 }
               },
-              required: ["userId"]
+              required: []  // ← CHANGED: No required parameters (removed userId requirement)
             }
           }
         },
@@ -160,10 +148,6 @@ export const createCFOCompletion = async (message, context) => {
             parameters: {
               type: "object",
               properties: {
-                userId: {
-                  type: "string",
-                  description: "The user ID to get comparison data for"
-                },
                 customerId: {
                   type: "string",
                   description: "Optional specific customer ID to compare"
@@ -174,7 +158,7 @@ export const createCFOCompletion = async (message, context) => {
                   description: "Specific metric to focus comparison on"
                 }
               },
-              required: ["userId"]
+              required: []  // ← CHANGED: No required parameters (removed userId requirement)
             }
           }
         }
@@ -206,10 +190,8 @@ export const createCFOCompletion = async (message, context) => {
         const functionName = toolCall.function.name
         const functionArgs = JSON.parse(toolCall.function.arguments)
         
-        // Add userId from context if not provided
-        if (!functionArgs.userId && context.userId) {
-          functionArgs.userId = context.userId
-        }
+        // ← REMOVED: userId injection logic (not needed for single user per DB)
+        // The functions no longer need or expect userId parameter
         
         console.log(`📊 Calling function: ${functionName}`, functionArgs)
         
