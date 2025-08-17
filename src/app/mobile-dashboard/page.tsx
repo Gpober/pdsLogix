@@ -6,8 +6,6 @@ import {
   useMemo,
   useCallback,
   useRef,
-  type MouseEvent,
-  type TouchEvent,
 } from "react";
 import {
   Menu,
@@ -214,18 +212,15 @@ export default function EnhancedMobileDashboard() {
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
 
-  // Siri AI States
+  // AI CFO States
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
-  const [holdTimer, setHoldTimer] = useState<NodeJS.Timeout | null>(null);
-  const [isHolding, setIsHolding] = useState(false);
-  
+
   const buttonRef = useRef<HTMLDivElement>(null);
-  const holdStartTime = useRef<number>(0);
 
   // Initialize speech recognition
   useEffect(() => {
@@ -323,59 +318,31 @@ export default function EnhancedMobileDashboard() {
     }
   };
 
-  const handleHoldStart = (
-    e: TouchEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>,
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsHolding(true);
-    holdStartTime.current = Date.now();
+  const handleMicTap = async () => {
+    if (!recognition) return;
 
-    const timer = setTimeout(async () => {
-      if (recognition && !isListening) {
-        try {
-          // Request microphone permission on user interaction for mobile browsers
-          if (navigator?.mediaDevices) {
-            await navigator.mediaDevices.getUserMedia({ audio: true });
-          }
-          setIsListening(true);
-          setTranscript('');
-          setResponse('');
-          setShowModal(true);
-          recognition.start();
-        } catch (err) {
-          console.error('Microphone access denied:', err);
-          setIsListening(false);
-        }
-      }
-    }, 150); // Short delay to feel like Siri
-
-    setHoldTimer(timer);
-  };
-
-  const handleHoldEnd = (
-    e: TouchEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>,
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsHolding(false);
-    
-    if (holdTimer) {
-      clearTimeout(holdTimer);
-      setHoldTimer(null);
-    }
-    
-    const holdDuration = Date.now() - holdStartTime.current;
-    
-    if (holdDuration < 150) {
-      // Short tap - just show modal without voice
-      setShowModal(true);
+    if (isListening) {
+      recognition.stop();
+      setIsListening(false);
+      setShowModal(false);
+      setIsProcessing(false);
+      setTranscript('');
+      setResponse('');
       return;
     }
-    
-    // Long hold - stop listening
-    if (recognition && isListening) {
-      recognition.stop();
+
+    try {
+      // Request microphone permission on user interaction for mobile browsers
+      if (navigator?.mediaDevices) {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+      setIsListening(true);
+      setTranscript('');
+      setResponse('');
+      setShowModal(true);
+      recognition.start();
+    } catch (err) {
+      console.error('Microphone access denied:', err);
       setIsListening(false);
     }
   };
@@ -2866,7 +2833,7 @@ export default function EnhancedMobileDashboard() {
         </div>
       )}
 
-      {/* Siri AI Modal */}
+      {/* AI CFO Modal */}
       {showModal && (
         <div
           style={{
@@ -3003,7 +2970,7 @@ export default function EnhancedMobileDashboard() {
                     Ready to Help
                   </p>
                   <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Hold the button to ask a question
+                    Tap the button to ask a question
                   </p>
                 </div>
               )}
@@ -3076,20 +3043,16 @@ export default function EnhancedMobileDashboard() {
 
             {/* Instructions */}
             <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: '1.4' }}>
-              Hold the microphone button below to speak, or tap to close
+              Tap the microphone button below to speak, or tap again to stop
             </p>
           </div>
         </div>
       )}
 
-      {/* Floating Siri-Style AI Button */}
+      {/* Floating AI CFO Button */}
       <div
         ref={buttonRef}
-        onMouseDown={handleHoldStart}
-        onMouseUp={handleHoldEnd}
-        onMouseLeave={handleHoldEnd}
-        onTouchStart={handleHoldStart}
-        onTouchEnd={handleHoldEnd}
+        onClick={handleMicTap}
         style={{
           position: 'fixed',
           bottom: '24px',
@@ -3097,32 +3060,32 @@ export default function EnhancedMobileDashboard() {
           width: '64px',
           height: '64px',
           borderRadius: '50%',
-          background: isHolding 
-            ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})` 
+          background: isListening
+            ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})`
             : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
           border: 'none',
           cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: isHolding 
-            ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20` 
+          boxShadow: isListening
+            ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20`
             : `0 8px 32px ${BRAND_COLORS.primary}40`,
           transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          transform: isHolding ? 'scale(1.1)' : 'scale(1)',
+          transform: isListening ? 'scale(1.1)' : 'scale(1)',
           zIndex: 1000,
           userSelect: 'none',
           WebkitUserSelect: 'none',
           MozUserSelect: 'none'
         }}
         onMouseOver={(e) => {
-          if (!isHolding) {
+          if (!isListening) {
             e.currentTarget.style.transform = 'scale(1.05)';
             e.currentTarget.style.boxShadow = `0 12px 40px ${BRAND_COLORS.primary}50`;
           }
         }}
         onMouseOut={(e) => {
-          if (!isHolding) {
+          if (!isListening) {
             e.currentTarget.style.transform = 'scale(1)';
             e.currentTarget.style.boxShadow = `0 8px 32px ${BRAND_COLORS.primary}40`;
           }
