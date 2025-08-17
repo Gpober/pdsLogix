@@ -1,13 +1,34 @@
-import OpenAI from 'openai'
+// We avoid using the official OpenAI SDK to reduce build dependencies.
+// Instead, interact with the OpenAI REST API directly via fetch.
+// This keeps Vercel/Next.js builds lightweight and prevents "module not found" errors
+// when the `openai` package isn't installed.
 import { availableFunctions } from '../app/api/ai-chat-mobile/route'
 
 if (!process.env.OPENAI_API_KEY) {
   throw new Error('Missing OPENAI_API_KEY environment variable')
 }
 
-export const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+/**
+ * Helper to call OpenAI's Chat Completions endpoint.
+ * Mirrors `openai.chat.completions.create` from the official SDK.
+ */
+async function createChatCompletion(body) {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const errorText = await res.text()
+    throw new Error(`OpenAI API error ${res.status}: ${errorText}`)
+  }
+
+  return res.json()
+}
 
 export const createCFOCompletion = async (message, context) => {
   try {
@@ -169,7 +190,7 @@ export const createCFOCompletion = async (message, context) => {
     })
 
     // First API call to OpenAI
-    const completion = await openai.chat.completions.create(completionOptions)
+    const completion = await createChatCompletion(completionOptions)
     
     let finalResponse = completion.choices[0].message
 
@@ -216,7 +237,7 @@ export const createCFOCompletion = async (message, context) => {
       }
       
       // Second API call with function results
-      const finalCompletion = await openai.chat.completions.create({
+      const finalCompletion = await createChatCompletion({
         model: "gpt-4",
         messages: messages,
         temperature: 0.3,
