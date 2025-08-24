@@ -824,7 +824,7 @@ export default function CashFlowPage() {
 
       let query = supabase
         .from("journal_entry_lines")
-        .select("entry_number,date,entry_bank_account,debit,credit,report_category,customer")
+        .select("entry_number,date,entry_bank_account,memo,debit,credit,report_category,customer")
         .gte("date", startDate)
         .lt("date", toExclusiveDate(endDate))
         .eq("is_cash_account", true)
@@ -900,7 +900,7 @@ export default function CashFlowPage() {
     // Attempt to use the cash_related_offsets view
     let viewQuery = supabase
       .from("cash_related_offsets")
-      .select("entry_number,date,class,customer,account,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
+      .select("entry_number,date,class,customer,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
 
@@ -954,7 +954,7 @@ export default function CashFlowPage() {
 
     let offsetQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,date,class,customer,account,account_type,report_category,debit,credit")
+      .select("entry_number,date,class,customer,account,memo,account_type,report_category,debit,credit")
       .in("entry_number", entryNumbers)
       .eq("is_cash_account", false)
       .gte("date", startDate)
@@ -1116,7 +1116,7 @@ export default function CashFlowPage() {
   const checkDataQuality = async (offsets: any[], startDate: string, endDate: string) => {
     let cashQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,debit,credit,entry_bank_account,report_category,customer,class,date")
+      .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,class,date")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
