@@ -1396,11 +1396,16 @@ export default function CashFlowPage() {
 
       const hasReceivableOrPayable = transactionDetails.some((t) => {
         const type = t.accountType?.toLowerCase() || ""
+        const acct = t.account?.toLowerCase() || ""
         return (
           type.includes("accounts receivable") ||
+          acct.includes("accounts receivable") ||
           type.includes("a/r") ||
+          acct.includes("a/r") ||
           type.includes("accounts payable") ||
-          type.includes("a/p")
+          acct.includes("accounts payable") ||
+          type.includes("a/p") ||
+          acct.includes("a/p")
         )
       })
 
