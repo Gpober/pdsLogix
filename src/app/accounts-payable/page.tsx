@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Users, Clock, AlertCircle, CheckCircle, RefreshCw, Search, Calendar } from "lucide-react"
+import React, { useState } from "react"
+import { Users, Clock, AlertCircle, CheckCircle, RefreshCw, Search, Calendar, ChevronDown, ChevronRight } from "lucide-react"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -18,6 +18,7 @@ export default function AccountsPayablePage() {
   const [selectedPeriod, setSelectedPeriod] = useState("May 2025")
   const [isLoading, setIsLoading] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({})
 
   const formatCurrency = (value) => {
     return new Intl.NumberFormat("en-US", {
@@ -26,6 +27,13 @@ export default function AccountsPayablePage() {
       maximumFractionDigits: 0,
     }).format(value)
   }
+
+  const toggleRow = (id) => {
+    setExpandedRows((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const getTotalPayments = (payments = []) =>
+    payments.reduce((sum, p) => sum + p.amount, 0)
 
   // Mock A/P data
   const apData = {
@@ -46,6 +54,10 @@ export default function AccountsPayablePage() {
       daysUntilDue: 15,
       status: "current",
       category: "Maintenance",
+      payments: [
+        { invoice: "PM-100", date: "2025-05-01", amount: 10000 },
+        { invoice: "PM-101", date: "2025-05-15", amount: 5000 },
+      ],
     },
     {
       id: 2,
@@ -55,6 +67,7 @@ export default function AccountsPayablePage() {
       daysUntilDue: 10,
       status: "current",
       category: "Utilities",
+      payments: [{ invoice: "US-200", date: "2025-05-05", amount: 8000 }],
     },
     {
       id: 3,
@@ -64,6 +77,7 @@ export default function AccountsPayablePage() {
       daysUntilDue: 5,
       status: "current",
       category: "Insurance",
+      payments: [],
     },
     {
       id: 4,
@@ -73,6 +87,7 @@ export default function AccountsPayablePage() {
       daysUntilDue: -5,
       status: "overdue",
       category: "Professional Services",
+      payments: [],
     },
     {
       id: 5,
@@ -82,6 +97,7 @@ export default function AccountsPayablePage() {
       daysUntilDue: 20,
       status: "current",
       category: "Maintenance",
+      payments: [],
     },
     {
       id: 6,
@@ -91,6 +107,7 @@ export default function AccountsPayablePage() {
       daysUntilDue: -10,
       status: "overdue",
       category: "Security",
+      payments: [],
     },
     {
       id: 7,
@@ -100,6 +117,7 @@ export default function AccountsPayablePage() {
       daysUntilDue: 12,
       status: "current",
       category: "Landscaping",
+      payments: [],
     },
     {
       id: 8,
@@ -109,6 +127,7 @@ export default function AccountsPayablePage() {
       daysUntilDue: 8,
       status: "current",
       category: "Office Supplies",
+      payments: [],
     },
   ]
 
@@ -316,6 +335,9 @@ export default function AccountsPayablePage() {
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Amount
                     </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Payments
+                    </th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Due Date
                     </th>
@@ -333,48 +355,103 @@ export default function AccountsPayablePage() {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {filteredAPDetails.map((item) => {
                     const actualStatus = getStatusFromDays(item.daysUntilDue)
+                    const totalPaid = getTotalPayments(item.payments)
+                    const expanded = expandedRows[item.id]
                     return (
-                      <tr key={item.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">{item.vendor}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm text-gray-600">{item.category}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right">
-                          <div className="text-sm font-medium text-gray-900">{formatCurrency(item.amount)}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <div className="text-sm text-gray-900">{new Date(item.dueDate).toLocaleDateString()}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <div
-                            className={`text-sm font-medium ${
-                              item.daysUntilDue < 0
-                                ? "text-red-600"
-                                : item.daysUntilDue <= 7
-                                  ? "text-yellow-600"
-                                  : "text-green-600"
-                            }`}
-                          >
-                            {item.daysUntilDue < 0
-                              ? `${Math.abs(item.daysUntilDue)} overdue`
-                              : `${item.daysUntilDue} days`}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(actualStatus)}`}
-                          >
-                            {getStatusIcon(actualStatus)}
-                            <span className="ml-1 capitalize">{actualStatus.replace("-", " ")}</span>
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
-                          <button className="text-blue-600 hover:text-blue-900 mr-3">View</button>
-                          <button className="text-green-600 hover:text-green-900">Pay</button>
-                        </td>
-                      </tr>
+                      <React.Fragment key={item.id}>
+                        <tr className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <button onClick={() => toggleRow(item.id)} className="mr-2">
+                                {expanded ? (
+                                  <ChevronDown className="w-4 h-4 text-gray-500" />
+                                ) : (
+                                  <ChevronRight className="w-4 h-4 text-gray-500" />
+                                )}
+                              </button>
+                              <div className="text-sm font-medium text-gray-900">{item.vendor}</div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-600">{item.category}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right">
+                            <div className="text-sm font-medium text-gray-900">{formatCurrency(item.amount)}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right">
+                            {totalPaid > 0 ? (
+                              <button
+                                onClick={() => toggleRow(item.id)}
+                                className="text-blue-600 hover:text-blue-800 font-medium"
+                              >
+                                {formatCurrency(totalPaid)}
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <div className="text-sm text-gray-900">{new Date(item.dueDate).toLocaleDateString()}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <div
+                              className={`text-sm font-medium ${
+                                item.daysUntilDue < 0
+                                  ? "text-red-600"
+                                  : item.daysUntilDue <= 7
+                                    ? "text-yellow-600"
+                                    : "text-green-600"
+                              }`}
+                            >
+                              {item.daysUntilDue < 0
+                                ? `${Math.abs(item.daysUntilDue)} overdue`
+                                : `${item.daysUntilDue} days`}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(actualStatus)}`}
+                            >
+                              {getStatusIcon(actualStatus)}
+                              <span className="ml-1 capitalize">{actualStatus.replace("-", " ")}</span>
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+                            <button className="text-blue-600 hover:text-blue-900 mr-3">View</button>
+                            <button className="text-green-600 hover:text-green-900">Pay</button>
+                          </td>
+                        </tr>
+                        {expanded && item.payments.length > 0 && (
+                          <tr className="bg-gray-50">
+                            <td colSpan={8} className="px-6 py-4">
+                              <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                  <thead className="bg-gray-100">
+                                    <tr>
+                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="bg-white divide-y divide-gray-200">
+                                    {item.payments.map((p, idx) => (
+                                      <tr key={idx}>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
+                                          {new Date(p.date).toLocaleDateString()}
+                                        </td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-600">{p.invoice}</td>
+                                        <td className="px-4 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                                          {formatCurrency(p.amount)}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     )
                   })}
                 </tbody>

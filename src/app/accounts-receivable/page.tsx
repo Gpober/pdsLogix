@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react"
 import React from "react"
-import { CreditCard, Clock, AlertTriangle, CheckCircle, RefreshCw, Search, Eye, DollarSign, ChevronDown, ChevronRight } from "lucide-react"
+import { CreditCard, Clock, AlertTriangle, CheckCircle, RefreshCw, Search, DollarSign, ChevronDown, ChevronRight } from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
 
 // I AM CFO Brand Colors
@@ -27,6 +27,8 @@ interface ARRecord {
     days90: number
   }
   invoices: ARInvoice[]
+  payments: ARPayment[]
+  totalPayments: number
 }
 
 interface ARParentGroup {
@@ -39,6 +41,7 @@ interface ARParentGroup {
     days60: number
     days90: number
   }
+  totalPayments: number
   subCustomers: ARRecord[]
   isExpanded: boolean
 }
@@ -57,6 +60,12 @@ interface ARInvoice {
   aging_bucket: string
 }
 
+interface ARPayment {
+  invoiceNumber: string
+  paymentDate: string
+  amount: number
+}
+
 export default function AccountsReceivablePage() {
   const [selectedPeriod, setSelectedPeriod] = useState("All")
   const [isLoading, setIsLoading] = useState(false)
@@ -69,6 +78,9 @@ export default function AccountsReceivablePage() {
   const [selectedAgingFilter, setSelectedAgingFilter] = useState<string | undefined>(undefined)
   const [selectedJournalEntry, setSelectedJournalEntry] = useState<any>(null)
   const [showJournalModal, setShowJournalModal] = useState(false)
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [selectedPaymentCustomer, setSelectedPaymentCustomer] = useState<string | null>(null)
+  const [selectedPayments, setSelectedPayments] = useState<ARPayment[]>([])
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("en-US", {
@@ -159,6 +171,7 @@ export default function AccountsReceivablePage() {
           totalBalance: 0,
           totalInvoiceCount: 0,
           totalAging: { current: 0, days30: 0, days60: 0, days90: 0 },
+          totalPayments: 0,
           subCustomers: [],
           isExpanded: false
         })
@@ -176,6 +189,7 @@ export default function AccountsReceivablePage() {
       group.totalAging.days30 += customer.aging.days30
       group.totalAging.days60 += customer.aging.days60
       group.totalAging.days90 += customer.aging.days90
+      group.totalPayments += customer.totalPayments
     })
 
     // Sort sub customers within each group
@@ -219,7 +233,9 @@ export default function AccountsReceivablePage() {
       // Group by customer and calculate aging
       const customerMap = new Map<string, {
         invoices: ARInvoice[]
+        payments: ARPayment[]
         balance: number
+        totalPayments: number
         aging: { current: number, days30: number, days60: number, days90: number }
       }>()
 
@@ -229,7 +245,9 @@ export default function AccountsReceivablePage() {
         if (!customerMap.has(customer)) {
           customerMap.set(customer, {
             invoices: [],
+            payments: [],
             balance: 0,
+            totalPayments: 0,
             aging: { current: 0, days30: 0, days60: 0, days90: 0 }
           })
         }
@@ -274,6 +292,36 @@ export default function AccountsReceivablePage() {
         }
       })
 
+      // Fetch payment details and aggregate by customer
+      const { data: paymentDetails, error: paymentError } = await supabase
+        .from("ar_payment_detail")
+        .select("*")
+
+      if (paymentError) {
+        console.error("Error fetching payment data:", paymentError)
+      } else if (paymentDetails) {
+        paymentDetails.forEach((record: any) => {
+          const customer = record.customer
+          if (!customerMap.has(customer)) {
+            customerMap.set(customer, {
+              invoices: [],
+              payments: [],
+              balance: 0,
+              totalPayments: 0,
+              aging: { current: 0, days30: 0, days60: 0, days90: 0 }
+            })
+          }
+          const customerData = customerMap.get(customer)!
+          const payment: ARPayment = {
+            invoiceNumber: record.invoice_number || '',
+            paymentDate: record.payment_date,
+            amount: Number(record.applied_amount) || 0
+          }
+          customerData.payments.push(payment)
+          customerData.totalPayments += payment.amount
+        })
+      }
+
       // Convert to ARRecord format
       const arRecords: ARRecord[] = []
       
@@ -283,7 +331,9 @@ export default function AccountsReceivablePage() {
           balance: data.balance,
           invoiceCount: data.invoices.length,
           aging: data.aging,
-          invoices: data.invoices
+          invoices: data.invoices,
+          payments: data.payments,
+          totalPayments: data.totalPayments
         })
       })
 
@@ -396,14 +446,16 @@ export default function AccountsReceivablePage() {
       days60: totals.days60 + group.totalAging.days60,
       days90: totals.days90 + group.totalAging.days90,
       totalBalance: totals.totalBalance + group.totalBalance,
-      totalInvoices: totals.totalInvoices + group.totalInvoiceCount
+      totalInvoices: totals.totalInvoices + group.totalInvoiceCount,
+      totalPayments: totals.totalPayments + group.totalPayments
     }), {
       current: 0,
       days30: 0,
       days60: 0,
       days90: 0,
       totalBalance: 0,
-      totalInvoices: 0
+      totalInvoices: 0,
+      totalPayments: 0
     })
   }, [filteredData])
 
@@ -445,6 +497,25 @@ export default function AccountsReceivablePage() {
       setSelectedCustomer(`${parentCustomer} (All Locations)`)
       setSelectedAgingFilter(agingFilter)
       setShowTransactionModal(true)
+    }
+  }
+
+  const showCustomerPayments = (customer: string) => {
+    const record = arData.find(r => r.customer === customer)
+    if (record) {
+      setSelectedPaymentCustomer(customer)
+      setSelectedPayments(record.payments)
+      setShowPaymentModal(true)
+    }
+  }
+
+  const showParentPayments = (parentCustomer: string) => {
+    const parentGroup = arGroupedData.find(g => g.parentCustomer === parentCustomer)
+    if (parentGroup) {
+      const allPayments = parentGroup.subCustomers.reduce((acc: ARPayment[], sub) => acc.concat(sub.payments), [])
+      setSelectedPaymentCustomer(`${parentCustomer} (All Locations)`)
+      setSelectedPayments(allPayments)
+      setShowPaymentModal(true)
     }
   }
 
@@ -732,6 +803,9 @@ export default function AccountsReceivablePage() {
                       <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Total Balance
                       </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Payments
+                      </th>
                       <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Invoices
                       </th>
@@ -822,6 +896,18 @@ export default function AccountsReceivablePage() {
                               {formatCurrency(group.totalBalance)}
                             </button>
                           </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                            {group.totalPayments > 0 ? (
+                              <button
+                                onClick={() => showParentPayments(group.parentCustomer)}
+                                className="font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                              >
+                                {formatCurrency(group.totalPayments)}
+                              </button>
+                            ) : (
+                              <span className="text-gray-300">-</span>
+                            )}
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-bold text-gray-700">
                             {group.totalInvoiceCount}
                           </td>
@@ -896,6 +982,18 @@ export default function AccountsReceivablePage() {
                                   {formatCurrency(subCustomer.balance)}
                                 </button>
                               </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                {subCustomer.totalPayments > 0 ? (
+                                  <button
+                                    onClick={() => showCustomerPayments(subCustomer.customer)}
+                                    className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                                  >
+                                    {formatCurrency(subCustomer.totalPayments)}
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-300">-</span>
+                                )}
+                              </td>
                               <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-600">
                                 {subCustomer.invoiceCount}
                               </td>
@@ -926,6 +1024,9 @@ export default function AccountsReceivablePage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-gray-900 text-lg">
                         {formatCurrency(tableTotals.totalBalance)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-blue-700">
+                        {formatCurrency(tableTotals.totalPayments)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-bold text-gray-700">
                         {tableTotals.totalInvoices}
@@ -1028,6 +1129,55 @@ export default function AccountsReceivablePage() {
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(invoice.aging_bucket)}`}>
                             {invoice.days_outstanding} days
                           </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Detail Modal */}
+      {showPaymentModal && selectedPayments.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] flex flex-col">
+            <div className="p-6 border-b border-gray-200 flex-shrink-0">
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Payments - {selectedPaymentCustomer}
+                </h3>
+                <button
+                  onClick={() => setShowPaymentModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-6">
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {selectedPayments.map((payment, index) => (
+                      <tr key={index} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                          {formatDateSafe(payment.paymentDate)}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          {payment.invoiceNumber || '-'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
+                          {formatCurrency(payment.amount)}
                         </td>
                       </tr>
                     ))}
