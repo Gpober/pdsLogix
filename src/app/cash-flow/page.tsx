@@ -610,8 +610,8 @@ export default function CashFlowPage() {
       typeLower === "expenses" ||
       typeLower === "expense" ||
       typeLower === "cost of goods sold" ||
-      typeLower === "accounts receivable" ||
-      typeLower === "accounts payable"
+      typeLower === "1020 Accounts Receivable (A/R)" ||
+      typeLower === "2010 Accounts Payable (A/P)"
     ) {
       return "operating"
     }
