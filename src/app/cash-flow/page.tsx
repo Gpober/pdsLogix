@@ -19,6 +19,16 @@ const BRAND_COLORS = {
   danger: "#E74C3C",
 }
 
+// Turn inclusive end date (YYYY-MM-DD) into exclusive next-day boundary
+const toExclusiveDate = (toInclusive: string) => {
+  const d = new Date(`${toInclusive}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+const toNum = (v: any) =>
+  v === null || v === undefined || v === "" ? 0 : Number(v)
+
 // Cash Flow Data Structures
 interface CashFlowRow {
   property: string
@@ -181,7 +191,8 @@ export default function CashFlowPage() {
   const [showTransactionModal, setShowTransactionModal] = useState(false)
   const [transactionDetails, setTransactionDetails] = useState<TransactionDetail[]>([])
   const [modalTitle, setModalTitle] = useState("")
-  const [cashTransactions, setCashTransactions] = useState<any[]>([])
+  const [offsetTransactions, setOffsetTransactions] = useState<any[]>([])
+  const [bankTransactions, setBankTransactions] = useState<any[]>([])
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([])
   const [showJournalModal, setShowJournalModal] = useState(false)
   const [journalTitle, setJournalTitle] = useState("")
@@ -213,9 +224,6 @@ export default function CashFlowPage() {
   }
 
   const sum = (values: number[]) => values.reduce((acc, val) => acc + val, 0)
-
-  // Convert any value to a number, treating null/undefined as 0
-  const toNum = (v: any) => Number(v ?? 0)
 
 
   // Format date for display
@@ -290,50 +298,54 @@ export default function CashFlowPage() {
   const handleExportCashFlowExcel = () => {
     const months = Array.from(
       new Set(
-        cashTransactions.map((tx) => monthsList[getMonthFromDate(tx.date) - 1]),
+        offsetTransactions.map((tx) => monthsList[getMonthFromDate(tx.date) - 1]),
       ),
     ).sort((a, b) => monthsList.indexOf(a) - monthsList.indexOf(b))
 
     type ActivityMap = Record<string, number>
     const breakdown: Record<
       string,
-      { operating: ActivityMap; financing: ActivityMap; investing: ActivityMap }
+      { operating: ActivityMap; financing: ActivityMap; investing: ActivityMap; transfer: ActivityMap }
     > = {}
     const accounts = {
       operating: new Set<string>(),
       financing: new Set<string>(),
       investing: new Set<string>(),
+      transfer: new Set<string>(),
     }
     const accountTypes: Record<string, Record<string, string>> = {
       operating: {},
       financing: {},
       investing: {},
+      transfer: {},
     }
 
     months.forEach((m) => {
-      breakdown[m] = { operating: {}, financing: {}, investing: {} }
+      breakdown[m] = { operating: {}, financing: {}, investing: {}, transfer: {} }
     })
 
-    cashTransactions.forEach((tx) => {
+    offsetTransactions.forEach((tx) => {
       const monthName = monthsList[getMonthFromDate(tx.date) - 1]
       if (!breakdown[monthName]) return
 
       const account = tx.account || ""
-      const classification = classifyTransaction(
+      const klass = classifyTransaction(
         tx.account_type,
         tx.report_category,
       )
       const impact = tx.cashFlowImpact || 0
+      if (klass === "transfer" && !includeTransfers) return
 
       if (
-        classification === "operating" ||
-        classification === "financing" ||
-        classification === "investing"
+        klass === "operating" ||
+        klass === "financing" ||
+        klass === "investing" ||
+        klass === "transfer"
       ) {
-        const activity = breakdown[monthName][classification]
+        const activity = breakdown[monthName][klass]
         activity[account] = (activity[account] || 0) + impact
-        accounts[classification].add(account)
-        accountTypes[classification][account] = tx.account_type || ""
+        accounts[klass].add(account)
+        accountTypes[klass][account] = tx.account_type || ""
       }
     })
 
@@ -448,6 +460,30 @@ export default function CashFlowPage() {
     const invTotalRow = sheetData.length
     pushRow("", [...emptyRow], false)
 
+    if (includeTransfers) {
+      // Transfer Activities
+      pushRow("Transfer Activities", [...emptyRow], false)
+      const trStart = sheetData.length + 1
+      Array.from(accounts.transfer)
+        .sort()
+        .forEach((acc) => {
+          pushRow(
+            `  ${acc}`,
+            months.map((m) => breakdown[m].transfer[acc] || 0),
+          )
+        })
+      const trEnd = sheetData.length
+      const trTotals = months.map((_, idx) =>
+        trEnd >= trStart
+          ? {
+              f: `SUM(${columnLetter(idx + 2)}${trStart}:${columnLetter(idx + 2)}${trEnd})`,
+            }
+          : 0,
+      )
+      pushRow("Total Transfer Activities", trTotals)
+      pushRow("", [...emptyRow], false)
+    }
+
     // Net Change in Cash
     pushRow(
       "Net Change in Cash",
@@ -467,50 +503,54 @@ export default function CashFlowPage() {
   const handleExportCashFlowPdf = () => {
     const months = Array.from(
       new Set(
-        cashTransactions.map((tx) => monthsList[getMonthFromDate(tx.date) - 1]),
+        offsetTransactions.map((tx) => monthsList[getMonthFromDate(tx.date) - 1]),
       ),
     ).sort((a, b) => monthsList.indexOf(a) - monthsList.indexOf(b))
 
     type ActivityMap = Record<string, number>
     const breakdown: Record<
       string,
-      { operating: ActivityMap; financing: ActivityMap; investing: ActivityMap }
+      { operating: ActivityMap; financing: ActivityMap; investing: ActivityMap; transfer: ActivityMap }
     > = {}
     const accounts = {
       operating: new Set<string>(),
       financing: new Set<string>(),
       investing: new Set<string>(),
+      transfer: new Set<string>(),
     }
     const accountTypes: Record<string, Record<string, string>> = {
       operating: {},
       financing: {},
       investing: {},
+      transfer: {},
     }
 
     months.forEach((m) => {
-      breakdown[m] = { operating: {}, financing: {}, investing: {} }
+      breakdown[m] = { operating: {}, financing: {}, investing: {}, transfer: {} }
     })
 
-    cashTransactions.forEach((tx) => {
+    offsetTransactions.forEach((tx) => {
       const monthName = monthsList[getMonthFromDate(tx.date) - 1]
       if (!breakdown[monthName]) return
 
       const account = tx.account || ""
-      const classification = classifyTransaction(
+      const klass = classifyTransaction(
         tx.account_type,
         tx.report_category,
       )
       const impact = tx.cashFlowImpact || 0
+      if (klass === "transfer" && !includeTransfers) return
 
       if (
-        classification === "operating" ||
-        classification === "financing" ||
-        classification === "investing"
+        klass === "operating" ||
+        klass === "financing" ||
+        klass === "investing" ||
+        klass === "transfer"
       ) {
-        const activity = breakdown[monthName][classification]
+        const activity = breakdown[monthName][klass]
         activity[account] = (activity[account] || 0) + impact
-        accounts[classification].add(account)
-        accountTypes[classification][account] = tx.account_type || ""
+        accounts[klass].add(account)
+        accountTypes[klass][account] = tx.account_type || ""
       }
     })
     const doc = new jsPDF()
@@ -578,6 +618,19 @@ export default function CashFlowPage() {
     )
     push("", [...fill])
 
+    if (includeTransfers) {
+      push("Transfer Activities", [...fill])
+      Array.from(accounts.transfer)
+        .sort()
+        .forEach((acc) => {
+          const vals = months.map((m) => breakdown[m].transfer[acc] || 0)
+          push(`  ${acc}`, [...vals.map(format), format(sum(vals))])
+        })
+      const trTotals = months.map((m) => sum(Object.values(breakdown[m].transfer)))
+      push("Total Transfer Activities", [...trTotals.map(format), format(sum(trTotals))])
+      push("", [...fill])
+    }
+
     // Net Change
     const netVals = months.map((m) =>
       sum([
@@ -595,42 +648,37 @@ export default function CashFlowPage() {
     doc.save("cash_flow.pdf")
   }
 
-  // ENHANCED: Classification function with transfers as separate category
-  const classifyTransaction = (accountType: string, reportCategory: string) => {
-    const typeLower = accountType?.toLowerCase() || ""
-    const categoryLower = reportCategory?.toLowerCase() || ""
+  function classifyTransaction(accountType?: string, reportCategory?: string) {
+    const at = (accountType || "").trim().toLowerCase()
+    const rc = (reportCategory || "").trim().toLowerCase()
 
-    if (includeTransfers && categoryLower === "transfer") {
-      return "transfer"
-    }
+    // Transfers only included when toggle ON
+    if (rc === "transfer") return "transfer"
 
+    // Investing
+    if (at === "fixed assets" || at === "other assets") return "investing"
+
+    // Financing
+    if (at === "credit card" || at === "long term liabilities" || at === "equity")
+      return "financing"
+
+    // ✅ Operating (explicit)
     if (
-      typeLower === "income" ||
-      typeLower === "other income" ||
-      typeLower === "expenses" ||
-      typeLower === "expense" ||
-      typeLower === "cost of goods sold" ||
-      typeLower === "1020 Accounts Receivable (A/R)" ||
-      typeLower === "2010 Accounts Payable (A/P)"
+      at === "accounts receivable (a/r)" ||
+      at === "accounts payable (a/p)" ||
+      at === "income" ||
+      at === "other income" ||
+      at === "cost of goods sold" ||
+      at === "expenses" ||
+      at === "other expense" ||
+      at === "other current assets" ||
+      at === "other current liabilities"
     ) {
       return "operating"
     }
 
-    if (typeLower === "fixed assets" || typeLower === "other assets" || typeLower === "property, plant & equipment") {
-      return "investing"
-    }
-
-    if (
-      typeLower === "long term liabilities" ||
-      typeLower === "equity" ||
-      typeLower === "credit card" ||
-      typeLower === "other current liabilities" ||
-      typeLower === "line of credit"
-    ) {
-      return "financing"
-    }
-
-    return "other"
+    // Fallback: anything not listed above is operating
+    return "operating"
   }
 
   // Calculate date range based on selected period
@@ -775,7 +823,7 @@ export default function CashFlowPage() {
         .from("journal_entry_lines")
         .select("entry_number,date,entry_bank_account,debit,credit,report_category,class")
         .gte("date", startDate)
-        .lte("date", endDate)
+        .lt("date", toExclusiveDate(endDate))
         .eq("is_cash_account", true)
         .not("entry_bank_account", "is", null)
 
@@ -794,7 +842,7 @@ export default function CashFlowPage() {
 
       const bankAccountMap = new Map<string, Record<string, number>>()
       const periodSet = new Set<string>()
-      const cashTransactionsList: any[] = []
+      const bankTransactionsList: any[] = []
 
       cashLines.forEach((line: any) => {
         const periodKey = getPeriodKey(line.date)
@@ -804,7 +852,7 @@ export default function CashFlowPage() {
         if (!bankAccountMap.has(bank)) bankAccountMap.set(bank, {})
         const bankData = bankAccountMap.get(bank)!
         bankData[periodKey] = toNum(bankData[periodKey]) + cashDelta
-        cashTransactionsList.push({ ...line, cashDelta, cashFlowImpact: cashDelta, periodKey })
+        bankTransactionsList.push({ ...line, cashDelta, cashFlowImpact: cashDelta, periodKey })
       })
 
       const periodsArray = Array.from(periodSet)
@@ -835,7 +883,7 @@ export default function CashFlowPage() {
 
       bankData.sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
       setBankAccountData(bankData)
-      setCashTransactions(cashTransactionsList)
+      setBankTransactions(bankTransactionsList)
     } catch (err) {
       console.error("❌ Error fetching bank account cash flow data:", err)
       setError(err instanceof Error ? err.message : "Unknown error")
@@ -851,7 +899,7 @@ export default function CashFlowPage() {
       .from("cash_related_offsets")
       .select("entry_number,date,class,account,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
-      .lte("date", endDate)
+      .lt("date", toExclusiveDate(endDate))
 
     if (selectedProperty !== "All Properties") {
       viewQuery = viewQuery.eq("class", selectedProperty)
@@ -873,7 +921,7 @@ export default function CashFlowPage() {
       .from("journal_entry_lines")
       .select("entry_number,entry_bank_account")
       .gte("date", startDate)
-      .lte("date", endDate)
+      .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
     if (selectedProperty !== "All Properties") {
@@ -906,6 +954,12 @@ export default function CashFlowPage() {
       .select("entry_number,date,class,account,account_type,report_category,debit,credit")
       .in("entry_number", entryNumbers)
       .eq("is_cash_account", false)
+      .gte("date", startDate)
+      .lt("date", toExclusiveDate(endDate))
+
+    if (!includeTransfers) {
+      offsetQuery = offsetQuery.not("report_category", "ilike", "transfer")
+    }
 
     const { data: offsetLines, error: offsetError } = await offsetQuery
     if (offsetError) throw offsetError
@@ -981,7 +1035,7 @@ export default function CashFlowPage() {
       })
 
       setOffsetAccountData(offsetData)
-      setCashTransactions(transactionsList)
+      setOffsetTransactions(transactionsList)
 
       if (process.env.NODE_ENV === "development") {
         await checkDataQuality(offsets, startDate, endDate)
@@ -1004,13 +1058,17 @@ export default function CashFlowPage() {
       const offsets = await fetchOffsets(startDate, endDate)
 
       const propertyTransactions = new Map<string, any[]>()
+      const allTransactions: any[] = []
       offsets.forEach((row: any) => {
         const property = row.class || "Unclassified"
         if (!propertyTransactions.has(property)) propertyTransactions.set(property, [])
         const cashEffect = toNum(row.credit) - toNum(row.debit)
-        propertyTransactions.get(property)!.push({ ...row, cashFlowImpact: cashEffect })
+        const tx = { ...row, cashFlowImpact: cashEffect }
+        propertyTransactions.get(property)!.push(tx)
+        allTransactions.push(tx)
       })
       setTransactionData(propertyTransactions)
+      setOffsetTransactions(allTransactions)
 
       const cashFlowArray: CashFlowRow[] = []
       const periodLabel = getPeriodLabel()
@@ -1057,7 +1115,7 @@ export default function CashFlowPage() {
       .from("journal_entry_lines")
       .select("entry_number,debit,credit,entry_bank_account,report_category,class,date")
       .gte("date", startDate)
-      .lte("date", endDate)
+      .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
     if (selectedProperty !== "All Properties") {
@@ -1079,7 +1137,7 @@ export default function CashFlowPage() {
     const cashSum = new Map<string, number>()
     cashLines.forEach((l: any) => {
       const entry = l.entry_number
-      const delta = toNum(l.credit) - toNum(l.debit)
+      const delta = toNum(l.debit) - toNum(l.credit)
       cashSum.set(entry, toNum(cashSum.get(entry)) + delta)
     })
 
@@ -1115,7 +1173,7 @@ export default function CashFlowPage() {
     try {
       console.log(`🔍 Opening bank account drill-down for: "${bankAccount}", period: "${periodKey}"`)
 
-      const periodTransactions = cashTransactions.filter((tx: any) => {
+      const periodTransactions = bankTransactions.filter((tx: any) => {
         return tx.periodKey === periodKey && tx.entry_bank_account === bankAccount
       })
 
@@ -1156,7 +1214,7 @@ export default function CashFlowPage() {
     try {
       console.log(`🔍 Opening cash flow drill-down for account: "${offsetAccount}", period: "${periodKey}"`)
 
-      const periodTransactions = cashTransactions.filter((tx: any) => {
+      const periodTransactions = offsetTransactions.filter((tx: any) => {
         return tx.periodKey === periodKey && tx.account === offsetAccount
       })
 
@@ -1371,13 +1429,13 @@ export default function CashFlowPage() {
     return {
       operating: offsetAccountData
         .filter((account) => {
-          const sampleTx = cashTransactions.find((tx) => tx.account === account.offsetAccount)
+          const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
           return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "operating"
         })
         .sort((a, b) => {
           // Get sample transactions to determine account types
-          const sampleTxA = cashTransactions.find((tx) => tx.account === a.offsetAccount)
-          const sampleTxB = cashTransactions.find((tx) => tx.account === b.offsetAccount)
+          const sampleTxA = offsetTransactions.find((tx) => tx.account === a.offsetAccount)
+          const sampleTxB = offsetTransactions.find((tx) => tx.account === b.offsetAccount)
 
           const accountTypeA = sampleTxA?.account_type?.toLowerCase() || ""
           const accountTypeB = sampleTxB?.account_type?.toLowerCase() || ""
@@ -1394,19 +1452,19 @@ export default function CashFlowPage() {
           return (a.offsetAccount || "").localeCompare(b.offsetAccount || "")
         }),
       financing: offsetAccountData.filter((account) => {
-        const sampleTx = cashTransactions.find((tx) => tx.account === account.offsetAccount)
+        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
         return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "financing"
       }),
       investing: offsetAccountData.filter((account) => {
-        const sampleTx = cashTransactions.find((tx) => tx.account === account.offsetAccount)
+        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
         return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "investing"
       }),
       transfer: offsetAccountData.filter((account) => {
-        const sampleTx = cashTransactions.find((tx) => tx.account === account.offsetAccount)
+        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
         return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "transfer"
       }),
       other: offsetAccountData.filter((account) => {
-        const sampleTx = cashTransactions.find((tx) => tx.account === account.offsetAccount)
+        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
         return !sampleTx || classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "other"
       }),
     }
@@ -1938,7 +1996,7 @@ export default function CashFlowPage() {
                   const financingTotal = accountsByClass.financing.reduce((sum, acc) => sum + acc.total, 0)
                   const investingTotal = accountsByClass.investing.reduce((sum, acc) => sum + acc.total, 0)
                   const transferTotal = accountsByClass.transfer.reduce((sum, acc) => sum + acc.total, 0)
-                  const netTotal = operatingTotal + financingTotal + investingTotal + transferTotal
+                  const netTotal = operatingTotal + financingTotal + investingTotal
 
                   return (
                     <div className="p-6 bg-gradient-to-r from-blue-50 to-green-50 border-b border-gray-200">
