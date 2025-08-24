@@ -142,7 +142,7 @@ export default function CashFlowPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>("June")
   const [selectedYear, setSelectedYear] = useState<string>("2024")
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly")
-  const [selectedProperty, setSelectedProperty] = useState("All Properties")
+  const [selectedCustomer, setSelectedCustomer] = useState("All Customers")
   const [selectedBankAccount, setSelectedBankAccount] = useState("All Bank Accounts")
   const [viewMode, setViewMode] = useState<ViewMode>("offset")
   const [periodType, setPeriodType] = useState<PeriodType>("monthly")
@@ -185,7 +185,7 @@ export default function CashFlowPage() {
   const [bankAccountData, setBankAccountData] = useState<BankAccountData[]>([])
 
   // Common state
-  const [availableProperties, setAvailableProperties] = useState<string[]>(["All Properties"])
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>(["All Customers"])
   const [availableBankAccounts, setAvailableBankAccounts] = useState<string[]>(["All Bank Accounts"])
   const [error, setError] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
@@ -765,23 +765,23 @@ export default function CashFlowPage() {
     return "Trailing 12 Months"
   }
 
-  // ENHANCED: Fetch available properties and bank accounts using new fields
+  // ENHANCED: Fetch available customers and bank accounts using new fields
   const fetchFilters = async () => {
     try {
-      // Fetch properties from 'class' field
-      const { data: propertyData, error: propertyError } = await supabase
+      // Fetch customers from 'customer' field
+      const { data: customerData, error: customerError } = await supabase
         .from("journal_entry_lines")
-        .select("class")
-        .not("class", "is", null)
+        .select("customer")
+        .not("customer", "is", null)
 
-      if (propertyError) throw propertyError
+      if (customerError) throw customerError
 
-      const properties = new Set<string>()
-      propertyData.forEach((row: any) => {
-        if (row.class) properties.add(row.class)
+      const customers = new Set<string>()
+      customerData.forEach((row: any) => {
+        if (row.customer) customers.add(row.customer)
       })
 
-      setAvailableProperties(["All Properties", ...Array.from(properties).sort()])
+      setAvailableCustomers(["All Customers", ...Array.from(customers).sort()])
 
       // ENHANCED: Fetch bank accounts using entry_bank_account field
       const { data: bankData, error: bankError } = await supabase
@@ -821,14 +821,14 @@ export default function CashFlowPage() {
 
       let query = supabase
         .from("journal_entry_lines")
-        .select("entry_number,date,entry_bank_account,debit,credit,report_category,class")
+        .select("entry_number,date,entry_bank_account,debit,credit,report_category,class,customer")
         .gte("date", startDate)
         .lt("date", toExclusiveDate(endDate))
         .eq("is_cash_account", true)
         .not("entry_bank_account", "is", null)
 
-      if (selectedProperty !== "All Properties") {
-        query = query.eq("class", selectedProperty)
+      if (selectedCustomer !== "All Customers") {
+        query = query.eq("customer", selectedCustomer)
       }
       if (selectedBankAccount !== "All Bank Accounts") {
         query = query.eq("entry_bank_account", selectedBankAccount)
@@ -897,12 +897,12 @@ export default function CashFlowPage() {
     // Attempt to use the cash_related_offsets view
     let viewQuery = supabase
       .from("cash_related_offsets")
-      .select("entry_number,date,class,account,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
+      .select("entry_number,date,class,customer,account,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
 
-    if (selectedProperty !== "All Properties") {
-      viewQuery = viewQuery.eq("class", selectedProperty)
+    if (selectedCustomer !== "All Customers") {
+      viewQuery = viewQuery.eq("customer", selectedCustomer)
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       viewQuery = viewQuery.eq("cash_bank_account", selectedBankAccount)
@@ -924,8 +924,8 @@ export default function CashFlowPage() {
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
-    if (selectedProperty !== "All Properties") {
-      cashQuery = cashQuery.eq("class", selectedProperty)
+    if (selectedCustomer !== "All Customers") {
+      cashQuery = cashQuery.eq("customer", selectedCustomer)
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       cashQuery = cashQuery.eq("entry_bank_account", selectedBankAccount)
@@ -951,7 +951,7 @@ export default function CashFlowPage() {
 
     let offsetQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,date,class,account,account_type,report_category,debit,credit")
+      .select("entry_number,date,class,customer,account,account_type,report_category,debit,credit")
       .in("entry_number", entryNumbers)
       .eq("is_cash_account", false)
       .gte("date", startDate)
@@ -1113,13 +1113,13 @@ export default function CashFlowPage() {
   const checkDataQuality = async (offsets: any[], startDate: string, endDate: string) => {
     let cashQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,debit,credit,entry_bank_account,report_category,class,date")
+      .select("entry_number,debit,credit,entry_bank_account,report_category,customer,date")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
-    if (selectedProperty !== "All Properties") {
-      cashQuery = cashQuery.eq("class", selectedProperty)
+    if (selectedCustomer !== "All Customers") {
+      cashQuery = cashQuery.eq("customer", selectedCustomer)
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       cashQuery = cashQuery.eq("entry_bank_account", selectedBankAccount)
@@ -1490,7 +1490,7 @@ export default function CashFlowPage() {
     selectedYear,
     customStartDate,
     customEndDate,
-    selectedProperty,
+    selectedCustomer,
     selectedBankAccount,
     viewMode,
     periodType,
@@ -1713,16 +1713,16 @@ export default function CashFlowPage() {
               </div>
             )}
 
-            {/* Property Filter */}
+            {/* Customer Filter */}
             <select
-              value={selectedProperty}
-              onChange={(e) => setSelectedProperty(e.target.value)}
+              value={selectedCustomer}
+              onChange={(e) => setSelectedCustomer(e.target.value)}
               className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
               style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
             >
-              {availableProperties.map((property) => (
-                <option key={property} value={property}>
-                  {property}
+              {availableCustomers.map((customer) => (
+                <option key={customer} value={customer}>
+                  {customer}
                 </option>
               ))}
             </select>
@@ -1828,9 +1828,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedProperty !== "All Properties" && (
+                  {selectedCustomer !== "All Customers" && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Property: {selectedProperty}
+                      Customer: {selectedCustomer}
                     </span>
                   )}
                 </div>
@@ -1973,9 +1973,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedProperty !== "All Properties" && (
+                  {selectedCustomer !== "All Customers" && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Property: {selectedProperty}
+                      Customer: {selectedCustomer}
                     </span>
                   )}
                   {selectedBankAccount !== "All Bank Accounts" && (
@@ -2889,9 +2889,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedProperty !== "All Properties" && (
+                  {selectedCustomer !== "All Customers" && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Property: {selectedProperty}
+                      Customer: {selectedCustomer}
                     </span>
                   )}
                   {selectedBankAccount !== "All Bank Accounts" && (
