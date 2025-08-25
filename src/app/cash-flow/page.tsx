@@ -48,8 +48,6 @@ interface TransactionDetail {
   impact: number
   bankAccount?: string
   entryNumber?: string
-  customer?: string
-  vendor?: string
   class?: string
   name?: string
   accountType?: string
@@ -194,8 +192,7 @@ export default function CashFlowPage() {
   const [transactionDetails, setTransactionDetails] = useState<TransactionDetail[]>([])
   const [modalTitle, setModalTitle] = useState("")
   const [groupedTransactions, setGroupedTransactions] = useState<Record<string, TransactionDetail[]>>({})
-  const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({})
-  const [showVendorColumn, setShowVendorColumn] = useState(false)
+  const [expandedNames, setExpandedNames] = useState<Record<string, boolean>>({})
   const [offsetTransactions, setOffsetTransactions] = useState<any[]>([])
   const [bankTransactions, setBankTransactions] = useState<any[]>([])
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([])
@@ -806,7 +803,7 @@ export default function CashFlowPage() {
 
       let query = supabase
         .from("journal_entry_lines")
-        .select("entry_number,date,entry_bank_account,memo,debit,credit,report_category,customer")
+        .select("entry_number,date,account,entry_bank_account,memo,debit,credit,report_category,customer,name,class,account_type")
         .gte("date", startDate)
         .lt("date", toExclusiveDate(endDate))
         .eq("is_cash_account", true)
@@ -882,7 +879,7 @@ export default function CashFlowPage() {
     // Attempt to use the cash_related_offsets view
     let viewQuery = supabase
       .from("cash_related_offsets")
-      .select("entry_number,date,class,customer,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
+      .select("entry_number,date,class,customer,name,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
 
@@ -936,7 +933,7 @@ export default function CashFlowPage() {
 
     let offsetQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,date,class,customer,account,memo,account_type,report_category,debit,credit")
+      .select("entry_number,date,class,customer,name,account,memo,account_type,report_category,debit,credit")
       .in("entry_number", entryNumbers)
       .eq("is_cash_account", false)
       .gte("date", startDate)
@@ -1098,7 +1095,7 @@ export default function CashFlowPage() {
   const checkDataQuality = async (offsets: any[], startDate: string, endDate: string) => {
     let cashQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,class,date")
+      .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,name,class,date")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
@@ -1178,8 +1175,6 @@ export default function CashFlowPage() {
         credit: Number.parseFloat(tx.credit) || 0,
         impact: tx.cashFlowImpact,
         entryNumber: tx.entry_number,
-        customer: tx.customer,
-        vendor: tx.vendor,
         name: tx.name,
         class: tx.class,
         bankAccount: tx.entry_bank_account,
@@ -1187,9 +1182,6 @@ export default function CashFlowPage() {
         reportCategory: tx.report_category,
       }))
 
-      const sampleTx = periodTransactions[0]
-      const accountType = sampleTx?.account_type?.toLowerCase() || ""
-      setShowVendorColumn(accountType.includes("accounts payable"))
       setGroupedTransactions({})
       setTransactionDetails(transactionDetails)
       setShowTransactionModal(true)
@@ -1223,8 +1215,6 @@ export default function CashFlowPage() {
           credit: Number.parseFloat(tx.credit) || 0,
           impact: tx.cashFlowImpact,
           entryNumber: tx.entry_number,
-          customer: tx.customer,
-          vendor: tx.vendor,
           name: tx.name,
           class: tx.class,
           bankAccount: tx.entry_bank_account,
@@ -1232,9 +1222,6 @@ export default function CashFlowPage() {
           reportCategory: tx.report_category,
         }))
 
-        const sampleTx = periodTransactions[0]
-        const accountType = sampleTx?.account_type?.toLowerCase() || ""
-        setShowVendorColumn(accountType.includes("accounts payable"))
         setGroupedTransactions({})
         setTransactionDetails(transactionDetails)
         setShowTransactionModal(true)
@@ -1366,8 +1353,6 @@ export default function CashFlowPage() {
         `${property} - ${getPeriodLabel()} ${category.charAt(0).toUpperCase() + category.slice(1)} Cash Flows`,
       )
 
-      setShowVendorColumn(false)
-
       const transactionDetails: TransactionDetail[] = filteredTransactions.map((row: any) => ({
         date: row.date,
         account: row.account,
@@ -1379,8 +1364,6 @@ export default function CashFlowPage() {
         accountType: row.account_type,
         reportCategory: row.report_category,
         entryNumber: row.entry_number,
-        customer: row.customer,
-        vendor: row.vendor,
         name: row.name,
         class: row.class,
       }))
@@ -1404,12 +1387,12 @@ export default function CashFlowPage() {
       if (hasReceivableOrPayable) {
         const groups: Record<string, TransactionDetail[]> = {}
         transactionDetails.forEach((t) => {
-          const key = t.customer || t.vendor || t.name || "Unknown"
+          const key = t.name || "Unknown"
           if (!groups[key]) groups[key] = []
           groups[key].push(t)
         })
         setGroupedTransactions(groups)
-        setExpandedCustomers({})
+        setExpandedNames({})
       } else {
         setGroupedTransactions({})
       }
@@ -3292,13 +3275,8 @@ export default function CashFlowPage() {
                         Date
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Payee/Customer
+                        Name
                       </th>
-                      {showVendorColumn && (
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Vendor
-                        </th>
-                      )}
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Memo
                       </th>
@@ -3312,30 +3290,27 @@ export default function CashFlowPage() {
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {Object.keys(groupedTransactions).length > 0
-                      ? Object.entries(groupedTransactions).map(([customer, txs]) => {
+                      ? Object.entries(groupedTransactions).map(([name, txs]) => {
                           const total = txs.reduce((sum, t) => sum + t.impact, 0)
-                          const isExpanded = expandedCustomers[customer]
+                          const isExpanded = expandedNames[name]
                           return (
-                            <React.Fragment key={customer}>
+                            <React.Fragment key={name}>
                               <tr
                                 onClick={() =>
-                                  setExpandedCustomers((prev) => ({
+                                  setExpandedNames((prev) => ({
                                     ...prev,
-                                    [customer]: !prev[customer],
+                                    [name]: !prev[name],
                                   }))
                                 }
                                 className="bg-gray-50 cursor-pointer"
                               >
-                                <td
-                                  colSpan={showVendorColumn ? 6 : 5}
-                                  className="px-6 py-4 text-sm font-medium text-gray-900"
-                                >
+                                <td colSpan={5} className="px-6 py-4 text-sm font-medium text-gray-900">
                                   {isExpanded ? (
                                     <ChevronDown className="inline w-4 h-4 mr-2" />
                                   ) : (
                                     <ChevronRight className="inline w-4 h-4 mr-2" />
                                   )}
-                                  {customer} - {formatCurrency(total)}
+                                  {name} - {formatCurrency(total)}
                                 </td>
                               </tr>
                               {isExpanded &&
@@ -3343,21 +3318,14 @@ export default function CashFlowPage() {
                                   <tr
                                     key={`${transaction.entryNumber}-${index}`}
                                     className="hover:bg-gray-50 cursor-pointer"
-                                    onClick={() =>
-                                      openJournalEntry(transaction.entryNumber)
-                                    }
+                                    onClick={() => openJournalEntry(transaction.entryNumber)}
                                   >
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                       {formatDate(transaction.date)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                      {transaction.name || transaction.customer || transaction.vendor || "N/A"}
+                                      {transaction.name || "N/A"}
                                     </td>
-                                    {showVendorColumn && (
-                                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                        {transaction.vendor || "-"}
-                                      </td>
-                                    )}
                                     <td
                                       className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
                                       title={transaction.memo || ""}
@@ -3395,13 +3363,8 @@ export default function CashFlowPage() {
                               {formatDate(transaction.date)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                              {transaction.name || transaction.customer || transaction.vendor || "N/A"}
+                              {transaction.name || "N/A"}
                             </td>
-                            {showVendorColumn && (
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                {transaction.vendor || "-"}
-                              </td>
-                            )}
                             <td
                               className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
                               title={transaction.memo || ""}
