@@ -216,8 +216,6 @@ export default function CashFlowPage() {
   const [showTransactionModal, setShowTransactionModal] = useState(false)
   const [transactionDetails, setTransactionDetails] = useState<TransactionDetail[]>([])
   const [modalTitle, setModalTitle] = useState("")
-  const [groupedTransactions, setGroupedTransactions] = useState<Record<string, TransactionDetail[]>>({})
-  const [expandedNames, setExpandedNames] = useState<Record<string, boolean>>({})
   const [nameField, setNameField] = useState<NameField>("name")
   const [offsetTransactions, setOffsetTransactions] = useState<any[]>([])
   const [bankTransactions, setBankTransactions] = useState<any[]>([])
@@ -1217,24 +1215,6 @@ export default function CashFlowPage() {
 
       const hasReceivable = transactionDetails.some(isReceivable)
       const hasPayable = transactionDetails.some(isPayable)
-
-      if (hasReceivable || hasPayable) {
-        const groups: Record<string, TransactionDetail[]> = {}
-        transactionDetails.forEach((t) => {
-          const key = isReceivable(t)
-            ? t.customer || "Unknown"
-            : isPayable(t)
-              ? t.vendor || "Unknown"
-              : t.name || "Unknown"
-          if (!groups[key]) groups[key] = []
-          groups[key].push(t)
-        })
-        setGroupedTransactions(groups)
-        setExpandedNames({})
-      } else {
-        setGroupedTransactions({})
-      }
-
       setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
       setTransactionDetails(transactionDetails)
       setShowTransactionModal(true)
@@ -1279,24 +1259,6 @@ export default function CashFlowPage() {
 
         const hasReceivable = transactionDetails.some(isReceivable)
         const hasPayable = transactionDetails.some(isPayable)
-
-        if (hasReceivable || hasPayable) {
-          const groups: Record<string, TransactionDetail[]> = {}
-          transactionDetails.forEach((t) => {
-            const key = isReceivable(t)
-              ? t.customer || "Unknown"
-              : isPayable(t)
-                ? t.vendor || "Unknown"
-                : t.name || "Unknown"
-            if (!groups[key]) groups[key] = []
-            groups[key].push(t)
-          })
-          setGroupedTransactions(groups)
-          setExpandedNames({})
-        } else {
-          setGroupedTransactions({})
-        }
-
         setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
         setTransactionDetails(transactionDetails)
         setShowTransactionModal(true)
@@ -1448,24 +1410,6 @@ export default function CashFlowPage() {
 
       const hasReceivable = transactionDetails.some(isReceivable)
       const hasPayable = transactionDetails.some(isPayable)
-
-      if (hasReceivable || hasPayable) {
-        const groups: Record<string, TransactionDetail[]> = {}
-        transactionDetails.forEach((t) => {
-          const key = isReceivable(t)
-            ? t.customer || "Unknown"
-            : isPayable(t)
-              ? t.vendor || "Unknown"
-              : t.name || "Unknown"
-          if (!groups[key]) groups[key] = []
-          groups[key].push(t)
-        })
-        setGroupedTransactions(groups)
-        setExpandedNames({})
-      } else {
-        setGroupedTransactions({})
-      }
-
       setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
       setShowTransactionModal(true)
     } catch (err) {
@@ -3359,106 +3303,40 @@ export default function CashFlowPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {Object.keys(groupedTransactions).length > 0
-                      ? Object.entries(groupedTransactions).map(([name, txs]) => {
-                          const total = txs.reduce((sum, t) => sum + t.impact, 0)
-                          const isExpanded = expandedNames[name]
-                          return (
-                            <React.Fragment key={name}>
-                              <tr
-                                onClick={() =>
-                                  setExpandedNames((prev) => ({
-                                    ...prev,
-                                    [name]: !prev[name],
-                                  }))
-                                }
-                                className="bg-gray-50 cursor-pointer"
-                              >
-                                <td colSpan={5} className="px-6 py-4 text-sm font-medium text-gray-900">
-                                  {isExpanded ? (
-                                    <ChevronDown className="inline w-4 h-4 mr-2" />
-                                  ) : (
-                                    <ChevronRight className="inline w-4 h-4 mr-2" />
-                                  )}
-                                  {name} - {formatCurrency(total)}
-                                </td>
-                              </tr>
-                              {isExpanded &&
-                                txs.map((transaction, index) => (
-                                  <tr
-                                    key={`${transaction.entryNumber}-${index}`}
-                                    className="hover:bg-gray-50 cursor-pointer"
-                                    onClick={() => openJournalEntry(transaction.entryNumber)}
-                                  >
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                      {formatDate(transaction.date)}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                      {getDisplayName(transaction)}
-                                    </td>
-                                    <td
-                                      className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
-                                      title={transaction.memo || ""}
-                                    >
-                                      {transaction.memo || "-"}
-                                    </td>
-                                    <td
-                                      className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
-                                        transaction.impact >= 0
-                                          ? "text-green-600"
-                                          : "text-red-600"
-                                      }`}
-                                    >
-                                      {formatCurrency(transaction.impact)}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                                      {transaction.class && (
-                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                          {transaction.class}
-                                        </span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                            </React.Fragment>
-                          )
-                        })
-                      : transactionDetails.map((transaction, index) => (
-                          <tr
-                            key={`${transaction.entryNumber}-${index}`}
-                            className="hover:bg-gray-50 cursor-pointer"
-                            onClick={() => openJournalEntry(transaction.entryNumber)}
-                          >
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {formatDate(transaction.date)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                              {getDisplayName(transaction)}
-                            </td>
-                            <td
-                              className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
-                              title={transaction.memo || ""}
-                            >
-                              {transaction.memo || "-"}
-                            </td>
-                            <td
-                              className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
-                                transaction.impact >= 0
-                                  ? "text-green-600"
-                                  : "text-red-600"
-                              }`}
-                            >
-                              {formatCurrency(transaction.impact)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-center">
-                              {transaction.class && (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                  {transaction.class}
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
+                    {transactionDetails.map((transaction, index) => (
+                      <tr
+                        key={`${transaction.entryNumber}-${index}`}
+                        className="hover:bg-gray-50 cursor-pointer"
+                        onClick={() => openJournalEntry(transaction.entryNumber)}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {formatDate(transaction.date)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {getDisplayName(transaction)}
+                        </td>
+                        <td
+                          className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
+                          title={transaction.memo || ""}
+                        >
+                          {transaction.memo || "-"}
+                        </td>
+                        <td
+                          className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
+                            transaction.impact >= 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
+                          {formatCurrency(transaction.impact)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                          {transaction.class && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {transaction.class}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
