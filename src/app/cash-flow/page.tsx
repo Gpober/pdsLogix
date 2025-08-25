@@ -49,7 +49,9 @@ interface TransactionDetail {
   bankAccount?: string
   entryNumber?: string
   class?: string
-  name?: string
+  customer?: string | null
+  vendor?: string | null
+  name?: string | null
   accountType?: string
   reportCategory?: string
 }
@@ -116,6 +118,29 @@ interface BankAccountData {
 type ViewMode = "offset" | "traditional" | "bybank"
 type PeriodType = "monthly" | "weekly" | "total"
 type TimePeriod = "Monthly" | "Quarterly" | "YTD" | "Trailing 12" | "Custom"
+type NameField = "name" | "customer" | "vendor"
+
+const isReceivable = (t: { accountType?: string; account?: string }) => {
+  const type = t.accountType?.toLowerCase() || ""
+  const acct = t.account?.toLowerCase() || ""
+  return (
+    type.includes("accounts receivable") ||
+    acct.includes("accounts receivable") ||
+    type.includes("a/r") ||
+    acct.includes("a/r")
+  )
+}
+
+const isPayable = (t: { accountType?: string; account?: string }) => {
+  const type = t.accountType?.toLowerCase() || ""
+  const acct = t.account?.toLowerCase() || ""
+  return (
+    type.includes("accounts payable") ||
+    acct.includes("accounts payable") ||
+    type.includes("a/p") ||
+    acct.includes("a/p")
+  )
+}
 
 // Generate months and years lists
 const monthsList = [
@@ -193,6 +218,7 @@ export default function CashFlowPage() {
   const [modalTitle, setModalTitle] = useState("")
   const [groupedTransactions, setGroupedTransactions] = useState<Record<string, TransactionDetail[]>>({})
   const [expandedNames, setExpandedNames] = useState<Record<string, boolean>>({})
+  const [nameField, setNameField] = useState<NameField>("name")
   const [offsetTransactions, setOffsetTransactions] = useState<any[]>([])
   const [bankTransactions, setBankTransactions] = useState<any[]>([])
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([])
@@ -227,6 +253,11 @@ export default function CashFlowPage() {
 
   const sum = (values: number[]) => values.reduce((acc, val) => acc + val, 0)
 
+  const getDisplayName = (t: TransactionDetail) => {
+    if (nameField === "customer") return t.customer || "N/A"
+    if (nameField === "vendor") return t.vendor || "N/A"
+    return t.name || "N/A"
+  }
 
   // Format date for display
   const formatDateSafe = (dateString: string): string => {
@@ -803,7 +834,7 @@ export default function CashFlowPage() {
 
       let query = supabase
         .from("journal_entry_lines")
-        .select("entry_number,date,account,entry_bank_account,memo,debit,credit,report_category,customer,name,class,account_type")
+        .select("entry_number,date,account,entry_bank_account,memo,debit,credit,report_category,customer,vendor,name,class,account_type")
         .gte("date", startDate)
         .lt("date", toExclusiveDate(endDate))
         .eq("is_cash_account", true)
@@ -879,7 +910,7 @@ export default function CashFlowPage() {
     // Attempt to use the cash_related_offsets view
     let viewQuery = supabase
       .from("cash_related_offsets")
-      .select("entry_number,date,class,customer,name,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
+      .select("entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
 
@@ -933,7 +964,7 @@ export default function CashFlowPage() {
 
     let offsetQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,date,class,customer,name,account,memo,account_type,report_category,debit,credit")
+      .select("entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit")
       .in("entry_number", entryNumbers)
       .eq("is_cash_account", false)
       .gte("date", startDate)
@@ -1095,7 +1126,7 @@ export default function CashFlowPage() {
   const checkDataQuality = async (offsets: any[], startDate: string, endDate: string) => {
     let cashQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,name,class,date")
+      .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,vendor,name,class,date")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
@@ -1175,14 +1206,36 @@ export default function CashFlowPage() {
         credit: Number.parseFloat(tx.credit) || 0,
         impact: tx.cashFlowImpact,
         entryNumber: tx.entry_number,
-        name: tx.name,
-        class: tx.class,
         bankAccount: tx.entry_bank_account,
+        class: tx.class,
+        customer: tx.customer,
+        vendor: tx.vendor,
+        name: tx.customer || tx.vendor || tx.name,
         accountType: tx.account_type,
         reportCategory: tx.report_category,
       }))
 
-      setGroupedTransactions({})
+      const hasReceivable = transactionDetails.some(isReceivable)
+      const hasPayable = transactionDetails.some(isPayable)
+
+      if (hasReceivable || hasPayable) {
+        const groups: Record<string, TransactionDetail[]> = {}
+        transactionDetails.forEach((t) => {
+          const key = isReceivable(t)
+            ? t.customer || "Unknown"
+            : isPayable(t)
+              ? t.vendor || "Unknown"
+              : t.name || "Unknown"
+          if (!groups[key]) groups[key] = []
+          groups[key].push(t)
+        })
+        setGroupedTransactions(groups)
+        setExpandedNames({})
+      } else {
+        setGroupedTransactions({})
+      }
+
+      setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
       setTransactionDetails(transactionDetails)
       setShowTransactionModal(true)
     } catch (err) {
@@ -1215,14 +1268,36 @@ export default function CashFlowPage() {
           credit: Number.parseFloat(tx.credit) || 0,
           impact: tx.cashFlowImpact,
           entryNumber: tx.entry_number,
-          name: tx.name,
-          class: tx.class,
           bankAccount: tx.entry_bank_account,
+          class: tx.class,
+          customer: tx.customer,
+          vendor: tx.vendor,
+          name: tx.customer || tx.vendor || tx.name,
           accountType: tx.account_type,
           reportCategory: tx.report_category,
         }))
 
-        setGroupedTransactions({})
+        const hasReceivable = transactionDetails.some(isReceivable)
+        const hasPayable = transactionDetails.some(isPayable)
+
+        if (hasReceivable || hasPayable) {
+          const groups: Record<string, TransactionDetail[]> = {}
+          transactionDetails.forEach((t) => {
+            const key = isReceivable(t)
+              ? t.customer || "Unknown"
+              : isPayable(t)
+                ? t.vendor || "Unknown"
+                : t.name || "Unknown"
+            if (!groups[key]) groups[key] = []
+            groups[key].push(t)
+          })
+          setGroupedTransactions(groups)
+          setExpandedNames({})
+        } else {
+          setGroupedTransactions({})
+        }
+
+        setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
         setTransactionDetails(transactionDetails)
         setShowTransactionModal(true)
     } catch (err) {
@@ -1364,30 +1439,24 @@ export default function CashFlowPage() {
         accountType: row.account_type,
         reportCategory: row.report_category,
         entryNumber: row.entry_number,
-        name: row.name,
         class: row.class,
+        customer: row.customer,
+        vendor: row.vendor,
+        name: row.customer || row.vendor || row.name,
       }))
       setTransactionDetails(transactionDetails)
 
-      const hasReceivableOrPayable = transactionDetails.some((t) => {
-        const type = t.accountType?.toLowerCase() || ""
-        const acct = t.account?.toLowerCase() || ""
-        return (
-          type.includes("accounts receivable") ||
-          acct.includes("accounts receivable") ||
-          type.includes("a/r") ||
-          acct.includes("a/r") ||
-          type.includes("accounts payable") ||
-          acct.includes("accounts payable") ||
-          type.includes("a/p") ||
-          acct.includes("a/p")
-        )
-      })
+      const hasReceivable = transactionDetails.some(isReceivable)
+      const hasPayable = transactionDetails.some(isPayable)
 
-      if (hasReceivableOrPayable) {
+      if (hasReceivable || hasPayable) {
         const groups: Record<string, TransactionDetail[]> = {}
         transactionDetails.forEach((t) => {
-          const key = t.name || "Unknown"
+          const key = isReceivable(t)
+            ? t.customer || "Unknown"
+            : isPayable(t)
+              ? t.vendor || "Unknown"
+              : t.name || "Unknown"
           if (!groups[key]) groups[key] = []
           groups[key].push(t)
         })
@@ -1397,6 +1466,7 @@ export default function CashFlowPage() {
         setGroupedTransactions({})
       }
 
+      setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
       setShowTransactionModal(true)
     } catch (err) {
       console.error("Error fetching cash flow transaction details:", err)
@@ -3275,7 +3345,7 @@ export default function CashFlowPage() {
                         Date
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Name
+                        {nameField === "customer" ? "Customer" : nameField === "vendor" ? "Vendor" : "Name"}
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Memo
@@ -3324,7 +3394,7 @@ export default function CashFlowPage() {
                                       {formatDate(transaction.date)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                      {transaction.name || "N/A"}
+                                      {getDisplayName(transaction)}
                                     </td>
                                     <td
                                       className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
@@ -3363,7 +3433,7 @@ export default function CashFlowPage() {
                               {formatDate(transaction.date)}
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                              {transaction.name || "N/A"}
+                              {getDisplayName(transaction)}
                             </td>
                             <td
                               className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
