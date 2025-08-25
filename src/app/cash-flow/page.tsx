@@ -48,10 +48,10 @@ interface TransactionDetail {
   impact: number
   bankAccount?: string
   entryNumber?: string
-  customer?: string
-  vendor?: string
   class?: string
-  name?: string
+  customer?: string | null
+  vendor?: string | null
+  name?: string | null
   accountType?: string
   reportCategory?: string
 }
@@ -118,6 +118,29 @@ interface BankAccountData {
 type ViewMode = "offset" | "traditional" | "bybank"
 type PeriodType = "monthly" | "weekly" | "total"
 type TimePeriod = "Monthly" | "Quarterly" | "YTD" | "Trailing 12" | "Custom"
+type NameField = "name" | "customer" | "vendor"
+
+const isReceivable = (t: { accountType?: string; account?: string }) => {
+  const type = t.accountType?.toLowerCase() || ""
+  const acct = t.account?.toLowerCase() || ""
+  return (
+    type.includes("accounts receivable") ||
+    acct.includes("accounts receivable") ||
+    type.includes("a/r") ||
+    acct.includes("a/r")
+  )
+}
+
+const isPayable = (t: { accountType?: string; account?: string }) => {
+  const type = t.accountType?.toLowerCase() || ""
+  const acct = t.account?.toLowerCase() || ""
+  return (
+    type.includes("accounts payable") ||
+    acct.includes("accounts payable") ||
+    type.includes("a/p") ||
+    acct.includes("a/p")
+  )
+}
 
 // Generate months and years lists
 const monthsList = [
@@ -153,7 +176,8 @@ export default function CashFlowPage() {
 
   // Collapsible sections state
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
-    operating: false,
+    operatingInflows: false,
+    operatingOutflows: false,
     financing: false,
     investing: false,
     transfer: false,
@@ -192,8 +216,7 @@ export default function CashFlowPage() {
   const [showTransactionModal, setShowTransactionModal] = useState(false)
   const [transactionDetails, setTransactionDetails] = useState<TransactionDetail[]>([])
   const [modalTitle, setModalTitle] = useState("")
-  const [groupedTransactions, setGroupedTransactions] = useState<Record<string, TransactionDetail[]>>({})
-  const [expandedCustomers, setExpandedCustomers] = useState<Record<string, boolean>>({})
+  const [nameField, setNameField] = useState<NameField>("name")
   const [offsetTransactions, setOffsetTransactions] = useState<any[]>([])
   const [bankTransactions, setBankTransactions] = useState<any[]>([])
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([])
@@ -228,6 +251,11 @@ export default function CashFlowPage() {
 
   const sum = (values: number[]) => values.reduce((acc, val) => acc + val, 0)
 
+  const getDisplayName = (t: TransactionDetail) => {
+    if (nameField === "customer") return t.customer || "N/A"
+    if (nameField === "vendor") return t.vendor || "N/A"
+    return t.name || "N/A"
+  }
 
   // Format date for display
   const formatDateSafe = (dateString: string): string => {
@@ -655,32 +683,12 @@ export default function CashFlowPage() {
     const at = (accountType || "").trim().toLowerCase()
     const rc = (reportCategory || "").trim().toLowerCase()
 
-    // Transfers only included when toggle ON
     if (rc === "transfer") return "transfer"
 
-    // Investing
-    if (at === "fixed assets" || at === "other assets") return "investing"
+    if (at.includes("fixed asset") || at.includes("long term asset")) return "investing"
 
-    // Financing
-    if (at === "credit card" || at === "long term liabilities" || at === "equity")
-      return "financing"
+    if (at === "long term liabilities") return "financing"
 
-    // ✅ Operating (explicit)
-    if (
-      at === "accounts receivable (a/r)" ||
-      at === "accounts payable (a/p)" ||
-      at === "income" ||
-      at === "other income" ||
-      at === "cost of goods sold" ||
-      at === "expenses" ||
-      at === "other expense" ||
-      at === "other current assets" ||
-      at === "other current liabilities"
-    ) {
-      return "operating"
-    }
-
-    // Fallback: anything not listed above is operating
     return "operating"
   }
 
@@ -824,7 +832,7 @@ export default function CashFlowPage() {
 
       let query = supabase
         .from("journal_entry_lines")
-        .select("entry_number,date,entry_bank_account,memo,debit,credit,report_category,customer")
+        .select("entry_number,date,account,entry_bank_account,memo,debit,credit,report_category,customer,vendor,name,class,account_type")
         .gte("date", startDate)
         .lt("date", toExclusiveDate(endDate))
         .eq("is_cash_account", true)
@@ -900,7 +908,7 @@ export default function CashFlowPage() {
     // Attempt to use the cash_related_offsets view
     let viewQuery = supabase
       .from("cash_related_offsets")
-      .select("entry_number,date,class,customer,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
+      .select("entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
 
@@ -954,7 +962,7 @@ export default function CashFlowPage() {
 
     let offsetQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,date,class,customer,account,memo,account_type,report_category,debit,credit")
+      .select("entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit")
       .in("entry_number", entryNumbers)
       .eq("is_cash_account", false)
       .gte("date", startDate)
@@ -1116,7 +1124,7 @@ export default function CashFlowPage() {
   const checkDataQuality = async (offsets: any[], startDate: string, endDate: string) => {
     let cashQuery = supabase
       .from("journal_entry_lines")
-      .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,class,date")
+      .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,vendor,name,class,date")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
@@ -1196,15 +1204,18 @@ export default function CashFlowPage() {
         credit: Number.parseFloat(tx.credit) || 0,
         impact: tx.cashFlowImpact,
         entryNumber: tx.entry_number,
+        bankAccount: tx.entry_bank_account,
+        class: tx.class,
         customer: tx.customer,
         vendor: tx.vendor,
-        name: tx.name,
-        class: tx.class,
-        bankAccount: tx.entry_bank_account,
+        name: tx.customer || tx.vendor || tx.name,
         accountType: tx.account_type,
         reportCategory: tx.report_category,
       }))
 
+      const hasReceivable = transactionDetails.some(isReceivable)
+      const hasPayable = transactionDetails.some(isPayable)
+      setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
       setTransactionDetails(transactionDetails)
       setShowTransactionModal(true)
     } catch (err) {
@@ -1229,25 +1240,28 @@ export default function CashFlowPage() {
 
       setModalTitle(`${offsetAccount} - ${period?.label || periodKey} (Cash Flows)`)
 
-      const transactionDetails: TransactionDetail[] = periodTransactions.map((tx: any) => ({
-        date: tx.date,
-        account: tx.account,
-        memo: tx.memo,
-        debit: Number.parseFloat(tx.debit) || 0,
-        credit: Number.parseFloat(tx.credit) || 0,
-        impact: tx.cashFlowImpact,
-        entryNumber: tx.entry_number,
-        customer: tx.customer,
-        vendor: tx.vendor,
-        name: tx.name,
-        class: tx.class,
-        bankAccount: tx.entry_bank_account,
-        accountType: tx.account_type,
-        reportCategory: tx.report_category,
-      }))
+        const transactionDetails: TransactionDetail[] = periodTransactions.map((tx: any) => ({
+          date: tx.date,
+          account: tx.account,
+          memo: tx.memo,
+          debit: Number.parseFloat(tx.debit) || 0,
+          credit: Number.parseFloat(tx.credit) || 0,
+          impact: tx.cashFlowImpact,
+          entryNumber: tx.entry_number,
+          bankAccount: tx.entry_bank_account,
+          class: tx.class,
+          customer: tx.customer,
+          vendor: tx.vendor,
+          name: tx.customer || tx.vendor || tx.name,
+          accountType: tx.account_type,
+          reportCategory: tx.report_category,
+        }))
 
-      setTransactionDetails(transactionDetails)
-      setShowTransactionModal(true)
+        const hasReceivable = transactionDetails.some(isReceivable)
+        const hasPayable = transactionDetails.some(isPayable)
+        setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
+        setTransactionDetails(transactionDetails)
+        setShowTransactionModal(true)
     } catch (err) {
       console.error("Error fetching cash flow transaction drill-down:", err)
     }
@@ -1387,41 +1401,16 @@ export default function CashFlowPage() {
         accountType: row.account_type,
         reportCategory: row.report_category,
         entryNumber: row.entry_number,
+        class: row.class,
         customer: row.customer,
         vendor: row.vendor,
-        name: row.name,
-        class: row.class,
+        name: row.customer || row.vendor || row.name,
       }))
       setTransactionDetails(transactionDetails)
 
-      const hasReceivableOrPayable = transactionDetails.some((t) => {
-        const type = t.accountType?.toLowerCase() || ""
-        const acct = t.account?.toLowerCase() || ""
-        return (
-          type.includes("accounts receivable") ||
-          acct.includes("accounts receivable") ||
-          type.includes("a/r") ||
-          acct.includes("a/r") ||
-          type.includes("accounts payable") ||
-          acct.includes("accounts payable") ||
-          type.includes("a/p") ||
-          acct.includes("a/p")
-        )
-      })
-
-      if (hasReceivableOrPayable) {
-        const groups: Record<string, TransactionDetail[]> = {}
-        transactionDetails.forEach((t) => {
-          const key = t.customer || t.vendor || t.name || "Unknown"
-          if (!groups[key]) groups[key] = []
-          groups[key].push(t)
-        })
-        setGroupedTransactions(groups)
-        setExpandedCustomers({})
-      } else {
-        setGroupedTransactions({})
-      }
-
+      const hasReceivable = transactionDetails.some(isReceivable)
+      const hasPayable = transactionDetails.some(isPayable)
+      setNameField(hasReceivable ? "customer" : hasPayable ? "vendor" : "name")
       setShowTransactionModal(true)
     } catch (err) {
       console.error("Error fetching cash flow transaction details:", err)
@@ -1457,47 +1446,49 @@ export default function CashFlowPage() {
 
   // Helper function to group accounts by classification including transfers
   const getAccountsByClass = () => {
+    const operatingInflows: OffsetAccountData[] = []
+    const operatingOutflows: OffsetAccountData[] = []
+    const financing: OffsetAccountData[] = []
+    const investing: OffsetAccountData[] = []
+    const transfer: OffsetAccountData[] = []
+    const other: OffsetAccountData[] = []
+
+    offsetAccountData.forEach((account) => {
+      const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
+      const classification = sampleTx
+        ? classifyTransaction(sampleTx.account_type, sampleTx.report_category)
+        : "other"
+      const accountType = sampleTx?.account_type?.toLowerCase() || ""
+
+      if (classification === "operating") {
+        const isInflow =
+          accountType === "income" ||
+          accountType === "other income" ||
+          accountType.includes("current asset") ||
+          accountType.includes("accounts receivable")
+        if (isInflow) operatingInflows.push(account)
+        else operatingOutflows.push(account)
+      } else if (classification === "financing") {
+        financing.push(account)
+      } else if (classification === "investing") {
+        investing.push(account)
+      } else if (classification === "transfer") {
+        transfer.push(account)
+      } else {
+        other.push(account)
+      }
+    })
+
+    const sortAccounts = (arr: OffsetAccountData[]) =>
+      arr.sort((a, b) => (a.offsetAccount || "").localeCompare(b.offsetAccount || ""))
+
     return {
-      operating: offsetAccountData
-        .filter((account) => {
-          const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
-          return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "operating"
-        })
-        .sort((a, b) => {
-          // Get sample transactions to determine account types
-          const sampleTxA = offsetTransactions.find((tx) => tx.account === a.offsetAccount)
-          const sampleTxB = offsetTransactions.find((tx) => tx.account === b.offsetAccount)
-
-          const accountTypeA = sampleTxA?.account_type?.toLowerCase() || ""
-          const accountTypeB = sampleTxB?.account_type?.toLowerCase() || ""
-
-          // Check if accounts are income types
-          const isIncomeA = accountTypeA.includes("income")
-          const isIncomeB = accountTypeB.includes("income")
-
-          // Income accounts first, then expenses
-          if (isIncomeA && !isIncomeB) return -1
-          if (!isIncomeA && isIncomeB) return 1
-
-          // Within same category, sort alphabetically
-          return (a.offsetAccount || "").localeCompare(b.offsetAccount || "")
-        }),
-      financing: offsetAccountData.filter((account) => {
-        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
-        return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "financing"
-      }),
-      investing: offsetAccountData.filter((account) => {
-        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
-        return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "investing"
-      }),
-      transfer: offsetAccountData.filter((account) => {
-        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
-        return sampleTx && classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "transfer"
-      }),
-      other: offsetAccountData.filter((account) => {
-        const sampleTx = offsetTransactions.find((tx) => tx.account === account.offsetAccount)
-        return !sampleTx || classifyTransaction(sampleTx.account_type, sampleTx.report_category) === "other"
-      }),
+      operatingInflows: sortAccounts(operatingInflows),
+      operatingOutflows: sortAccounts(operatingOutflows),
+      financing: sortAccounts(financing),
+      investing: sortAccounts(investing),
+      transfer: sortAccounts(transfer),
+      other: sortAccounts(other),
     }
   }
 
@@ -2023,7 +2014,10 @@ export default function CashFlowPage() {
               {offsetAccountData.length > 0 &&
                 (() => {
                   const accountsByClass = getAccountsByClass()
-                  const operatingTotal = accountsByClass.operating.reduce((sum, acc) => sum + acc.total, 0)
+                  const operatingTotal = [...accountsByClass.operatingInflows, ...accountsByClass.operatingOutflows].reduce(
+                    (sum, acc) => sum + acc.total,
+                    0,
+                  )
                   const financingTotal = accountsByClass.financing.reduce((sum, acc) => sum + acc.total, 0)
                   const investingTotal = accountsByClass.investing.reduce((sum, acc) => sum + acc.total, 0)
                   const transferTotal = accountsByClass.transfer.reduce((sum, acc) => sum + acc.total, 0)
@@ -2085,135 +2079,136 @@ export default function CashFlowPage() {
                 <div className="space-y-6">
                   {(() => {
                     const accountsByClass = getAccountsByClass()
-                    const operatingAccounts = accountsByClass.operating
-                    const operatingTotal = operatingAccounts.reduce((sum, acc) => sum + acc.total, 0)
-                    const isCollapsed = collapsedSections.operating
+                    const inflowAccounts = accountsByClass.operatingInflows
+                    const outflowAccounts = accountsByClass.operatingOutflows
 
-                    return operatingAccounts.length > 0 ? (
-                      <div className="border-b border-gray-200 last:border-b-0">
-                        <div
-                          className="bg-green-50 px-6 py-4 border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
-                          onClick={() => toggleSectionCollapse("operating")}
-                        >
-                          <div className="flex justify-between items-center">
-                            <h4 className="text-lg font-semibold text-green-800 flex items-center">
-                              <span className="w-4 h-4 bg-green-500 rounded-full mr-3"></span>
-                              Operating Activities
-                              {isCollapsed ? (
-                                <ChevronRight className="w-5 h-5 ml-2 text-green-600" />
-                              ) : (
-                                <ChevronDown className="w-5 h-5 ml-2 text-green-600" />
-                              )}
-                              <span className="ml-2 text-sm text-green-600">({operatingAccounts.length} accounts)</span>
-                            </h4>
-                            <span
-                              className={`text-xl font-bold ${operatingTotal >= 0 ? "text-green-700" : "text-red-700"}`}
-                            >
-                              {formatCurrency(operatingTotal)}
-                            </span>
+                    const renderSection = (
+                      accounts: OffsetAccountData[],
+                      title: string,
+                      collapseKey: string,
+                      totalLabel: string,
+                    ) => {
+                      const total = accounts.reduce((sum, acc) => sum + acc.total, 0)
+                      const isCollapsed = collapsedSections[collapseKey]
+                      return accounts.length > 0 ? (
+                        <div className="border-b border-gray-200 last:border-b-0">
+                          <div
+                            className="bg-green-50 px-6 py-4 border-b border-green-200 cursor-pointer hover:bg-green-100 transition-colors"
+                            onClick={() => toggleSectionCollapse(collapseKey)}
+                          >
+                            <div className="flex justify-between items-center">
+                              <h4 className="text-lg font-semibold text-green-800 flex items-center">
+                                <span className="w-4 h-4 bg-green-500 rounded-full mr-3"></span>
+                                {title}
+                                {isCollapsed ? (
+                                  <ChevronRight className="w-5 h-5 ml-2 text-green-600" />
+                                ) : (
+                                  <ChevronDown className="w-5 h-5 ml-2 text-green-600" />
+                                )}
+                                <span className="ml-2 text-sm text-green-600">({accounts.length} accounts)</span>
+                              </h4>
+                              <span className={`text-xl font-bold ${total >= 0 ? "text-green-700" : "text-red-700"}`}>
+                                {formatCurrency(total)}
+                              </span>
+                            </div>
                           </div>
-                        </div>
 
-                        {!isCollapsed && (
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                              <thead className="bg-gray-50">
-                                <tr>
-                                  <th className="sticky left-0 bg-gray-50 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200">
-                                    Account
-                                  </th>
-                                  {periods.map((period) => (
-                                    <th
-                                      key={period.key}
-                                      className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]"
-                                    >
-                                      {period.label}
+                          {!isCollapsed && (
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                  <tr>
+                                    <th className="sticky left-0 bg-gray-50 px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200">
+                                      Account
                                     </th>
+                                    {periods.map((period) => (
+                                      <th
+                                        key={period.key}
+                                        className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]"
+                                      >
+                                        {period.label}
+                                      </th>
+                                    ))}
+                                    {periodType !== "total" && (
+                                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Total
+                                      </th>
+                                    )}
+                                  </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                  {accounts.map((account) => (
+                                    <tr key={account.offsetAccount} className="hover:bg-gray-50">
+                                      <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
+                                        <div className="truncate" title={account.offsetAccount}>
+                                          {account.offsetAccount}
+                                        </div>
+                                      </td>
+                                      {periods.map((period) => {
+                                        const amount = account.periods[period.key] || 0
+                                        return (
+                                          <td key={period.key} className="px-4 py-4 text-center">
+                                            {amount !== 0 ? (
+                                              <button
+                                                onClick={() => openTransactionDrillDown(account.offsetAccount, period.key)}
+                                                className={`font-medium hover:underline ${amount >= 0 ? "text-green-600" : "text-red-600"}`}
+                                              >
+                                                {formatCurrency(amount)}
+                                              </button>
+                                            ) : (
+                                              <span className="text-gray-300">-</span>
+                                            )}
+                                          </td>
+                                        )
+                                      })}
+                                      {periodType !== "total" && (
+                                        <td className="px-6 py-4 text-right">
+                                          <span className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                            {formatCurrency(account.total)}
+                                          </span>
+                                        </td>
+                                      )}
+                                    </tr>
                                   ))}
-                                  {periodType !== "total" && (
-                                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                      Total
-                                    </th>
-                                  )}
-                                </tr>
-                              </thead>
-                              <tbody className="bg-white divide-y divide-gray-200">
-                                {operatingAccounts.map((account) => (
-                                  <tr key={account.offsetAccount} className="hover:bg-gray-50">
-                                    <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
-                                      <div className="truncate" title={account.offsetAccount}>
-                                        {account.offsetAccount}
-                                      </div>
+                                  <tr className="bg-green-100 font-bold border-t-2 border-green-300">
+                                    <td className="sticky left-0 bg-green-100 px-6 py-4 text-sm font-bold text-green-900 border-r border-green-200">
+                                      {totalLabel}
                                     </td>
                                     {periods.map((period) => {
-                                      const amount = account.periods[period.key] || 0
+                                      const amount = accounts.reduce(
+                                        (sum, acc) => sum + (acc.periods[period.key] || 0),
+                                        0,
+                                      )
                                       return (
                                         <td key={period.key} className="px-4 py-4 text-center">
-                                          {amount !== 0 ? (
-                                            <button
-                                              onClick={() =>
-                                                openTransactionDrillDown(account.offsetAccount, period.key)
-                                              }
-                                              className={`font-medium hover:underline ${
-                                                amount >= 0 ? "text-green-600" : "text-red-600"
-                                              }`}
-                                            >
-                                              {formatCurrency(amount)}
-                                            </button>
-                                          ) : (
-                                            <span className="text-gray-300">-</span>
-                                          )}
+                                          <span className={`font-bold text-lg ${amount >= 0 ? "text-green-700" : "text-red-700"}`}>
+                                            {formatCurrency(amount)}
+                                          </span>
                                         </td>
                                       )
                                     })}
                                     {periodType !== "total" && (
                                       <td className="px-6 py-4 text-right">
-                                        <span
-                                          className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
-                                        >
-                                          {formatCurrency(account.total)}
+                                        <span className={`font-bold text-xl ${total >= 0 ? "text-green-700" : "text-red-700"}`}>
+                                          {formatCurrency(total)}
                                         </span>
                                       </td>
                                     )}
                                   </tr>
-                                ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      ) : null
+                    }
 
-                                {/* Total Row for Operating Activities */}
-                                <tr className="bg-green-100 font-bold border-t-2 border-green-300">
-                                  <td className="sticky left-0 bg-green-100 px-6 py-4 text-sm font-bold text-green-900 border-r border-green-200">
-                                    💰 Total Operating Activities
-                                  </td>
-                                  {periods.map((period) => {
-                                    const amount = operatingAccounts.reduce(
-                                      (sum, acc) => sum + (acc.periods[period.key] || 0),
-                                      0,
-                                    )
-                                    return (
-                                      <td key={period.key} className="px-4 py-4 text-center">
-                                        <span
-                                          className={`font-bold text-lg ${amount >= 0 ? "text-green-700" : "text-red-700"}`}
-                                        >
-                                          {formatCurrency(amount)}
-                                        </span>
-                                      </td>
-                                    )
-                                  })}
-                                  {periodType !== "total" && (
-                                    <td className="px-6 py-4 text-right">
-                                      <span
-                                        className={`font-bold text-xl ${operatingTotal >= 0 ? "text-green-700" : "text-red-700"}`}
-                                      >
-                                        {formatCurrency(operatingTotal)}
-                                      </span>
-                                    </td>
-                                  )}
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    ) : null
+                    return (
+                      <>
+                        {renderSection(inflowAccounts, "Cash Inflows", "operatingInflows", "💰 Total Cash Inflows")}
+                        {renderSection(outflowAccounts, "Cash Outflows", "operatingOutflows", "💸 Total Cash Outflows")}
+                      </>
+                    )
                   })()}
 
                   {(() => {
@@ -2777,7 +2772,10 @@ export default function CashFlowPage() {
                             <span
                               className={`text-xl font-bold ${(() => {
                                 const grandTotal =
-                                  accountsByClass.operating.reduce((sum, acc) => sum + acc.total, 0) +
+                                  [...accountsByClass.operatingInflows, ...accountsByClass.operatingOutflows].reduce(
+                                    (sum, acc) => sum + acc.total,
+                                    0,
+                                  ) +
                                   accountsByClass.financing.reduce((sum, acc) => sum + acc.total, 0) +
                                   accountsByClass.investing.reduce((sum, acc) => sum + acc.total, 0) +
                                   accountsByClass.transfer.reduce((sum, acc) => sum + acc.total, 0) +
@@ -2787,7 +2785,10 @@ export default function CashFlowPage() {
                             >
                               {(() => {
                                 const grandTotal =
-                                  accountsByClass.operating.reduce((sum, acc) => sum + acc.total, 0) +
+                                  [...accountsByClass.operatingInflows, ...accountsByClass.operatingOutflows].reduce(
+                                    (sum, acc) => sum + acc.total,
+                                    0,
+                                  ) +
                                   accountsByClass.financing.reduce((sum, acc) => sum + acc.total, 0) +
                                   accountsByClass.investing.reduce((sum, acc) => sum + acc.total, 0) +
                                   accountsByClass.transfer.reduce((sum, acc) => sum + acc.total, 0) +
@@ -2827,7 +2828,7 @@ export default function CashFlowPage() {
                                     💰 Total Net Change in Cash
                                   </td>
                                   {periods.map((period) => {
-                                    const operatingAmount = accountsByClass.operating.reduce(
+                                    const operatingAmount = [...accountsByClass.operatingInflows, ...accountsByClass.operatingOutflows].reduce(
                                       (sum, acc) => sum + (acc.periods[period.key] || 0),
                                       0,
                                     )
@@ -2865,7 +2866,10 @@ export default function CashFlowPage() {
                                       <span
                                         className={`font-bold text-xl ${(() => {
                                           const grandTotal =
-                                            accountsByClass.operating.reduce((sum, acc) => sum + acc.total, 0) +
+                                            [...accountsByClass.operatingInflows, ...accountsByClass.operatingOutflows].reduce(
+                                              (sum, acc) => sum + acc.total,
+                                              0,
+                                            ) +
                                             accountsByClass.financing.reduce((sum, acc) => sum + acc.total, 0) +
                                             accountsByClass.investing.reduce((sum, acc) => sum + acc.total, 0) +
                                             accountsByClass.transfer.reduce((sum, acc) => sum + acc.total, 0) +
@@ -2875,7 +2879,10 @@ export default function CashFlowPage() {
                                       >
                                         {(() => {
                                           const grandTotal =
-                                            accountsByClass.operating.reduce((sum, acc) => sum + acc.total, 0) +
+                                            [...accountsByClass.operatingInflows, ...accountsByClass.operatingOutflows].reduce(
+                                              (sum, acc) => sum + acc.total,
+                                              0,
+                                            ) +
                                             accountsByClass.financing.reduce((sum, acc) => sum + acc.total, 0) +
                                             accountsByClass.investing.reduce((sum, acc) => sum + acc.total, 0) +
                                             accountsByClass.transfer.reduce((sum, acc) => sum + acc.total, 0) +
@@ -3282,7 +3289,7 @@ export default function CashFlowPage() {
                         Date
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Payee/Customer
+                        {nameField === "customer" ? "Customer" : nameField === "vendor" ? "Vendor" : "Name"}
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Memo
@@ -3296,117 +3303,40 @@ export default function CashFlowPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {Object.keys(groupedTransactions).length > 0
-                      ? Object.entries(groupedTransactions).map(([customer, txs]) => {
-                          const total = txs.reduce((sum, t) => sum + t.impact, 0)
-                          const isExpanded = expandedCustomers[customer]
-                          return (
-                            <React.Fragment key={customer}>
-                              <tr
-                                onClick={() =>
-                                  setExpandedCustomers((prev) => ({
-                                    ...prev,
-                                    [customer]: !prev[customer],
-                                  }))
-                                }
-                                className="bg-gray-50 cursor-pointer"
-                              >
-                                <td
-                                  colSpan={5}
-                                  className="px-6 py-4 text-sm font-medium text-gray-900"
-                                >
-                                  {isExpanded ? (
-                                    <ChevronDown className="inline w-4 h-4 mr-2" />
-                                  ) : (
-                                    <ChevronRight className="inline w-4 h-4 mr-2" />
-                                  )}
-                                  {customer} - {formatCurrency(total)}
-                                </td>
-                              </tr>
-                              {isExpanded &&
-                                txs.map((transaction, index) => (
-                                  <tr
-                                    key={`${transaction.entryNumber}-${index}`}
-                                    className="hover:bg-gray-50 cursor-pointer"
-                                    onClick={() =>
-                                      openJournalEntry(transaction.entryNumber)
-                                    }
-                                  >
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                      {formatDate(transaction.date)}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                      {transaction.name ||
-                                        transaction.vendor ||
-                                        transaction.customer ||
-                                        "N/A"}
-                                    </td>
-                                    <td
-                                      className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
-                                      title={transaction.memo || ""}
-                                    >
-                                      {transaction.memo || "-"}
-                                    </td>
-                                    <td
-                                      className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
-                                        transaction.impact >= 0
-                                          ? "text-green-600"
-                                          : "text-red-600"
-                                      }`}
-                                    >
-                                      {formatCurrency(transaction.impact)}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                                      {transaction.class && (
-                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                          {transaction.class}
-                                        </span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                            </React.Fragment>
-                          )
-                        })
-                      : transactionDetails.map((transaction, index) => (
-                          <tr
-                            key={`${transaction.entryNumber}-${index}`}
-                            className="hover:bg-gray-50 cursor-pointer"
-                            onClick={() => openJournalEntry(transaction.entryNumber)}
-                          >
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {formatDate(transaction.date)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                              {transaction.name ||
-                                transaction.vendor ||
-                                transaction.customer ||
-                                "N/A"}
-                            </td>
-                            <td
-                              className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
-                              title={transaction.memo || ""}
-                            >
-                              {transaction.memo || "-"}
-                            </td>
-                            <td
-                              className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
-                                transaction.impact >= 0
-                                  ? "text-green-600"
-                                  : "text-red-600"
-                              }`}
-                            >
-                              {formatCurrency(transaction.impact)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-center">
-                              {transaction.class && (
-                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                  {transaction.class}
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
+                    {transactionDetails.map((transaction, index) => (
+                      <tr
+                        key={`${transaction.entryNumber}-${index}`}
+                        className="hover:bg-gray-50 cursor-pointer"
+                        onClick={() => openJournalEntry(transaction.entryNumber)}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {formatDate(transaction.date)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {getDisplayName(transaction)}
+                        </td>
+                        <td
+                          className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate"
+                          title={transaction.memo || ""}
+                        >
+                          {transaction.memo || "-"}
+                        </td>
+                        <td
+                          className={`px-6 py-4 whitespace-nowrap text-sm text-right font-medium ${
+                            transaction.impact >= 0 ? "text-green-600" : "text-red-600"
+                          }`}
+                        >
+                          {formatCurrency(transaction.impact)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                          {transaction.class && (
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {transaction.class}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
