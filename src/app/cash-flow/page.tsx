@@ -687,7 +687,7 @@ export default function CashFlowPage() {
 
     if (at.includes("fixed asset") || at.includes("long term asset")) return "investing"
 
-    if (at === "long term liabilities") return "financing"
+    if (at.includes("equity") || at === "long term liabilities") return "financing"
 
     return "operating"
   }
