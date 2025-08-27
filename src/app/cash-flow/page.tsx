@@ -960,26 +960,37 @@ export default function CashFlowPage() {
 
     if (entryNumbers.length === 0) return []
 
-    let offsetQuery = supabase
-      .from("journal_entry_lines")
-      .select("entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit")
-      .in("entry_number", entryNumbers)
-      .eq("is_cash_account", false)
-      .gte("date", startDate)
-      .lt("date", toExclusiveDate(endDate))
+    // Chunk entry numbers to avoid exceeding URL length limits in Supabase queries
+    const chunkSize = 200
+    const offsetLines: any[] = []
+    for (let i = 0; i < entryNumbers.length; i += chunkSize) {
+      const chunk = entryNumbers.slice(i, i + chunkSize)
 
-    if (!includeTransfers) {
-      offsetQuery = offsetQuery.not("report_category", "ilike", "transfer")
+      let offsetQuery = supabase
+        .from("journal_entry_lines")
+        .select(
+          "entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit"
+        )
+        .in("entry_number", chunk)
+        .eq("is_cash_account", false)
+        .gte("date", startDate)
+        .lt("date", toExclusiveDate(endDate))
+
+      if (!includeTransfers) {
+        offsetQuery = offsetQuery.not("report_category", "ilike", "transfer")
+      }
+
+      const { data: chunkLines, error: chunkError } = await offsetQuery
+      if (chunkError) throw chunkError
+
+      offsetLines.push(...(chunkLines || []))
     }
 
-    const { data: offsetLines, error: offsetError } = await offsetQuery
-    if (offsetError) throw offsetError
-
     return offsetLines.map((o: any) => ({
-        ...o,
-        cash_bank_account: entryBankMap.get(o.entry_number) || null,
-        cash_effect: toNum(o.credit) - toNum(o.debit),
-      }))
+      ...o,
+      cash_bank_account: entryBankMap.get(o.entry_number) || null,
+      cash_effect: toNum(o.credit) - toNum(o.debit),
+    }))
   }
 
   // FIXED: Fetch offset account data with corrected transfer toggle logic
