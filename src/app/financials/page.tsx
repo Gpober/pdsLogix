@@ -1163,8 +1163,12 @@ export default function FinancialsPage() {
             : sum + (debitValue - creditValue);
         }, 0);
 
+        // Calculate the parent's own amount excluding sub-account totals
+        const subAmount = group.subs.reduce((sum, sub) => sum + sub.amount, 0);
+        const parentOnlyAmount = group.parent.amount - subAmount;
+
         result.push({
-          account: group.parent,
+          account: { ...group.parent, amount: parentOnlyAmount },
           subAccounts: group.subs.sort((a, b) =>
             a.account.localeCompare(b.account),
           ),
