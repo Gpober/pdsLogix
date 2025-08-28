@@ -234,6 +234,7 @@ export default function FinancialsPage() {
   const [availableProperties, setAvailableProperties] = useState<string[]>([
     "All Customers",
   ]);
+  const [propertySearch, setPropertySearch] = useState("");
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [transactionModalTitle, setTransactionModalTitle] = useState("");
   const [modalTransactionDetails, setModalTransactionDetails] = useState<
@@ -328,6 +329,12 @@ export default function FinancialsPage() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (!propertyDropdownOpen) {
+      setPropertySearch("");
+    }
+  }, [propertyDropdownOpen]);
 
   // Calculate date range based on selected period - COMPLETELY TIMEZONE INDEPENDENT
   const calculateDateRange = () => {
@@ -1695,38 +1702,53 @@ export default function FinancialsPage() {
 
               {propertyDropdownOpen && (
                 <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                  {availableProperties.map((property) => (
-                    <label
-                      key={property}
-                      className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedProperties.has(property)}
-                        onChange={(e) => {
-                          const newSelected = new Set(selectedProperties);
-                          if (e.target.checked) {
-                            if (property === "All Customers") {
-                              newSelected.clear();
-                              newSelected.add("All Customers");
+                  <input
+                    type="text"
+                    placeholder="Search customers..."
+                    value={propertySearch}
+                    onChange={(e) => setPropertySearch(e.target.value)}
+                    className="w-full px-4 py-2 text-sm border-b border-gray-200 focus:outline-none"
+                  />
+                  {availableProperties
+                    .filter(
+                      (property) =>
+                        property === "All Customers" ||
+                        property
+                          .toLowerCase()
+                          .includes(propertySearch.toLowerCase()),
+                    )
+                    .map((property) => (
+                      <label
+                        key={property}
+                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedProperties.has(property)}
+                          onChange={(e) => {
+                            const newSelected = new Set(selectedProperties);
+                            if (e.target.checked) {
+                              if (property === "All Customers") {
+                                newSelected.clear();
+                                newSelected.add("All Customers");
+                              } else {
+                                newSelected.delete("All Customers");
+                                newSelected.add(property);
+                              }
                             } else {
-                              newSelected.delete("All Customers");
-                              newSelected.add(property);
+                              newSelected.delete(property);
+                              if (newSelected.size === 0) {
+                                newSelected.add("All Customers");
+                              }
                             }
-                          } else {
-                            newSelected.delete(property);
-                            if (newSelected.size === 0) {
-                              newSelected.add("All Customers");
-                            }
-                          }
-                          setSelectedProperties(newSelected);
-                        }}
-                        className="mr-3 rounded"
-                        style={{ accentColor: BRAND_COLORS.primary }}
-                      />
-                      {property}
-                    </label>
-                  ))}
+                            setSelectedProperties(newSelected);
+                          }}
+                          className="mr-3 rounded"
+                          style={{ accentColor: BRAND_COLORS.primary }}
+                        />
+                        {property}
+                      </label>
+                    ))}
                 </div>
               )}
             </div>

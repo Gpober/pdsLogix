@@ -198,6 +198,7 @@ export default function FinancialOverviewPage() {
   const [availableCustomers, setAvailableCustomers] = useState<string[]>([
     "All Customers",
   ]);
+  const [customerSearch, setCustomerSearch] = useState("");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -408,6 +409,12 @@ export default function FinancialOverviewPage() {
   useEffect(() => {
     fetchAvailableCustomers();
   }, []);
+
+  useEffect(() => {
+    if (!customerDropdownOpen) {
+      setCustomerSearch("");
+    }
+  }, [customerDropdownOpen]);
 
   // Fetch financial data from Supabase (same connection as other pages)
   const fetchFinancialData = async () => {
@@ -1600,38 +1607,53 @@ export default function FinancialOverviewPage() {
 
                       {customerDropdownOpen && (
                         <div className="absolute right-0 z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                          {availableCustomers.map((cust) => (
-                            <label
-                              key={cust}
-                              className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedCustomers.has(cust)}
-                                onChange={(e) => {
-                                  const newSelected = new Set(selectedCustomers);
-                                  if (e.target.checked) {
-                                    if (cust === "All Customers") {
-                                      newSelected.clear();
-                                      newSelected.add("All Customers");
+                          <input
+                            type="text"
+                            placeholder="Search customers..."
+                            value={customerSearch}
+                            onChange={(e) => setCustomerSearch(e.target.value)}
+                            className="w-full px-4 py-2 text-sm border-b border-gray-200 focus:outline-none"
+                          />
+                          {availableCustomers
+                            .filter(
+                              (cust) =>
+                                cust === "All Customers" ||
+                                cust
+                                  .toLowerCase()
+                                  .includes(customerSearch.toLowerCase()),
+                            )
+                            .map((cust) => (
+                              <label
+                                key={cust}
+                                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCustomers.has(cust)}
+                                  onChange={(e) => {
+                                    const newSelected = new Set(selectedCustomers);
+                                    if (e.target.checked) {
+                                      if (cust === "All Customers") {
+                                        newSelected.clear();
+                                        newSelected.add("All Customers");
+                                      } else {
+                                        newSelected.delete("All Customers");
+                                        newSelected.add(cust);
+                                      }
                                     } else {
-                                      newSelected.delete("All Customers");
-                                      newSelected.add(cust);
+                                      newSelected.delete(cust);
+                                      if (newSelected.size === 0) {
+                                        newSelected.add("All Customers");
+                                      }
                                     }
-                                  } else {
-                                    newSelected.delete(cust);
-                                    if (newSelected.size === 0) {
-                                      newSelected.add("All Customers");
-                                    }
-                                  }
-                                  setSelectedCustomers(newSelected);
-                                }}
-                                className="mr-3 rounded"
-                                style={{ accentColor: BRAND_COLORS.primary }}
-                              />
-                              {cust}
-                            </label>
-                          ))}
+                                    setSelectedCustomers(newSelected);
+                                  }}
+                                  className="mr-3 rounded"
+                                  style={{ accentColor: BRAND_COLORS.primary }}
+                                />
+                                {cust}
+                              </label>
+                            ))}
                         </div>
                       )}
                     </div>
