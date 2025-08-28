@@ -492,12 +492,19 @@ export default function FinancialsPage() {
 
     try {
       const { startDate, endDate } = calculateDateRange();
-      const selectedProperty =
-        Array.from(selectedProperties)[0] || "All Customers";
+      const selectedPropertyList = Array.from(selectedProperties).filter(
+        (p) => p !== "All Customers",
+      );
 
       smartLog(`🔍 TIMEZONE-INDEPENDENT P&L DATA FETCH`);
       smartLog(`📅 Period: ${startDate} to ${endDate}`);
-      smartLog(`🏢 Property Filter: "${selectedProperty}"`);
+      smartLog(
+        `🏢 Property Filter: "${
+          selectedPropertyList.length > 0
+            ? selectedPropertyList.join(", ")
+            : "All Customers"
+        }"`,
+      );
 
       // ENHANCED QUERY: Use the new database structure with better field selection
       let query = supabase
@@ -528,8 +535,8 @@ export default function FinancialsPage() {
         .order("date", { ascending: true });
 
       // Apply property filter
-      if (selectedProperty !== "All Customers") {
-        query = query.eq("customer", selectedProperty);
+      if (selectedPropertyList.length > 0) {
+        query = query.in("customer", selectedPropertyList);
       }
 
       const { data: allTransactions, error } = await query;
