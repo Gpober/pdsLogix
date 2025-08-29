@@ -1,24 +1,6 @@
 import { NextResponse } from "next/server"
 import { supabase } from "@/lib/supabaseClient"
-
-const isIncomeAccount = (type: string | null) => {
-  const t = type?.toLowerCase() || ""
-  return (
-    t === "income" ||
-    t === "other income" ||
-    t.includes("income") ||
-    t.includes("revenue")
-  )
-}
-
-const isExpenseAccount = (type: string | null) => {
-  const t = type?.toLowerCase() || ""
-  return (
-    t === "expense" ||
-    t === "other expense" ||
-    t.includes("expense")
-  )
-}
+import { classifyPLAccount } from "@/lib/classifyPLAccount"
 
 const isCogsAccount = (type: string | null) => {
   const t = type?.toLowerCase() || ""
@@ -27,7 +9,11 @@ const isCogsAccount = (type: string | null) => {
 
 interface Entry {
   customer: string | null
+  vendor: string | null
+  name: string | null
   account_type: string | null
+  report_category: string | null
+  account: string | null
   debit: number | string | null
   credit: number | string | null
 }
@@ -63,7 +49,9 @@ export async function GET(req: Request) {
 
   const { data, error } = await supabase
     .from("journal_entry_lines")
-    .select("customer,account_type,debit,credit")
+    .select(
+      "customer,vendor,name,account_type,report_category,account,debit,credit",
+    )
     .gte("date", startDate)
     .lte("date", endDate)
 
@@ -81,8 +69,8 @@ export async function GET(req: Request) {
   }> = {}
 
   ;(data || []).forEach((tx: Entry) => {
-    // Group transactions without a customer under "Unassigned"
-    const customer = tx.customer || "Unassigned"
+    const customer =
+      tx.customer || tx.vendor || tx.name || "Unassigned"
     if (!map[customer]) {
       map[customer] = {
         name: customer,
@@ -94,14 +82,21 @@ export async function GET(req: Request) {
       }
     }
 
+    const classification = classifyPLAccount(
+      tx.account_type,
+      tx.report_category,
+      tx.account,
+    )
+    if (!classification) return
+
     const debit = Number(tx.debit) || 0
     const credit = Number(tx.credit) || 0
 
-    if (isIncomeAccount(tx.account_type)) {
+    if (classification === "INCOME") {
       map[customer].revenue += credit - debit
     } else if (isCogsAccount(tx.account_type)) {
       map[customer].cogs += debit - credit
-    } else if (isExpenseAccount(tx.account_type)) {
+    } else {
       map[customer].operatingExpenses += debit - credit
     }
   })

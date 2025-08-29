@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { RefreshCw, ChevronDown, ChevronRight, X, Download } from "lucide-react"
 import * as XLSX from "xlsx"
 import jsPDF from "jspdf"
@@ -166,8 +166,19 @@ export default function CashFlowPage() {
   const [selectedYear, setSelectedYear] = useState<string>("2024")
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly")
   // Filter by customer instead of class/property
-  const [selectedCustomer, setSelectedCustomer] = useState("All Customers")
+  const [selectedCustomers, setSelectedCustomers] =
+    useState<Set<string>>(new Set())
   const [selectedBankAccount, setSelectedBankAccount] = useState("All Bank Accounts")
+  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false)
+  const customerDropdownRef = useRef<HTMLDivElement>(null)
+  const [customerSearch, setCustomerSearch] = useState("")
+  const customerLabel = useMemo(() => {
+    if (selectedCustomers.size === 0) return "All Customers"
+    const list = Array.from(selectedCustomers)
+    return selectedCustomers.size === 1
+      ? list[0]
+      : `${list[0]} +${selectedCustomers.size - 1} more`
+  }, [selectedCustomers])
   const [viewMode, setViewMode] = useState<ViewMode>("offset")
   const [periodType, setPeriodType] = useState<PeriodType>("monthly")
   const [customStartDate, setCustomStartDate] = useState("")
@@ -210,7 +221,7 @@ export default function CashFlowPage() {
   const [bankAccountData, setBankAccountData] = useState<BankAccountData[]>([])
 
   // Common state
-  const [availableCustomers, setAvailableCustomers] = useState<string[]>(["All Customers"])
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>([])
   const [availableBankAccounts, setAvailableBankAccounts] = useState<string[]>(["All Bank Accounts"])
   const [error, setError] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
@@ -218,6 +229,20 @@ export default function CashFlowPage() {
   const [modalTitle, setModalTitle] = useState("")
   const [nameField, setNameField] = useState<NameField>("name")
   const [offsetTransactions, setOffsetTransactions] = useState<any[]>([])
+
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        customerDropdownRef.current &&
+        !customerDropdownRef.current.contains(event.target as Node)
+      ) {
+        setCustomerDropdownOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
   const [bankTransactions, setBankTransactions] = useState<any[]>([])
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([])
   const [showJournalModal, setShowJournalModal] = useState(false)
@@ -789,10 +814,11 @@ export default function CashFlowPage() {
 
       const customers = new Set<string>()
       customerData.forEach((row: any) => {
-        if (row.customer) customers.add(row.customer)
+        if (row.customer && row.customer.trim())
+          customers.add(row.customer.trim())
       })
 
-      setAvailableCustomers(["All Customers", ...Array.from(customers).sort()])
+      setAvailableCustomers(Array.from(customers).sort())
 
       // ENHANCED: Fetch bank accounts using entry_bank_account field
       const { data: bankData, error: bankError } = await supabase
@@ -829,6 +855,7 @@ export default function CashFlowPage() {
       setError(null)
 
       const { startDate, endDate } = calculateDateRange()
+      const selectedCustomerList = Array.from(selectedCustomers)
 
       let query = supabase
         .from("journal_entry_lines")
@@ -838,8 +865,8 @@ export default function CashFlowPage() {
         .eq("is_cash_account", true)
         .not("entry_bank_account", "is", null)
 
-      if (selectedCustomer !== "All Customers") {
-        query = query.eq("customer", selectedCustomer)
+      if (selectedCustomerList.length > 0) {
+        query = query.in("customer", selectedCustomerList)
       }
       if (selectedBankAccount !== "All Bank Accounts") {
         query = query.eq("entry_bank_account", selectedBankAccount)
@@ -906,14 +933,15 @@ export default function CashFlowPage() {
   // Helper: fetch offset lines via view if available, otherwise fall back to two-step query
   const fetchOffsets = async (startDate: string, endDate: string) => {
     // Attempt to use the cash_related_offsets view
+    const selectedCustomerList = Array.from(selectedCustomers)
     let viewQuery = supabase
       .from("cash_related_offsets")
       .select("entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
 
-    if (selectedCustomer !== "All Customers") {
-      viewQuery = viewQuery.eq("customer", selectedCustomer)
+    if (selectedCustomerList.length > 0) {
+      viewQuery = viewQuery.in("customer", selectedCustomerList)
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       viewQuery = viewQuery.eq("cash_bank_account", selectedBankAccount)
@@ -935,8 +963,8 @@ export default function CashFlowPage() {
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
-    if (selectedCustomer !== "All Customers") {
-      cashQuery = cashQuery.eq("customer", selectedCustomer)
+    if (selectedCustomerList.length > 0) {
+      cashQuery = cashQuery.in("customer", selectedCustomerList)
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       cashQuery = cashQuery.eq("entry_bank_account", selectedBankAccount)
@@ -1140,8 +1168,8 @@ export default function CashFlowPage() {
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
-    if (selectedCustomer !== "All Customers") {
-      cashQuery = cashQuery.eq("customer", selectedCustomer)
+    if (selectedCustomerList.length > 0) {
+      cashQuery = cashQuery.in("customer", selectedCustomerList)
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       cashQuery = cashQuery.eq("entry_bank_account", selectedBankAccount)
@@ -1523,12 +1551,20 @@ export default function CashFlowPage() {
     selectedYear,
     customStartDate,
     customEndDate,
-    selectedCustomer,
+    selectedCustomers,
     selectedBankAccount,
     viewMode,
     periodType,
     includeTransfers, // NEW: Added to dependency array
   ])
+
+  const selectedCustomerList = Array.from(selectedCustomers)
+  const filteredCustomers = availableCustomers.filter((c) =>
+    c.toLowerCase().includes(customerSearch.toLowerCase())
+  )
+  const allVisibleSelected =
+    filteredCustomers.length > 0 &&
+    filteredCustomers.every((c) => selectedCustomers.has(c))
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1747,18 +1783,73 @@ export default function CashFlowPage() {
             )}
 
             {/* Customer Filter */}
-            <select
-              value={selectedCustomer}
-              onChange={(e) => setSelectedCustomer(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-              style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
-            >
-              {availableCustomers.map((customer) => (
-                <option key={customer} value={customer}>
-                  {customer}
-                </option>
-              ))}
-            </select>
+            <div className="relative" ref={customerDropdownRef}>
+              <button
+                onClick={() => setCustomerDropdownOpen(!customerDropdownOpen)}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
+                style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
+              >
+                Customers: {customerLabel}
+                <ChevronDown className="w-4 h-4 ml-2" />
+              </button>
+
+              {customerDropdownOpen && (
+                <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg">
+                  <div className="p-2">
+                    <input
+                      type="text"
+                      placeholder="Search..."
+                      value={customerSearch}
+                      onChange={(e) => setCustomerSearch(e.target.value)}
+                      className="w-full px-2 py-1 border border-gray-300 rounded"
+                    />
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    <label className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={(e) => {
+                          const newSelected = new Set(selectedCustomers)
+                          if (e.target.checked) {
+                            filteredCustomers.forEach((c) => newSelected.add(c))
+                          } else {
+                            filteredCustomers.forEach((c) => newSelected.delete(c))
+                          }
+                          setSelectedCustomers(newSelected)
+                        }}
+                        className="mr-3 rounded"
+                        style={{ accentColor: BRAND_COLORS.primary }}
+                      />
+                      Select All
+                    </label>
+                    {filteredCustomers.map((cust) => (
+                      <label
+                        key={cust}
+                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedCustomers.has(cust)}
+                          onChange={(e) => {
+                            const newSelected = new Set(selectedCustomers)
+                            if (e.target.checked) {
+                              newSelected.add(cust)
+                            } else {
+                              newSelected.delete(cust)
+                            }
+                            setSelectedCustomers(newSelected)
+                          }}
+                          className="mr-3 rounded"
+                          style={{ accentColor: BRAND_COLORS.primary }}
+                        />
+                        {cust}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Bank Account Filter */}
             {(viewMode === "offset" ||
@@ -1861,9 +1952,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedCustomer !== "All Customers" && (
+                  {selectedCustomerList.length > 0 && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Customer: {selectedCustomer}
+                      Customer: {selectedCustomerList.join(", ")}
                     </span>
                   )}
                 </div>
@@ -2006,9 +2097,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedCustomer !== "All Customers" && (
+                  {selectedCustomerList.length > 0 && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Customer: {selectedCustomer}
+                      Customer: {selectedCustomerList.join(", ")}
                     </span>
                   )}
                   {selectedBankAccount !== "All Bank Accounts" && (
@@ -2938,9 +3029,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedCustomer !== "All Customers" && (
+                  {selectedCustomerList.length > 0 && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Customer: {selectedCustomer}
+                      Customer: {selectedCustomerList.join(", ")}
                     </span>
                   )}
                   {selectedBankAccount !== "All Bank Accounts" && (
