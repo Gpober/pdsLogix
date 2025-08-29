@@ -179,7 +179,7 @@ const insights: Insight[] = [
 
 export default function EnhancedMobileDashboard() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [reportType, setReportType] = useState<"pl" | "cf" | "ar">("pl");
+  const [reportType, setReportType] = useState<"pl" | "cf" | "ar" | "payroll">("pl");
   const [reportPeriod, setReportPeriod] = useState<
     "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
   >("Monthly");
@@ -211,6 +211,7 @@ export default function EnhancedMobileDashboard() {
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
+  const [payrollTotals, setPayrollTotals] = useState<number>(0);
 
   // AI CFO States
   const [isListening, setIsListening] = useState(false);
@@ -548,6 +549,24 @@ export default function EnhancedMobileDashboard() {
 
       const { start, end } = getDateRange();
 
+      if (reportType === "payroll") {
+        const { data } = await supabase
+          .from("payments")
+          .select("department, total_amount, date")
+          .gte("date", start)
+          .lte("date", end);
+        const map: Record<string, PropertySummary> = {};
+        (data || []).forEach((rec: any) => {
+          const dept = rec.department || "Unknown";
+          if (!map[dept]) {
+            map[dept] = { name: dept, expenses: 0 };
+          }
+          map[dept].expenses = (map[dept].expenses || 0) + (Number(rec.total_amount) || 0);
+        });
+        setProperties(Object.values(map));
+        return;
+      }
+
       const selectColumns = "account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
 
       let query = supabase
@@ -655,6 +674,14 @@ export default function EnhancedMobileDashboard() {
     }, properties[0]).name;
   }, [properties, reportType]);
 
+  const payrollKing = useMemo(() => {
+    if (reportType !== "payroll" || !properties.length) return null;
+    return properties.reduce(
+      (max, p) => (p.expenses || 0) > (max.expenses || 0) ? p : max,
+      properties[0],
+    ).name;
+  }, [properties, reportType]);
+
   const cashKing = useMemo(() => {
     if (reportType !== "cf" || !properties.length) return null;
     return properties.reduce((max, p) =>
@@ -717,13 +744,16 @@ export default function EnhancedMobileDashboard() {
         acc.financing += p.financing || 0;
         acc.investing += p.investing || 0;
         acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      } else {
+      } else if (reportType === "ar") {
         acc.current += p.current || 0;
         acc.days30 += p.days30 || 0;
         acc.days60 += p.days60 || 0;
         acc.days90 += p.days90 || 0;
         acc.over90 += p.over90 || 0;
         acc.net += p.total || 0;
+      } else {
+        acc.expenses += p.expenses || 0;
+        acc.net += p.expenses || 0;
       }
       return acc;
     },
@@ -872,6 +902,7 @@ export default function EnhancedMobileDashboard() {
     setSelectedProperty(name);
     if (reportType === "pl") await loadPL(name);
     else if (reportType === "cf") await loadCF(name);
+    else if (reportType === "payroll") await loadPayroll(name);
     else await loadAR(name);
     setView("report");
   };
@@ -1001,6 +1032,35 @@ export default function EnhancedMobileDashboard() {
       memo: rec.memo || null,
     }));
     setArTransactions(list);
+  };
+
+  const loadPayroll = async (department: string | null = selectedProperty) => {
+    const { start, end } = getDateRange();
+    let query = supabase
+      .from("payments")
+      .select("date, total_amount, first_name, last_name, department")
+      .gte("date", start)
+      .lte("date", end);
+    if (department) {
+      query = query.eq("department", department);
+    }
+    const { data } = await query;
+    let running = 0;
+    const list: Transaction[] = ((data as any[]) || [])
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((row) => {
+        const amount = Number(row.total_amount) || 0;
+        running += amount;
+        return {
+          date: row.date,
+          amount,
+          running,
+          payee: [row.first_name, row.last_name].filter(Boolean).join(" ") || null,
+          customer: row.department,
+        };
+      });
+    setTransactions(list);
+    setPayrollTotals(list.reduce((sum, t) => sum + t.amount, 0));
   };
 
   const handleCategory = async (
@@ -1155,10 +1215,17 @@ export default function EnhancedMobileDashboard() {
         {/* Dashboard Summary */}
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-            {reportType === "pl" ? "P&L Dashboard" : reportType === "cf" ? "Cash Flow Dashboard" : "A/R Aging Report"}
+            {reportType === "pl"
+              ? "P&L Dashboard"
+              : reportType === "cf"
+              ? "Cash Flow Dashboard"
+              : reportType === "payroll"
+              ? "Payroll Dashboard"
+              : "A/R Aging Report"}
           </h1>
           <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`} • {properties.length} Customers
+            {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`} • {properties.length}{" "}
+            {reportType === "payroll" ? "Departments" : "Customers"}
           </p>
         </div>
 
@@ -1244,6 +1311,15 @@ export default function EnhancedMobileDashboard() {
                 <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
               </div>
             </div>
+          ) : reportType === "payroll" ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px', textAlign: 'center' }}>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.expenses)}
+                </div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>Payroll</div>
+              </div>
+            </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
               <div>
@@ -1309,10 +1385,11 @@ export default function EnhancedMobileDashboard() {
                 fontSize: '16px'
               }}
               value={reportType}
-              onChange={(e) => setReportType(e.target.value as "pl" | "cf" | "ar")}
+              onChange={(e) => setReportType(e.target.value as "pl" | "cf" | "ar" | "payroll")}
             >
               <option value="pl">P&L Statement</option>
               <option value="cf">Cash Flow Statement</option>
+              <option value="payroll">Payroll</option>
               <option value="ar">A/R Aging Report</option>
             </select>
           </div>
@@ -1759,6 +1836,7 @@ export default function EnhancedMobileDashboard() {
               const isArKing = p.name === arKing;
               const isCurrentChamp = p.name === currentChamp;
               const isOverdueAlert = p.name === overdueAlert;
+              const isPayrollKing = p.name === payrollKing;
               
               return (
                 <div
@@ -1866,6 +1944,16 @@ export default function EnhancedMobileDashboard() {
                           boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
                         }}>
                           <span style={{ fontSize: '16px' }}>⚡</span>
+                        </div>
+                      )}
+                      {reportType === "payroll" && isPayrollKing && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.warning}, #f59e0b)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(245,158,11,0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>👑</span>
                         </div>
                       )}
                       {reportType === "ar" && isArKing && (
@@ -2133,14 +2221,14 @@ export default function EnhancedMobileDashboard() {
                 color: BRAND_COLORS.accent
               }}
             >
-              Company Total {reportType === "pl" ? "Net Income" : reportType === "cf" ? "Net Cash" : "A/R"}
+              Company Total {reportType === "pl" ? "Net Income" : reportType === "cf" ? "Net Cash" : reportType === "payroll" ? "Payroll" : "A/R"}
             </span>
             <div
               style={{
                 fontSize: '20px',
                 fontWeight: '800',
                 marginTop: '4px',
-                color: reportType === "ar" ? BRAND_COLORS.primary : companyTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                color: reportType === "ar" ? BRAND_COLORS.primary : reportType === "payroll" ? BRAND_COLORS.danger : companyTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
               }}
             >
               {formatCompactCurrency(companyTotals.net)}
@@ -2225,7 +2313,7 @@ export default function EnhancedMobileDashboard() {
             }}
           >
             <ChevronLeft size={20} style={{ marginRight: '4px' }} /> 
-            Back to Customers
+            Back to {reportType === "payroll" ? "Departments" : "Customers"}
           </button>
           
           <div style={{
@@ -2236,7 +2324,7 @@ export default function EnhancedMobileDashboard() {
             color: 'white'
           }}>
             <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : reportType === "cf" ? "Cash Flow Statement" : "A/R Aging"}
+              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : reportType === "cf" ? "Cash Flow Statement" : reportType === "payroll" ? "Payroll Statement" : "A/R Aging"}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
               {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
@@ -2582,6 +2670,31 @@ export default function EnhancedMobileDashboard() {
               Net Cash Flow: {formatCurrency(cfTotals.net)}
             </div>
               </>
+            ) : reportType === "payroll" ? (
+              <>
+                <div style={{
+                  background: 'white',
+                  borderRadius: '12px',
+                  padding: '20px',
+                  border: `1px solid ${BRAND_COLORS.gray[200]}`
+                }}>
+                  {transactions.map((t, idx) => (
+                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '14px' }}>
+                      <span>{t.date}</span>
+                      <span>{formatCurrency(t.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{
+                  marginTop: '8px',
+                  textAlign: 'right',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  color: BRAND_COLORS.danger,
+                }}>
+                  Total Payroll: {formatCurrency(payrollTotals)}
+                </div>
+              </>
             ) : (
               <div style={{ display: 'grid', gap: '12px' }}>
                 <div onClick={() => showARTransactions('current')} style={{ background: `${BRAND_COLORS.success}20`, borderRadius: '8px', padding: '16px', cursor: 'pointer' }}>
@@ -2629,7 +2742,7 @@ export default function EnhancedMobileDashboard() {
             }}
           >
             <ChevronLeft size={20} style={{ marginRight: '4px' }} />
-            Back to {reportType === "pl" ? "P&L" : reportType === "cf" ? "Cash Flow" : "A/R"}
+            Back to {reportType === "pl" ? "P&L" : reportType === "cf" ? "Cash Flow" : reportType === "payroll" ? "Payroll" : "A/R"}
           </button>
 
           {reportType === "ar" ? (
@@ -2754,7 +2867,13 @@ export default function EnhancedMobileDashboard() {
                   color: transactionTotal >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
                 }}
               >
-                {reportType === "pl" ? "Total Net Income" : "Total Net Cash Flow"}: {formatCurrency(transactionTotal)}
+                {reportType === "pl"
+                  ? "Total Net Income"
+                  : reportType === "cf"
+                  ? "Total Net Cash Flow"
+                  : reportType === "payroll"
+                  ? "Total Payroll"
+                  : "Total"}: {formatCurrency(transactionTotal)}
               </div>
             </>
           )}
