@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Calendar, Download, RefreshCw, Plus, X, ChevronDown, ChevronRight, 
   ArrowUp, ArrowDown, TrendingUp, DollarSign, PieChart, BarChart3, 
@@ -9,11 +9,12 @@ import {
   FileText, Calculator, Receipt, Clock, Edit3, Trash2, Eye,
   MapPin, Phone, Mail, Briefcase, Award, Target
 } from 'lucide-react';
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   BarChart, Bar, PieChart as RechartsPieChart, Cell, Pie, AreaChart, Area,
   ComposedChart
 } from 'recharts';
+import { supabase } from '@/lib/supabaseClient';
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -140,6 +141,16 @@ interface NewEmployeeForm {
   paidTimeOff: string;
 }
 
+interface Payment {
+  id: number;
+  last_name: string;
+  first_name: string;
+  department: string;
+  payment_method: string;
+  date: string;
+  total_amount: number;
+}
+
 // I AM CFO Logo Component
 const IAMCFOLogo = ({ className = "w-8 h-8" }: { className?: string }) => (
   <div className={`${className} flex items-center justify-center relative`}>
@@ -176,7 +187,7 @@ export default function PayrollPage() {
   const [departmentFilter, setDepartmentFilter] = useState('All Departments');
   const [departmentDropdownOpen, setDepartmentDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  
+
   const [newEmployeeForm, setNewEmployeeForm] = useState<NewEmployeeForm>({
     firstName: '',
     lastName: '',
@@ -199,6 +210,30 @@ export default function PayrollPage() {
     retirement401k: false,
     paidTimeOff: '15'
   });
+
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(true);
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchPayments = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('payments')
+          .select('*')
+          .order('date', { ascending: false });
+
+        if (error) throw error;
+        setPayments(data || []);
+      } catch (err: any) {
+        setPaymentsError(err.message);
+      } finally {
+        setPaymentsLoading(false);
+      }
+    };
+
+    fetchPayments();
+  }, []);
 
   // Sample data
   const employees: Employee[] = [
@@ -837,6 +872,45 @@ export default function PayrollPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                </div>
+
+                {/* Payroll Payments */}
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden lg:col-span-2">
+                  <div className="p-6 border-b border-gray-200">
+                    <h3 className="text-xl font-semibold text-gray-900">Payroll Payments</h3>
+                  </div>
+                  <div className="p-6">
+                    {paymentsLoading ? (
+                      <p>Loading payments...</p>
+                    ) : paymentsError ? (
+                      <p className="text-red-600">{paymentsError}</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead>
+                            <tr>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Date</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Employee</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Department</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Method</th>
+                              <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-200">
+                            {payments.map((p) => (
+                              <tr key={p.id}>
+                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{formatDate(p.date)}</td>
+                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{p.first_name} {p.last_name}</td>
+                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{p.department}</td>
+                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{p.payment_method}</td>
+                                <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{formatCurrency(p.total_amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
