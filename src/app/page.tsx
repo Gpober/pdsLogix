@@ -1002,8 +1002,13 @@ export default function FinancialOverviewPage() {
       setLoadingProperty(true);
       setPropertyError(null);
       const { startDate, endDate } = calculateDateRange();
+      const selectedCustomerList = Array.from(selectedCustomers);
+      const customerQuery =
+        selectedCustomerList.length > 0
+          ? `&customerId=${encodeURIComponent(selectedCustomerList.join(","))}`
+          : "";
       const res = await fetch(
-        `/api/organizations/${orgId}/dashboard-summary?start=${startDate}&end=${endDate}&includeProperties=true`,
+        `/api/organizations/${orgId}/dashboard-summary?start=${startDate}&end=${endDate}&includeProperties=true${customerQuery}`,
       );
       if (!res.ok) throw new Error("Failed to fetch customer data");
       const json: { propertyBreakdown: PropertyPoint[] } = await res.json();

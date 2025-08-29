@@ -42,6 +42,10 @@ export async function GET(req: Request) {
 
   const start = url.searchParams.get("start")
   const end = url.searchParams.get("end")
+  const customerParam = url.searchParams.get("customerId")
+  const customerIds = customerParam
+    ? customerParam.split(",").filter((c) => c !== "")
+    : []
 
   let startDate: string
   let endDate: string
@@ -61,11 +65,17 @@ export async function GET(req: Request) {
     endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("journal_entry_lines")
     .select("customer,account_type,debit,credit")
     .gte("date", startDate)
     .lte("date", endDate)
+
+  if (customerIds.length > 0) {
+    query = query.in("customer", customerIds)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

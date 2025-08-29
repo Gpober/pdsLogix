@@ -50,10 +50,7 @@ export async function GET(req: Request) {
   const endYear = Number.parseInt(url.searchParams.get("endYear") || "2024", 10)
   const customerParam = url.searchParams.get("customerId")
   const customerIds = customerParam
-    ? customerParam
-        .split(",")
-        .map((c) => c.trim())
-        .filter(Boolean)
+    ? customerParam.split(",").filter((c) => c !== "")
     : []
 
   const monthlyData: {
