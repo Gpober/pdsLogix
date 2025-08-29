@@ -234,6 +234,7 @@ export default function FinancialsPage() {
   const [availableProperties, setAvailableProperties] = useState<string[]>([
     "All Customers",
   ]);
+  const [propertySearch, setPropertySearch] = useState("");
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [transactionModalTitle, setTransactionModalTitle] = useState("");
   const [modalTransactionDetails, setModalTransactionDetails] = useState<
@@ -252,6 +253,36 @@ export default function FinancialsPage() {
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const yearDropdownRef = useRef<HTMLDivElement>(null);
   const exportDropdownRef = useRef<HTMLDivElement>(null);
+
+  const filteredProperties = availableProperties.filter(
+    (property) =>
+      property !== "All Customers" &&
+      property.toLowerCase().includes(propertySearch.toLowerCase()),
+  );
+  const selectAllProperties =
+    propertySearch === ""
+      ? selectedProperties.has("All Customers")
+      : filteredProperties.every(
+          (p) =>
+            selectedProperties.has("All Customers") ||
+            selectedProperties.has(p),
+        );
+  const handleSelectAllProperties = (checked: boolean) => {
+    const newSelected = new Set(selectedProperties);
+    if (checked) {
+      if (propertySearch === "") {
+        newSelected.clear();
+        newSelected.add("All Customers");
+      } else {
+        filteredProperties.forEach((p) => newSelected.add(p));
+        newSelected.delete("All Customers");
+      }
+    } else {
+      filteredProperties.forEach((p) => newSelected.delete(p));
+      if (newSelected.size === 0) newSelected.add("All Customers");
+    }
+    setSelectedProperties(newSelected);
+  };
 
   // Generate months and years lists
   const monthsList = [
@@ -1688,24 +1719,45 @@ export default function FinancialsPage() {
 
               {propertyDropdownOpen && (
                 <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                  {availableProperties.map((property) => (
+                  <div className="p-2 border-b">
+                    <input
+                      type="text"
+                      placeholder="Search..."
+                      value={propertySearch}
+                      onChange={(e) => setPropertySearch(e.target.value)}
+                      className="w-full px-2 py-1 border rounded"
+                    />
+                  </div>
+                  <div className="px-4 py-2 border-b">
+                    <label className="flex items-center text-sm text-gray-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mr-2 rounded"
+                        checked={selectAllProperties}
+                        onChange={(e) => handleSelectAllProperties(e.target.checked)}
+                        style={{ accentColor: BRAND_COLORS.primary }}
+                      />
+                      Select All
+                    </label>
+                  </div>
+                  {filteredProperties.map((property) => (
                     <label
                       key={property}
                       className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
                     >
                       <input
                         type="checkbox"
-                        checked={selectedProperties.has(property)}
+                        checked={
+                          selectedProperties.has("All Customers") ||
+                          selectedProperties.has(property)
+                        }
                         onChange={(e) => {
                           const newSelected = new Set(selectedProperties);
+                          if (newSelected.has("All Customers")) {
+                            newSelected.delete("All Customers");
+                          }
                           if (e.target.checked) {
-                            if (property === "All Customers") {
-                              newSelected.clear();
-                              newSelected.add("All Customers");
-                            } else {
-                              newSelected.delete("All Customers");
-                              newSelected.add(property);
-                            }
+                            newSelected.add(property);
                           } else {
                             newSelected.delete(property);
                             if (newSelected.size === 0) {
