@@ -166,7 +166,7 @@ export default function CashFlowPage() {
   const [selectedYear, setSelectedYear] = useState<string>("2024")
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly")
   // Filter by customer instead of class/property
-  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set(["All Customers"]))
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set())
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false)
   const customerDropdownRef = useRef<HTMLDivElement>(null)
   const [selectedBankAccount, setSelectedBankAccount] = useState("All Bank Accounts")
@@ -197,9 +197,7 @@ export default function CashFlowPage() {
     }
   }, [customerDropdownOpen])
 
-  const selectedCustomerList = Array.from(selectedCustomers).filter(
-    (c) => c !== "All Customers",
-  )
+  const selectedCustomerList = Array.from(selectedCustomers)
 
   // Collapsible sections state
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
@@ -237,8 +235,14 @@ export default function CashFlowPage() {
   const [bankAccountData, setBankAccountData] = useState<BankAccountData[]>([])
 
   // Common state
-  const [availableCustomers, setAvailableCustomers] = useState<string[]>(["All Customers"])
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>([])
   const [customerSearch, setCustomerSearch] = useState("")
+  const filteredCustomers = availableCustomers.filter((customer) =>
+    customer.toLowerCase().includes(customerSearch.toLowerCase()),
+  )
+  const allFilteredSelected =
+    filteredCustomers.length > 0 &&
+    filteredCustomers.every((c) => selectedCustomers.has(c))
   const [availableBankAccounts, setAvailableBankAccounts] = useState<string[]>(["All Bank Accounts"])
   const [error, setError] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
@@ -820,7 +824,7 @@ export default function CashFlowPage() {
         if (row.customer) customers.add(row.customer)
       })
 
-      setAvailableCustomers(["All Customers", ...Array.from(customers).sort()])
+      setAvailableCustomers([...Array.from(customers).sort()])
 
       // ENHANCED: Fetch bank accounts using entry_bank_account field
       const { data: bankData, error: bankError } = await supabase
@@ -865,9 +869,7 @@ export default function CashFlowPage() {
         .lt("date", toExclusiveDate(endDate))
         .eq("is_cash_account", true)
         .not("entry_bank_account", "is", null)
-      const selectedCustomerList = Array.from(selectedCustomers).filter(
-        (c) => c !== "All Customers",
-      )
+      const selectedCustomerList = Array.from(selectedCustomers)
       if (selectedCustomerList.length > 0) {
         query = query.in("customer", selectedCustomerList)
       }
@@ -941,9 +943,7 @@ export default function CashFlowPage() {
       .select("entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit,cash_effect,cash_bank_account")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
-    const selectedCustomerList = Array.from(selectedCustomers).filter(
-      (c) => c !== "All Customers",
-    )
+    const selectedCustomerList = Array.from(selectedCustomers)
     if (selectedCustomerList.length > 0) {
       viewQuery = viewQuery.in("customer", selectedCustomerList)
     }
@@ -1165,9 +1165,7 @@ export default function CashFlowPage() {
 
   // Dev-only reconciliation between cash and offset lines
   const checkDataQuality = async (offsets: any[], startDate: string, endDate: string) => {
-    const selectedCustomerList = Array.from(selectedCustomers).filter(
-      (c) => c !== "All Customers",
-    )
+    const selectedCustomerList = Array.from(selectedCustomers)
     let cashQuery = supabase
       .from("journal_entry_lines")
       .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,vendor,name,class,date")
@@ -1788,7 +1786,11 @@ export default function CashFlowPage() {
                 className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
                 style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
               >
-                Customers: {Array.from(selectedCustomers).join(", ")}
+                Customers:
+                {selectedCustomers.size === 0 ||
+                selectedCustomers.size === availableCustomers.length
+                  ? " All Customers"
+                  : ` ${Array.from(selectedCustomers).join(", ")}`}
                 <ChevronDown className="w-4 h-4 ml-2" />
               </button>
 
@@ -1801,44 +1803,49 @@ export default function CashFlowPage() {
                     onChange={(e) => setCustomerSearch(e.target.value)}
                     className="w-full px-4 py-2 text-sm border-b border-gray-200 focus:outline-none"
                   />
-                  {availableCustomers
-                    .filter(
-                      (customer) =>
-                        customer === "All Customers" ||
-                        customer.toLowerCase().includes(customerSearch.toLowerCase()),
-                    )
-                    .map((customer) => (
-                      <label
-                        key={customer}
-                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedCustomers.has(customer)}
-                          onChange={(e) => {
-                            const newSelected = new Set(selectedCustomers)
-                            if (e.target.checked) {
-                              if (customer === "All Customers") {
-                                newSelected.clear()
-                                newSelected.add("All Customers")
-                              } else {
-                                newSelected.delete("All Customers")
-                                newSelected.add(customer)
-                              }
-                            } else {
-                              newSelected.delete(customer)
-                              if (newSelected.size === 0) {
-                                newSelected.add("All Customers")
-                              }
-                            }
-                            setSelectedCustomers(newSelected)
-                          }}
-                          className="mr-3 rounded"
-                          style={{ accentColor: BRAND_COLORS.primary }}
-                        />
-                        {customer}
-                      </label>
-                    ))}
+                  <label
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={() => {
+                        const newSelected = new Set(selectedCustomers)
+                        if (allFilteredSelected) {
+                          filteredCustomers.forEach((c) => newSelected.delete(c))
+                        } else {
+                          filteredCustomers.forEach((c) => newSelected.add(c))
+                        }
+                        setSelectedCustomers(newSelected)
+                      }}
+                      className="mr-3 rounded"
+                      style={{ accentColor: BRAND_COLORS.primary }}
+                    />
+                    Select All
+                  </label>
+                  {filteredCustomers.map((customer) => (
+                    <label
+                      key={customer}
+                      className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedCustomers.has(customer)}
+                        onChange={(e) => {
+                          const newSelected = new Set(selectedCustomers)
+                          if (e.target.checked) {
+                            newSelected.add(customer)
+                          } else {
+                            newSelected.delete(customer)
+                          }
+                          setSelectedCustomers(newSelected)
+                        }}
+                        className="mr-3 rounded"
+                        style={{ accentColor: BRAND_COLORS.primary }}
+                      />
+                      {customer}
+                    </label>
+                  ))}
                 </div>
               )}
             </div>

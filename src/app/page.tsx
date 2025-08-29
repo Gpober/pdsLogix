@@ -192,13 +192,15 @@ export default function FinancialOverviewPage() {
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [propertyError, setPropertyError] = useState<string | null>(null);
-  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
-    new Set(["All Customers"]),
-  );
-  const [availableCustomers, setAvailableCustomers] = useState<string[]>([
-    "All Customers",
-  ]);
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set());
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
+  const filteredCustomers = availableCustomers.filter((c) =>
+    c.toLowerCase().includes(customerSearch.toLowerCase()),
+  );
+  const allFilteredSelected =
+    filteredCustomers.length > 0 &&
+    filteredCustomers.every((c) => selectedCustomers.has(c));
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -400,7 +402,7 @@ export default function FinancialOverviewPage() {
           customers.add(row.customer.trim());
         }
       });
-      setAvailableCustomers(["All Customers", ...Array.from(customers).sort()]);
+      setAvailableCustomers([...Array.from(customers).sort()]);
     } catch (err) {
       console.error("Error fetching customers:", err);
     }
@@ -425,9 +427,7 @@ export default function FinancialOverviewPage() {
       const { startDate, endDate } = calculateDateRange();
       const monthIndex = monthsList.indexOf(selectedMonth);
       const year = Number.parseInt(selectedYear);
-      const selectedCustomerList = Array.from(selectedCustomers).filter(
-        (c) => c !== "All Customers",
-      );
+      const selectedCustomerList = Array.from(selectedCustomers);
 
       console.log(
         `🔍 FINANCIAL OVERVIEW - Fetching data for ${selectedMonth} ${selectedYear}`,
@@ -956,9 +956,7 @@ export default function FinancialOverviewPage() {
       setLoadingTrend(true);
       setTrendError(null);
       const endMonth = monthsList.indexOf(selectedMonth) + 1;
-      const selectedCustomerList = Array.from(selectedCustomers).filter(
-        (c) => c !== "All Customers",
-      );
+      const selectedCustomerList = Array.from(selectedCustomers);
       const customerQuery =
         selectedCustomerList.length > 0
           ? `&customerId=${encodeURIComponent(selectedCustomerList.join(","))}`
@@ -1595,13 +1593,15 @@ export default function FinancialOverviewPage() {
                       <button
                         onClick={() => setCustomerDropdownOpen(!customerDropdownOpen)}
                         className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
-                        style={
-                          {
-                            "--tw-ring-color": BRAND_COLORS.primary + "33",
-                          } as React.CSSProperties
-                        }
+                        style={{
+                          "--tw-ring-color": BRAND_COLORS.primary + "33",
+                        } as React.CSSProperties}
                       >
-                        Customer: {Array.from(selectedCustomers).join(", ")}
+                        Customer:
+                        {selectedCustomers.size === 0 ||
+                        selectedCustomers.size === availableCustomers.length
+                          ? " All Customers"
+                          : ` ${Array.from(selectedCustomers).join(", ")}`}
                         <ChevronDown className="w-4 h-4 ml-1" />
                       </button>
 
@@ -1614,46 +1614,53 @@ export default function FinancialOverviewPage() {
                             onChange={(e) => setCustomerSearch(e.target.value)}
                             className="w-full px-4 py-2 text-sm border-b border-gray-200 focus:outline-none"
                           />
-                          {availableCustomers
-                            .filter(
-                              (cust) =>
-                                cust === "All Customers" ||
-                                cust
-                                  .toLowerCase()
-                                  .includes(customerSearch.toLowerCase()),
-                            )
-                            .map((cust) => (
-                              <label
-                                key={cust}
-                                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={selectedCustomers.has(cust)}
-                                  onChange={(e) => {
-                                    const newSelected = new Set(selectedCustomers);
-                                    if (e.target.checked) {
-                                      if (cust === "All Customers") {
-                                        newSelected.clear();
-                                        newSelected.add("All Customers");
-                                      } else {
-                                        newSelected.delete("All Customers");
-                                        newSelected.add(cust);
-                                      }
-                                    } else {
-                                      newSelected.delete(cust);
-                                      if (newSelected.size === 0) {
-                                        newSelected.add("All Customers");
-                                      }
-                                    }
-                                    setSelectedCustomers(newSelected);
-                                  }}
-                                  className="mr-3 rounded"
-                                  style={{ accentColor: BRAND_COLORS.primary }}
-                                />
-                                {cust}
-                              </label>
-                            ))}
+                          <label
+                            className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={allFilteredSelected}
+                              onChange={() => {
+                                const newSelected = new Set(selectedCustomers);
+                                if (allFilteredSelected) {
+                                  filteredCustomers.forEach((c) =>
+                                    newSelected.delete(c),
+                                  );
+                                } else {
+                                  filteredCustomers.forEach((c) =>
+                                    newSelected.add(c),
+                                  );
+                                }
+                                setSelectedCustomers(newSelected);
+                              }}
+                              className="mr-3 rounded"
+                              style={{ accentColor: BRAND_COLORS.primary }}
+                            />
+                            Select All
+                          </label>
+                          {filteredCustomers.map((cust) => (
+                            <label
+                              key={cust}
+                              className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedCustomers.has(cust)}
+                                onChange={(e) => {
+                                  const newSelected = new Set(selectedCustomers);
+                                  if (e.target.checked) {
+                                    newSelected.add(cust);
+                                  } else {
+                                    newSelected.delete(cust);
+                                  }
+                                  setSelectedCustomers(newSelected);
+                                }}
+                                className="mr-3 rounded"
+                                style={{ accentColor: BRAND_COLORS.primary }}
+                              />
+                              {cust}
+                            </label>
+                          ))}
                         </div>
                       )}
                     </div>
