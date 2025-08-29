@@ -2,12 +2,30 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Calendar, Download, RefreshCw, ChevronDown, Users, DollarSign,
-  TrendingUp, PieChart as PieIcon, Search, Receipt
+  Download,
+  RefreshCw,
+  ChevronDown,
+  Users,
+  DollarSign,
+  TrendingUp,
+  PieChart as PieIcon,
+  Search,
+  BarChart3,
 } from "lucide-react";
 import {
-  ResponsiveContainer, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Bar, Line,
-  PieChart as RechartsPieChart, Pie, Cell
+  ResponsiveContainer,
+  ComposedChart,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  Bar,
+  Line,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  BarChart,
 } from "recharts";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -78,6 +96,10 @@ export default function PayrollPage() {
   const [departmentFilter, setDepartmentFilter] = useState("All Departments");
   const [departmentDropdownOpen, setDepartmentDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [chartType, setChartType] = useState<"pie" | "bar">("pie");
+  const [expandedDepts, setExpandedDepts] = useState<Set<string>>(new Set());
 
   // Data state
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -113,13 +135,21 @@ export default function PayrollPage() {
 
   const filteredPayments = useMemo(() => {
     return payments.filter((p) => {
-      const matchesDept = departmentFilter === "All Departments" || (p.department ?? "") === departmentFilter;
+      const matchesDept =
+        departmentFilter === "All Departments" || (p.department ?? "") === departmentFilter;
       const fullName = `${p.first_name ?? ""} ${p.last_name ?? ""}`.toLowerCase();
-      const hay = [fullName, (p.department ?? "").toLowerCase(), (p.payment_method ?? "").toLowerCase()].join(" ");
+      const hay = [
+        fullName,
+        (p.department ?? "").toLowerCase(),
+        (p.payment_method ?? "").toLowerCase(),
+      ].join(" ");
       const matchesSearch = searchTerm.trim() === "" || hay.includes(searchTerm.toLowerCase());
-      return matchesDept && matchesSearch;
+      const matchesDate =
+        (!startDate || (p.date && new Date(p.date) >= new Date(startDate))) &&
+        (!endDate || (p.date && new Date(p.date) <= new Date(endDate)));
+      return matchesDept && matchesSearch && matchesDate;
     });
-  }, [payments, departmentFilter, searchTerm]);
+  }, [payments, departmentFilter, searchTerm, startDate, endDate]);
 
   // KPIs
   const kpis = useMemo(() => {
@@ -190,6 +220,41 @@ export default function PayrollPage() {
     }
     return Array.from(map.entries()).map(([department, cost]) => ({ department, cost }));
   }, [filteredPayments]);
+
+  const departmentSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; people: Map<string, number> }
+    >();
+    for (const p of filteredPayments) {
+      const dept = (p.department || "Uncategorized").trim();
+      const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Unknown";
+      const amt = Number(p.total_amount || 0);
+      if (!map.has(dept)) map.set(dept, { total: 0, people: new Map() });
+      const info = map.get(dept)!;
+      info.total += amt;
+      info.people.set(name, (info.people.get(name) || 0) + amt);
+    }
+    return Array.from(map.entries())
+      .map(([department, { total, people }]) => ({
+        department,
+        total,
+        people: Array.from(people.entries()).map(([name, amount]) => ({
+          name,
+          amount,
+        })),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [filteredPayments]);
+
+  const toggleDept = (dept: string) => {
+    setExpandedDepts((prev) => {
+      const next = new Set(prev);
+      if (next.has(dept)) next.delete(dept);
+      else next.add(dept);
+      return next;
+    });
+  };
 
   // UI helpers
   const CHART_COLORS = [BRAND_COLORS.primary, BRAND_COLORS.success, BRAND_COLORS.warning, BRAND_COLORS.danger, BRAND_COLORS.secondary];
@@ -295,6 +360,25 @@ export default function PayrollPage() {
                 )}
               </div>
 
+              {/* Date Range */}
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
+                />
+                <span className="text-gray-500">to</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
+                />
+              </div>
+
               {/* Export & Refresh */}
               <button
                 onClick={exportCSV}
@@ -383,31 +467,59 @@ export default function PayrollPage() {
               </div>
             </div>
 
-            {/* Department Pie */}
+            {/* Department Totals */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-xl font-semibold text-gray-900">Totals by Department</h3>
-                <p className="text-sm text-gray-600 mt-1">Distribution of payment totals</p>
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">Totals by Department</h3>
+                  <p className="text-sm text-gray-600 mt-1">Distribution of payment totals</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={`p-2 rounded ${chartType === "pie" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setChartType("pie")}
+                  >
+                    <PieIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    className={`p-2 rounded ${chartType === "bar" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setChartType("bar")}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               <div className="p-6">
                 <ResponsiveContainer width="100%" height={300}>
-                  <RechartsPieChart>
-                    <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
-                    <Pie
-                      data={departmentData}
-                      dataKey="cost"
-                      nameKey="department"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={100}
-                      label={(entry) => `${entry.department}: ${((entry.cost /
-                        (departmentData.reduce((s, x) => s + x.cost, 0) || 1)) * 100).toFixed(0)}%`}
-                    >
-                      {departmentData.map((_, i) => (
-                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                  </RechartsPieChart>
+                  {chartType === "pie" ? (
+                    <RechartsPieChart>
+                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Pie
+                        data={departmentData}
+                        dataKey="cost"
+                        nameKey="department"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={100}
+                      >
+                        {departmentData.map((_, i) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                    </RechartsPieChart>
+                  ) : (
+                    <BarChart data={departmentData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="department" hide />
+                      <YAxis tickFormatter={(v) => formatCurrency(Number(v))} />
+                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Bar dataKey="cost">
+                        {departmentData.map((_, i) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  )}
                 </ResponsiveContainer>
               </div>
             </div>
@@ -452,6 +564,47 @@ export default function PayrollPage() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+
+          {/* Department Summary */}
+          <div className="bg-white rounded-xl shadow-sm overflow-hidden mt-8">
+            <div className="p-6 border-b border-gray-200 flex items-center">
+              <IAMCFOLogo className="w-6 h-6 mr-2" />
+              <h3 className="text-xl font-semibold text-gray-900">Department Summary</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              {departmentSummary.map((dept) => (
+                <div key={dept.department} className="border rounded-lg">
+                  <button
+                    onClick={() => toggleDept(dept.department)}
+                    className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
+                  >
+                    <span className="font-medium">{dept.department}</span>
+                    <div className="flex items-center gap-4">
+                      <span>{formatCurrency(dept.total)}</span>
+                      <ChevronDown
+                        className={`w-4 h-4 transition-transform ${
+                          expandedDepts.has(dept.department) ? "rotate-180" : ""
+                        }`}
+                      />
+                    </div>
+                  </button>
+                  {expandedDepts.has(dept.department) && (
+                    <div className="bg-gray-50 px-4 py-2 space-y-1">
+                      {dept.people.map((person) => (
+                        <div key={person.name} className="flex justify-between text-sm">
+                          <span>{person.name}</span>
+                          <span>{formatCurrency(person.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {departmentSummary.length === 0 && (
+                <div className="text-sm text-gray-600">No data for selected filters.</div>
+              )}
             </div>
           </div>
 
