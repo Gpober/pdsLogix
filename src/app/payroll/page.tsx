@@ -12,21 +12,21 @@ import {
   Search,
   BarChart3,
   Calendar,
+  LineChart as LineChartIcon,
 } from "lucide-react";
 import {
   ResponsiveContainer,
-  ComposedChart,
   CartesianGrid,
   XAxis,
   YAxis,
   Tooltip,
-  Legend,
   Bar,
   Line,
   PieChart as RechartsPieChart,
   Pie,
   Cell,
   BarChart,
+  LineChart,
 } from "recharts";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -114,7 +114,9 @@ export default function PayrollPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [chartType, setChartType] = useState<"pie" | "bar">("pie");
-  const [expandedDepts, setExpandedDepts] = useState<Set<string>>(new Set());
+  const [trendChartType, setTrendChartType] = useState<"line" | "bar">("line");
+  const [summaryView, setSummaryView] = useState<"department" | "date">("department");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const monthsList = [
     "January",
@@ -336,11 +338,37 @@ export default function PayrollPage() {
       .sort((a, b) => b.total - a.total);
   }, [filteredPayments]);
 
-  const toggleDept = (dept: string) => {
-    setExpandedDepts((prev) => {
+  const dateSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; people: Map<string, number> }
+    >();
+    for (const p of filteredPayments) {
+      const date = p.date ? new Date(p.date).toISOString().split("T")[0] : "Unknown";
+      const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Unknown";
+      const amt = Number(p.total_amount || 0);
+      if (!map.has(date)) map.set(date, { total: 0, people: new Map() });
+      const info = map.get(date)!;
+      info.total += amt;
+      info.people.set(name, (info.people.get(name) || 0) + amt);
+    }
+    return Array.from(map.entries())
+      .map(([date, { total, people }]) => ({
+        date,
+        total,
+        people: Array.from(people.entries()).map(([name, amount]) => ({
+          name,
+          amount,
+        })),
+      }))
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [filteredPayments]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(dept)) next.delete(dept);
-      else next.add(dept);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -354,6 +382,23 @@ export default function PayrollPage() {
 
   const formatCurrency = (amount: number): string =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+
+  const renderDeptTooltip = ({
+    active,
+    payload,
+  }: {
+    active?: boolean;
+    payload?: Array<{ payload: { department: string; cost: number } }>;
+  }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    return (
+      <div className="bg-white p-2 border rounded shadow text-sm">
+        <div className="font-medium">Department: {data.department}</div>
+        <div>Total: {formatCurrency(Number(data.cost))}</div>
+      </div>
+    );
+  };
 
   const showNotification = (message: string, type: "info" | "success" | "error" | "warning" = "info") => {
     setNotification({ show: true, message, type });
@@ -630,21 +675,45 @@ export default function PayrollPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Trend */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-xl font-semibold text-gray-900">Year-to-Date Payments Trend</h3>
-                <p className="text-sm text-gray-600 mt-1">Gross/Net show same value (no tax split in table)</p>
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">Year-to-Date Payments Trend</h3>
+                  <p className="text-sm text-gray-600 mt-1">Gross/Net show same value (no tax split in table)</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={`p-2 rounded ${trendChartType === "line" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setTrendChartType("line")}
+                  >
+                    <LineChartIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    className={`p-2 rounded ${trendChartType === "bar" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setTrendChartType("bar")}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               <div className="p-6">
                 <ResponsiveContainer width="100%" height={300}>
-                  <ComposedChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
-                    <Tooltip formatter={(v) => [formatCurrency(Number(v)), ""]} />
-                    <Legend />
-                    <Bar dataKey="grossPay" fill={BRAND_COLORS.primary} name="Total" />
-                    <Line type="monotone" dataKey="netPay" stroke={BRAND_COLORS.success} strokeWidth={3} name="Net (same)" />
-                  </ComposedChart>
+                  {trendChartType === "line" ? (
+                    <LineChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
+                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Line type="monotone" dataKey="grossPay" stroke={BRAND_COLORS.primary} strokeWidth={3} name="Total" />
+                    </LineChart>
+                  ) : (
+                    <BarChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
+                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Bar dataKey="grossPay" fill={BRAND_COLORS.primary} name="Total" />
+                    </BarChart>
+                  )}
                 </ResponsiveContainer>
               </div>
             </div>
@@ -675,10 +744,7 @@ export default function PayrollPage() {
                 <ResponsiveContainer width="100%" height={300}>
                   {chartType === "pie" ? (
                     <RechartsPieChart>
-                      <Tooltip
-                        formatter={(v) => [formatCurrency(Number(v)), "Total"]}
-                        labelFormatter={(label) => `Department: ${label}`}
-                      />
+                      <Tooltip content={renderDeptTooltip} />
                       <Pie
                         data={departmentData}
                         dataKey="cost"
@@ -697,10 +763,7 @@ export default function PayrollPage() {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="department" hide />
                       <YAxis tickFormatter={(v) => formatCurrency(Number(v))} />
-                      <Tooltip
-                        formatter={(v) => [formatCurrency(Number(v)), "Total"]}
-                        labelFormatter={(label) => `Department: ${label}`}
-                      />
+                      <Tooltip content={renderDeptTooltip} />
                       <Bar dataKey="cost">
                         {departmentData.map((_, i) => (
                           <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -714,42 +777,95 @@ export default function PayrollPage() {
 
           </div>
 
-          {/* Department Summary */}
+          {/* Summary */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden mt-8">
-            <div className="p-6 border-b border-gray-200 flex items-center">
-              <IAMCFOLogo className="w-6 h-6 mr-2" />
-              <h3 className="text-xl font-semibold text-gray-900">Department Summary</h3>
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center">
+                <IAMCFOLogo className="w-6 h-6 mr-2" />
+                <h3 className="text-xl font-semibold text-gray-900">
+                  {summaryView === "department" ? "Department Summary" : "Date Summary"}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className={`px-3 py-1 text-sm rounded ${summaryView === "department" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                  onClick={() => setSummaryView("department")}
+                >
+                  By Dept
+                </button>
+                <button
+                  className={`px-3 py-1 text-sm rounded ${summaryView === "date" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                  onClick={() => setSummaryView("date")}
+                >
+                  By Date
+                </button>
+              </div>
             </div>
             <div className="p-6 space-y-4">
-              {departmentSummary.map((dept) => (
-                <div key={dept.department} className="border rounded-lg">
-                  <button
-                    onClick={() => toggleDept(dept.department)}
-                    className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
-                  >
-                    <span className="font-medium">{dept.department}</span>
-                    <div className="flex items-center gap-4">
-                      <span>{formatCurrency(dept.total)}</span>
-                      <ChevronDown
-                        className={`w-4 h-4 transition-transform ${
-                          expandedDepts.has(dept.department) ? "rotate-180" : ""
-                        }`}
-                      />
-                    </div>
-                  </button>
-                  {expandedDepts.has(dept.department) && (
-                    <div className="bg-gray-50 px-4 py-2 space-y-1">
-                      {dept.people.map((person) => (
-                        <div key={person.name} className="flex justify-between text-sm">
-                          <span>{person.name}</span>
-                          <span>{formatCurrency(person.amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {departmentSummary.length === 0 && (
+              {summaryView === "department" &&
+                departmentSummary.map((dept) => (
+                  <div key={dept.department} className="border rounded-lg">
+                    <button
+                      onClick={() => toggleGroup(dept.department)}
+                      className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
+                    >
+                      <span className="font-medium">{dept.department}</span>
+                      <div className="flex items-center gap-4">
+                        <span>{formatCurrency(dept.total)}</span>
+                        <ChevronDown
+                          className={`w-4 h-4 transition-transform ${
+                            expandedGroups.has(dept.department) ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
+                    </button>
+                    {expandedGroups.has(dept.department) && (
+                      <div className="bg-gray-50 px-4 py-2 space-y-1">
+                        {dept.people.map((person) => (
+                          <div key={person.name} className="flex justify-between text-sm">
+                            <span>{person.name}</span>
+                            <span>{formatCurrency(person.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+              {summaryView === "date" &&
+                dateSummary.map((d) => (
+                  <div key={d.date} className="border rounded-lg">
+                    <button
+                      onClick={() => toggleGroup(d.date)}
+                      className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
+                    >
+                      <span className="font-medium">{new Date(d.date).toLocaleDateString()}</span>
+                      <div className="flex items-center gap-4">
+                        <span>{formatCurrency(d.total)}</span>
+                        <ChevronDown
+                          className={`w-4 h-4 transition-transform ${
+                            expandedGroups.has(d.date) ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
+                    </button>
+                    {expandedGroups.has(d.date) && (
+                      <div className="bg-gray-50 px-4 py-2 space-y-1">
+                        {d.people.map((person) => (
+                          <div key={person.name} className="flex justify-between text-sm">
+                            <span>{person.name}</span>
+                            <span>{formatCurrency(person.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+              {summaryView === "department" && departmentSummary.length === 0 && (
+                <div className="text-sm text-gray-600">No data for selected filters.</div>
+              )}
+              {summaryView === "date" && dateSummary.length === 0 && (
                 <div className="text-sm text-gray-600">No data for selected filters.</div>
               )}
             </div>
