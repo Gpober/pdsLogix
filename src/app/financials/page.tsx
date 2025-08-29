@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+import { classifyPLAccount } from "@/lib/classifyPLAccount";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -471,48 +472,6 @@ export default function FinancialsPage() {
     return { startDate, endDate };
   };
 
-  // CORRECTED: P&L Classification using account_type field
-  const classifyPLAccount = (
-    accountType: string,
-    accountName: string,
-    reportCategory: string,
-  ) => {
-    const typeLower = accountType?.toLowerCase() || "";
-    const nameLower = accountName?.toLowerCase() || "";
-    const categoryLower = reportCategory?.toLowerCase() || "";
-
-    // Exclude transfers and cash accounts first
-    const isTransfer =
-      categoryLower === "transfer" || nameLower.includes("transfer");
-    const isCashAccount =
-      typeLower.includes("bank") ||
-      typeLower.includes("cash") ||
-      nameLower.includes("checking") ||
-      nameLower.includes("savings") ||
-      nameLower.includes("cash");
-
-    if (isCashAccount || isTransfer) return null;
-
-    // INCOME ACCOUNTS - Based on account_type
-    const isIncomeAccount =
-      typeLower === "income" ||
-      typeLower === "other income" ||
-      typeLower.includes("income") ||
-      typeLower.includes("revenue");
-
-    // EXPENSE ACCOUNTS - Based on account_type
-    const isExpenseAccount =
-      typeLower === "expenses" ||
-      typeLower === "other expense" ||
-      typeLower === "cost of goods sold" ||
-      typeLower.includes("expense");
-
-    if (isIncomeAccount) return "INCOME";
-    if (isExpenseAccount) return "EXPENSES";
-
-    return null; // Not a P&L account (likely Balance Sheet account)
-  };
-
   // Fetch P&L data using ENHANCED database strategy with TIMEZONE-INDEPENDENT dates
   const fetchPLData = async () => {
     setIsLoadingData(true);
@@ -594,8 +553,8 @@ export default function FinancialsPage() {
       const plTransactions = filteredTransactions.filter((tx) => {
         const classification = classifyPLAccount(
           tx.account_type,
-          tx.account,
           tx.report_category,
+          tx.account,
         );
         return classification !== null;
       });
@@ -996,8 +955,8 @@ export default function FinancialsPage() {
       // Determine category and amount using ENHANCED classification
       const classification = classifyPLAccount(
         accountType,
-        account,
         reportCategory,
+        account,
       );
       if (!classification) continue; // Skip non-P&L accounts
 

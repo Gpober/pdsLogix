@@ -40,6 +40,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { supabase } from "@/lib/supabaseClient";
+import { classifyPLAccount } from "@/lib/classifyPLAccount";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -62,44 +63,6 @@ const CHART_COLORS = [
   "#8884d8",
   "#82ca9d",
 ];
-
-// P&L Classification using the same logic as financials page
-const classifyPLAccount = (accountType, reportCategory, accountName) => {
-  const typeLower = accountType?.toLowerCase() || "";
-  const nameLower = accountName?.toLowerCase() || "";
-  const categoryLower = reportCategory?.toLowerCase() || "";
-
-  // Exclude transfers and cash accounts first
-  const isTransfer =
-    categoryLower === "transfer" || nameLower.includes("transfer");
-  const isCashAccount =
-    typeLower.includes("bank") ||
-    typeLower.includes("cash") ||
-    nameLower.includes("checking") ||
-    nameLower.includes("savings") ||
-    nameLower.includes("cash");
-
-  if (isCashAccount || isTransfer) return null;
-
-  // INCOME ACCOUNTS - Based on account_type
-  const isIncomeAccount =
-    typeLower === "income" ||
-    typeLower === "other income" ||
-    typeLower.includes("income") ||
-    typeLower.includes("revenue");
-
-  // EXPENSE ACCOUNTS - Based on account_type
-  const isExpenseAccount =
-    typeLower === "expense" ||
-    typeLower === "other expense" ||
-    typeLower === "cost of goods sold" ||
-    typeLower.includes("expense");
-
-  if (isIncomeAccount) return "INCOME";
-  if (isExpenseAccount) return "EXPENSES";
-
-  return null; // Not a P&L account (likely Balance Sheet account)
-};
 
 // Cash Flow Classification using the same logic as cash-flow page
 const classifyCashFlowTransaction = (accountType) => {
@@ -395,13 +358,14 @@ export default function FinancialOverviewPage() {
     try {
       const { data, error } = await supabase
         .from("journal_entry_lines")
-        .select("customer")
-        .not("customer", "is", null);
+        .select("customer,vendor,name")
+        .or("customer.not.is.null,vendor.not.is.null,name.not.is.null");
       if (error) throw error;
       const customers = new Set<string>();
       data.forEach((row) => {
-        if (row.customer && row.customer.trim()) {
-          customers.add(row.customer.trim());
+        const name = row.customer || row.vendor || row.name;
+        if (name && name.trim()) {
+          customers.add(name.trim());
         }
       });
       setAvailableCustomers(Array.from(customers).sort());
@@ -806,7 +770,11 @@ export default function FinancialOverviewPage() {
     const properties = {};
 
     transactions.forEach((transaction) => {
-      const property = transaction.customer || "Unassigned";
+      const property =
+        transaction.customer ||
+        transaction.vendor ||
+        transaction.name ||
+        "Unassigned";
       const category = classifyPLAccount(
         transaction.account_type,
         transaction.report_category,
