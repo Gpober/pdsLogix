@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { RefreshCw, ChevronDown, ChevronRight, X, Download } from "lucide-react"
 import * as XLSX from "xlsx"
 import jsPDF from "jspdf"
@@ -172,6 +172,13 @@ export default function CashFlowPage() {
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false)
   const customerDropdownRef = useRef<HTMLDivElement>(null)
   const [customerSearch, setCustomerSearch] = useState("")
+  const customerLabel = useMemo(() => {
+    if (selectedCustomers.size === 0) return "All Customers"
+    const list = Array.from(selectedCustomers)
+    return selectedCustomers.size === 1
+      ? list[0]
+      : `${list[0]} +${selectedCustomers.size - 1} more`
+  }, [selectedCustomers])
   const [viewMode, setViewMode] = useState<ViewMode>("offset")
   const [periodType, setPeriodType] = useState<PeriodType>("monthly")
   const [customStartDate, setCustomStartDate] = useState("")
@@ -1782,9 +1789,7 @@ export default function CashFlowPage() {
                 className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
                 style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
               >
-                Customers: {selectedCustomers.size > 0
-                  ? Array.from(selectedCustomers).join(", ")
-                  : "All Customers"}
+                Customers: {customerLabel}
                 <ChevronDown className="w-4 h-4 ml-2" />
               </button>
 

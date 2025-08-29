@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   Download,
   RefreshCw,
@@ -232,6 +232,13 @@ export default function FinancialsPage() {
   const [dataError, setDataError] = useState<string | null>(null);
   const [availableProperties, setAvailableProperties] = useState<string[]>([]);
   const [propertySearch, setPropertySearch] = useState("");
+  const propertyLabel = useMemo(() => {
+    if (selectedProperties.size === 0) return "All Customers";
+    const list = Array.from(selectedProperties);
+    return selectedProperties.size === 1
+      ? list[0]
+      : `${list[0]} +${selectedProperties.size - 1} more`;
+  }, [selectedProperties]);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [transactionModalTitle, setTransactionModalTitle] = useState("");
   const [modalTransactionDetails, setModalTransactionDetails] = useState<
@@ -1703,9 +1710,7 @@ export default function FinancialsPage() {
                   } as React.CSSProperties
                 }
               >
-                Customers: {selectedProperties.size > 0
-                  ? Array.from(selectedProperties).join(", ")
-                  : "All Customers"}
+                Customers: {propertyLabel}
                 <ChevronDown className="w-4 h-4 ml-2" />
               </button>
 

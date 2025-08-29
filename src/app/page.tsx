@@ -196,6 +196,13 @@ export default function FinancialOverviewPage() {
     useState<Set<string>>(new Set());
   const [availableCustomers, setAvailableCustomers] = useState<string[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
+  const customerLabel = useMemo(() => {
+    if (selectedCustomers.size === 0) return "All Customers";
+    const list = Array.from(selectedCustomers);
+    return selectedCustomers.size === 1
+      ? list[0]
+      : `${list[0]} +${selectedCustomers.size - 1} more`;
+  }, [selectedCustomers]);
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -1595,9 +1602,7 @@ export default function FinancialOverviewPage() {
                           } as React.CSSProperties
                         }
                       >
-                        Customer: {selectedCustomers.size > 0
-                          ? Array.from(selectedCustomers).join(", ")
-                          : "All Customers"}
+                        Customer: {customerLabel}
                         <ChevronDown className="w-4 h-4 ml-1" />
                       </button>
 
