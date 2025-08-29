@@ -1,13 +1,32 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
-  Calendar, Download, RefreshCw, ChevronDown, Users, DollarSign,
-  TrendingUp, PieChart as PieIcon, Search, Receipt
+  Download,
+  RefreshCw,
+  ChevronDown,
+  Users,
+  DollarSign,
+  TrendingUp,
+  PieChart as PieIcon,
+  Search,
+  BarChart3,
+  Calendar,
+  LineChart as LineChartIcon,
 } from "lucide-react";
 import {
-  ResponsiveContainer, ComposedChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Bar, Line,
-  PieChart as RechartsPieChart, Pie, Cell
+  ResponsiveContainer,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Bar,
+  Line,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  BarChart,
+  LineChart,
 } from "recharts";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -44,6 +63,8 @@ type Payment = {
   total_amount: number | null;   // numeric in Postgres -> number here
 };
 
+type TimePeriod = "Monthly" | "Quarterly" | "YTD" | "Trailing 12" | "Custom";
+
 // I AM CFO Logo
 const IAMCFOLogo = ({ className = "w-8 h-8" }: { className?: string }) => (
   <div className={`${className} flex items-center justify-center relative`}>
@@ -78,24 +99,121 @@ export default function PayrollPage() {
   const [departmentFilter, setDepartmentFilter] = useState("All Departments");
   const [departmentDropdownOpen, setDepartmentDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly");
+  const [selectedMonth, setSelectedMonth] = useState(
+    new Date().toLocaleString("en-US", { month: "long" })
+  );
+  const [selectedYear, setSelectedYear] = useState(
+    String(new Date().getFullYear())
+  );
+  const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false);
+  const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
+  const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [chartType, setChartType] = useState<"pie" | "bar">("pie");
+  const [trendChartType, setTrendChartType] = useState<"line" | "bar">("line");
+  const [summaryView, setSummaryView] = useState<"department" | "date">("department");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  const monthsList = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const yearsList = Array.from({ length: 10 }, (_, i) =>
+    String(new Date().getFullYear() - 5 + i)
+  );
+
+  const timePeriodDropdownRef = useRef<HTMLDivElement>(null);
+  const monthDropdownRef = useRef<HTMLDivElement>(null);
+  const yearDropdownRef = useRef<HTMLDivElement>(null);
 
   // Data state
   const [payments, setPayments] = useState<Payment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        timePeriodDropdownRef.current &&
+        !timePeriodDropdownRef.current.contains(event.target as Node)
+      ) {
+        setTimePeriodDropdownOpen(false);
+      }
+      if (
+        monthDropdownRef.current &&
+        !monthDropdownRef.current.contains(event.target as Node)
+      ) {
+        setMonthDropdownOpen(false);
+      }
+      if (
+        yearDropdownRef.current &&
+        !yearDropdownRef.current.contains(event.target as Node)
+      ) {
+        setYearDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const monthIndex = monthsList.indexOf(selectedMonth);
+    const yearNum = parseInt(selectedYear, 10);
+
+    const makeDate = (y: number, m: number, d: number) =>
+      new Date(Date.UTC(y, m, d)).toISOString().split("T")[0];
+
+    let start = "";
+    let end = "";
+    if (timePeriod === "Monthly") {
+      start = makeDate(yearNum, monthIndex, 1);
+      end = makeDate(yearNum, monthIndex + 1, 0);
+    } else if (timePeriod === "Quarterly") {
+      const qStart = Math.floor(monthIndex / 3) * 3;
+      start = makeDate(yearNum, qStart, 1);
+      end = makeDate(yearNum, qStart + 3, 0);
+    } else if (timePeriod === "YTD") {
+      start = makeDate(yearNum, 0, 1);
+      end = makeDate(yearNum, monthIndex + 1, 0);
+    } else if (timePeriod === "Trailing 12") {
+      const endDate = makeDate(yearNum, monthIndex + 1, 0);
+      const startDate = makeDate(yearNum, monthIndex - 11, 1);
+      start = startDate;
+      end = endDate;
+    } else {
+      start = customStartDate;
+      end = customEndDate;
+    }
+    setStartDate(start);
+    setEndDate(end);
+  }, [timePeriod, selectedMonth, selectedYear, customStartDate, customEndDate]);
 
   // Fetch payments
   const fetchPayments = async () => {
-    setLoading(true);
-    setLoadError(null);
     const { data, error } = await supabase
       .from("payments")
-      .select("id, last_name, first_name, department, payment_method, date, total_amount")
+      .select(
+        "id, last_name, first_name, department, payment_method, date, total_amount"
+      )
       .order("date", { ascending: false })
       .limit(5000); // adjust as needed
-    if (error) setLoadError(error.message);
+    if (error) {
+      showNotification(error.message, "error");
+      return;
+    }
     setPayments((data ?? []) as Payment[]);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -113,13 +231,21 @@ export default function PayrollPage() {
 
   const filteredPayments = useMemo(() => {
     return payments.filter((p) => {
-      const matchesDept = departmentFilter === "All Departments" || (p.department ?? "") === departmentFilter;
+      const matchesDept =
+        departmentFilter === "All Departments" || (p.department ?? "") === departmentFilter;
       const fullName = `${p.first_name ?? ""} ${p.last_name ?? ""}`.toLowerCase();
-      const hay = [fullName, (p.department ?? "").toLowerCase(), (p.payment_method ?? "").toLowerCase()].join(" ");
+      const hay = [
+        fullName,
+        (p.department ?? "").toLowerCase(),
+        (p.payment_method ?? "").toLowerCase(),
+      ].join(" ");
       const matchesSearch = searchTerm.trim() === "" || hay.includes(searchTerm.toLowerCase());
-      return matchesDept && matchesSearch;
+      const matchesDate =
+        (!startDate || (p.date && Date.parse(p.date) >= Date.parse(startDate))) &&
+        (!endDate || (p.date && Date.parse(p.date) <= Date.parse(endDate)));
+      return matchesDept && matchesSearch && matchesDate;
     });
-  }, [payments, departmentFilter, searchTerm]);
+  }, [payments, departmentFilter, searchTerm, startDate, endDate]);
 
   // KPIs
   const kpis = useMemo(() => {
@@ -136,7 +262,7 @@ export default function PayrollPage() {
       total += amt;
       if (p.date) {
         const d = new Date(p.date);
-        if (d.getMonth() === m && d.getFullYear() === y) monthTotal += amt;
+        if (d.getUTCMonth() === m && d.getUTCFullYear() === y) monthTotal += amt;
       }
     }
     const avg = totalTx ? total / totalTx : 0;
@@ -152,18 +278,15 @@ export default function PayrollPage() {
     return { totalTx, total, monthTotal, avg, topDept };
   }, [filteredPayments]);
 
-  // Trend (last 6 months) & Department pie (live)
+  // Trend (year-to-date) & Department totals
   const trendData = useMemo(() => {
-    // buckets for last 6 months
     const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
     const labels: { key: string; y: number; m: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      labels.push({
-        key: d.toLocaleString("en-US", { month: "short" }) + " " + d.getFullYear(),
-        y: d.getFullYear(),
-        m: d.getMonth(),
-      });
+    for (let m = 0; m <= currentMonth; m++) {
+      const key = monthsList[m].slice(0, 3) + " " + currentYear;
+      labels.push({ key, y: currentYear, m });
     }
     const map = new Map<string, { month: string; grossPay: number; netPay: number }>();
     labels.forEach((l) => map.set(l.key, { month: l.key, grossPay: 0, netPay: 0 }));
@@ -171,7 +294,8 @@ export default function PayrollPage() {
     for (const p of filteredPayments) {
       if (!p.date) continue;
       const d = new Date(p.date);
-      const key = d.toLocaleString("en-US", { month: "short" }) + " " + d.getFullYear();
+      const key =
+        monthsList[d.getUTCMonth()].slice(0, 3) + " " + d.getUTCFullYear();
       if (!map.has(key)) continue;
       const amt = Number(p.total_amount || 0);
       const bucket = map.get(key)!;
@@ -191,14 +315,93 @@ export default function PayrollPage() {
     return Array.from(map.entries()).map(([department, cost]) => ({ department, cost }));
   }, [filteredPayments]);
 
+  const departmentSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; people: Map<string, number> }
+    >();
+    for (const p of filteredPayments) {
+      const dept = (p.department || "Uncategorized").trim();
+      const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Unknown";
+      const amt = Number(p.total_amount || 0);
+      if (!map.has(dept)) map.set(dept, { total: 0, people: new Map() });
+      const info = map.get(dept)!;
+      info.total += amt;
+      info.people.set(name, (info.people.get(name) || 0) + amt);
+    }
+    return Array.from(map.entries())
+      .map(([department, { total, people }]) => ({
+        department,
+        total,
+        people: Array.from(people.entries()).map(([name, amount]) => ({
+          name,
+          amount,
+        })),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [filteredPayments]);
+
+  const dateSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; people: Map<string, number> }
+    >();
+    for (const p of filteredPayments) {
+      const date = p.date ? p.date.split("T")[0] : "Unknown";
+      const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Unknown";
+      const amt = Number(p.total_amount || 0);
+      if (!map.has(date)) map.set(date, { total: 0, people: new Map() });
+      const info = map.get(date)!;
+      info.total += amt;
+      info.people.set(name, (info.people.get(name) || 0) + amt);
+    }
+    return Array.from(map.entries())
+      .map(([date, { total, people }]) => ({
+        date,
+        total,
+        people: Array.from(people.entries()).map(([name, amount]) => ({
+          name,
+          amount,
+        })),
+      }))
+      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+  }, [filteredPayments]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   // UI helpers
   const CHART_COLORS = [BRAND_COLORS.primary, BRAND_COLORS.success, BRAND_COLORS.warning, BRAND_COLORS.danger, BRAND_COLORS.secondary];
+
+  const ringStyle = {
+    "--tw-ring-color": BRAND_COLORS.secondary + "33",
+  } as React.CSSProperties;
 
   const formatCurrency = (amount: number): string =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
-  const formatDate = (dateString?: string | null): string =>
-    dateString ? new Date(dateString).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
+  const renderDeptTooltip = ({
+    active,
+    payload,
+  }: {
+    active?: boolean;
+    payload?: Array<{ payload: { department: string; cost: number } }>;
+  }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
+    return (
+      <div className="bg-white p-2 border rounded shadow text-sm">
+        <div className="font-medium">Department: {data.department}</div>
+        <div>Total: {formatCurrency(Number(data.cost))}</div>
+      </div>
+    );
+  };
 
   const showNotification = (message: string, type: "info" | "success" | "error" | "warning" = "info") => {
     setNotification({ show: true, message, type });
@@ -263,7 +466,7 @@ export default function PayrollPage() {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 transition-all w-64"
-                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
+                  style={ringStyle}
                 />
               </div>
 
@@ -272,7 +475,7 @@ export default function PayrollPage() {
                 <button
                   onClick={() => setDepartmentDropdownOpen((v) => !v)}
                   className="flex items-center justify-between w-56 px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
+                  style={ringStyle}
                 >
                   <span>{departmentFilter}</span>
                   <ChevronDown className={`w-4 h-4 transition-transform ${departmentDropdownOpen ? "rotate-180" : ""}`} />
@@ -291,6 +494,117 @@ export default function PayrollPage() {
                         {dept}
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Time Period */}
+              <div className="flex items-center gap-2">
+                <div className="relative" ref={timePeriodDropdownRef}>
+                  <button
+                    onClick={() => setTimePeriodDropdownOpen(!timePeriodDropdownOpen)}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                    style={ringStyle}
+                  >
+                    <Calendar className="w-4 h-4 mr-2" />
+                    {timePeriod}
+                    <ChevronDown className="w-4 h-4 ml-2" />
+                  </button>
+                  {timePeriodDropdownOpen && (
+                    <div className="absolute z-10 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg">
+                      {(["Monthly", "Quarterly", "YTD", "Trailing 12", "Custom"] as TimePeriod[]).map((p) => (
+                        <div
+                          key={p}
+                          className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                          onClick={() => {
+                            setTimePeriod(p);
+                            setTimePeriodDropdownOpen(false);
+                          }}
+                        >
+                          {p}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {(timePeriod === "Monthly" ||
+                  timePeriod === "Quarterly" ||
+                  timePeriod === "YTD" ||
+                  timePeriod === "Trailing 12") && (
+                  <>
+                    <div className="relative" ref={monthDropdownRef}>
+                      <button
+                        onClick={() => setMonthDropdownOpen(!monthDropdownOpen)}
+                        className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                        style={ringStyle}
+                      >
+                        {selectedMonth}
+                        <ChevronDown className="w-4 h-4 ml-2" />
+                      </button>
+                      {monthDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {monthsList.map((m) => (
+                            <div
+                              key={m}
+                              className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                              onClick={() => {
+                                setSelectedMonth(m);
+                                setMonthDropdownOpen(false);
+                              }}
+                            >
+                              {m}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="relative" ref={yearDropdownRef}>
+                      <button
+                        onClick={() => setYearDropdownOpen(!yearDropdownOpen)}
+                        className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                        style={ringStyle}
+                      >
+                        {selectedYear}
+                        <ChevronDown className="w-4 h-4 ml-2" />
+                      </button>
+                      {yearDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-32 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {yearsList.map((y) => (
+                            <div
+                              key={y}
+                              className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                              onClick={() => {
+                                setSelectedYear(y);
+                                setYearDropdownOpen(false);
+                              }}
+                            >
+                              {y}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {timePeriod === "Custom" && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={customStartDate}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                      style={ringStyle}
+                    />
+                    <span className="text-gray-500">to</span>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                      style={ringStyle}
+                    />
                   </div>
                 )}
               </div>
@@ -364,94 +678,206 @@ export default function PayrollPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Trend */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-xl font-semibold text-gray-900">6-Month Payments Trend</h3>
-                <p className="text-sm text-gray-600 mt-1">Gross/Net show same value (no tax split in table)</p>
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">Year-to-Date Payments Trend</h3>
+                  <p className="text-sm text-gray-600 mt-1">Gross/Net show same value (no tax split in table)</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={`p-2 rounded ${trendChartType === "line" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setTrendChartType("line")}
+                  >
+                    <LineChartIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    className={`p-2 rounded ${trendChartType === "bar" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setTrendChartType("bar")}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               <div className="p-6">
                 <ResponsiveContainer width="100%" height={300}>
-                  <ComposedChart data={trendData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
-                    <Tooltip formatter={(v) => [formatCurrency(Number(v)), ""]} />
-                    <Legend />
-                    <Bar dataKey="grossPay" fill={BRAND_COLORS.primary} name="Total" />
-                    <Line type="monotone" dataKey="netPay" stroke={BRAND_COLORS.success} strokeWidth={3} name="Net (same)" />
-                  </ComposedChart>
+                  {trendChartType === "line" ? (
+                    <LineChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
+                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Line type="monotone" dataKey="grossPay" stroke={BRAND_COLORS.primary} strokeWidth={3} name="Total" />
+                    </LineChart>
+                  ) : (
+                    <BarChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" />
+                      <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
+                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Bar dataKey="grossPay" fill={BRAND_COLORS.primary} name="Total" />
+                    </BarChart>
+                  )}
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* Department Pie */}
+            {/* Department Totals */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-xl font-semibold text-gray-900">Totals by Department</h3>
-                <p className="text-sm text-gray-600 mt-1">Distribution of payment totals</p>
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">Totals by Department</h3>
+                  <p className="text-sm text-gray-600 mt-1">Distribution of payment totals</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={`p-2 rounded ${chartType === "pie" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setChartType("pie")}
+                  >
+                    <PieIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    className={`p-2 rounded ${chartType === "bar" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setChartType("bar")}
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
               <div className="p-6">
                 <ResponsiveContainer width="100%" height={300}>
-                  <RechartsPieChart>
-                    <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
-                    <Pie
-                      data={departmentData}
-                      dataKey="cost"
-                      nameKey="department"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={100}
-                      label={(entry) => `${entry.department}: ${((entry.cost /
-                        (departmentData.reduce((s, x) => s + x.cost, 0) || 1)) * 100).toFixed(0)}%`}
-                    >
-                      {departmentData.map((_, i) => (
-                        <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                  </RechartsPieChart>
+                  {chartType === "pie" ? (
+                    <RechartsPieChart>
+                      <Tooltip content={renderDeptTooltip} />
+                      <Pie
+                        data={departmentData}
+                        dataKey="cost"
+                        nameKey="department"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={100}
+                      >
+                        {departmentData.map((_, i) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                    </RechartsPieChart>
+                  ) : (
+                    <BarChart data={departmentData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="department" hide />
+                      <YAxis tickFormatter={(v) => formatCurrency(Number(v))} />
+                      <Tooltip content={renderDeptTooltip} />
+                      <Bar dataKey="cost">
+                        {departmentData.map((_, i) => (
+                          <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  )}
                 </ResponsiveContainer>
               </div>
             </div>
 
-            {/* Recent Payments */}
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden lg:col-span-2">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-xl font-semibold text-gray-900">Recent Payments</h3>
+          </div>
+
+          {/* Summary */}
+          <div className="bg-white rounded-xl shadow-sm overflow-hidden mt-8">
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+              <div className="flex items-center">
+                <IAMCFOLogo className="w-6 h-6 mr-2" />
+                <h3 className="text-xl font-semibold text-gray-900">
+                  {summaryView === "department" ? "Department Summary" : "Date Summary"}
+                </h3>
               </div>
-              <div className="p-6">
-                {loading && <div className="text-sm text-gray-600">Loading payments…</div>}
-                {loadError && <div className="text-sm text-red-600">Error: {loadError}</div>}
-                {!loading && !loadError && (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead>
-                        <tr>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Date</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Employee</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Department</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Method</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {filteredPayments.map((p) => (
-                          <tr key={p.id ?? `${p.first_name}-${p.last_name}-${p.date}`}>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{formatDate(p.date)}</td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
-                              {(p.first_name ?? "") + " " + (p.last_name ?? "")}
-                            </td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{p.department ?? "—"}</td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{p.payment_method ?? "—"}</td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{formatCurrency(Number(p.total_amount || 0))}</td>
-                          </tr>
+              <div className="flex items-center gap-2">
+                <button
+                  className={`px-3 py-1 text-sm rounded ${summaryView === "department" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                  onClick={() => setSummaryView("department")}
+                >
+                  By Dept
+                </button>
+                <button
+                  className={`px-3 py-1 text-sm rounded ${summaryView === "date" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                  onClick={() => setSummaryView("date")}
+                >
+                  By Date
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              {summaryView === "department" &&
+                departmentSummary.map((dept) => (
+                  <div key={dept.department} className="border rounded-lg">
+                    <button
+                      onClick={() => toggleGroup(dept.department)}
+                      className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
+                    >
+                      <span className="font-medium">{dept.department}</span>
+                      <div className="flex items-center gap-4">
+                        <span>{formatCurrency(dept.total)}</span>
+                        <ChevronDown
+                          className={`w-4 h-4 transition-transform ${
+                            expandedGroups.has(dept.department) ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
+                    </button>
+                    {expandedGroups.has(dept.department) && (
+                      <div className="bg-gray-50 px-4 py-2 space-y-1">
+                        {dept.people.map((person) => (
+                          <div key={person.name} className="flex justify-between text-sm">
+                            <span>{person.name}</span>
+                            <span>{formatCurrency(person.amount)}</span>
+                          </div>
                         ))}
-                      </tbody>
-                    </table>
-                    {filteredPayments.length === 0 && (
-                      <div className="text-sm text-gray-600 mt-4">No results match your filters.</div>
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
+                ))}
+
+              {summaryView === "date" &&
+                dateSummary.map((d) => (
+                  <div key={d.date} className="border rounded-lg">
+                    <button
+                      onClick={() => toggleGroup(d.date)}
+                      className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
+                    >
+                      <span className="font-medium">
+                        {d.date === "Unknown"
+                          ? "Unknown"
+                          : new Date(`${d.date}T00:00:00Z`).toLocaleDateString(
+                              "en-US",
+                              { timeZone: "UTC" }
+                            )}
+                      </span>
+                      <div className="flex items-center gap-4">
+                        <span>{formatCurrency(d.total)}</span>
+                        <ChevronDown
+                          className={`w-4 h-4 transition-transform ${
+                            expandedGroups.has(d.date) ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
+                    </button>
+                    {expandedGroups.has(d.date) && (
+                      <div className="bg-gray-50 px-4 py-2 space-y-1">
+                        {d.people.map((person) => (
+                          <div key={person.name} className="flex justify-between text-sm">
+                            <span>{person.name}</span>
+                            <span>{formatCurrency(person.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+              {summaryView === "department" && departmentSummary.length === 0 && (
+                <div className="text-sm text-gray-600">No data for selected filters.</div>
+              )}
+              {summaryView === "date" && dateSummary.length === 0 && (
+                <div className="text-sm text-gray-600">No data for selected filters.</div>
+              )}
             </div>
           </div>
 
