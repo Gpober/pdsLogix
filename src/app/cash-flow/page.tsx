@@ -7,6 +7,7 @@ import * as XLSX from "xlsx"
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import { supabase } from "@/lib/supabaseClient"
+import CustomerMultiSelect from "@/components/CustomerMultiSelect"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -166,7 +167,7 @@ export default function CashFlowPage() {
   const [selectedYear, setSelectedYear] = useState<string>("2024")
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly")
   // Filter by customer instead of class/property
-  const [selectedCustomer, setSelectedCustomer] = useState("All Customers")
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set(["All Customers"]))
   const [selectedBankAccount, setSelectedBankAccount] = useState("All Bank Accounts")
   const [viewMode, setViewMode] = useState<ViewMode>("offset")
   const [periodType, setPeriodType] = useState<PeriodType>("monthly")
@@ -838,8 +839,8 @@ export default function CashFlowPage() {
         .eq("is_cash_account", true)
         .not("entry_bank_account", "is", null)
 
-      if (selectedCustomer !== "All Customers") {
-        query = query.eq("customer", selectedCustomer)
+      if (!selectedCustomers.has("All Customers")) {
+        query = query.in("customer", Array.from(selectedCustomers))
       }
       if (selectedBankAccount !== "All Bank Accounts") {
         query = query.eq("entry_bank_account", selectedBankAccount)
@@ -912,8 +913,8 @@ export default function CashFlowPage() {
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
 
-    if (selectedCustomer !== "All Customers") {
-      viewQuery = viewQuery.eq("customer", selectedCustomer)
+    if (!selectedCustomers.has("All Customers")) {
+      viewQuery = viewQuery.in("customer", Array.from(selectedCustomers))
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       viewQuery = viewQuery.eq("cash_bank_account", selectedBankAccount)
@@ -935,8 +936,8 @@ export default function CashFlowPage() {
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
-    if (selectedCustomer !== "All Customers") {
-      cashQuery = cashQuery.eq("customer", selectedCustomer)
+    if (!selectedCustomers.has("All Customers")) {
+      cashQuery = cashQuery.in("customer", Array.from(selectedCustomers))
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       cashQuery = cashQuery.eq("entry_bank_account", selectedBankAccount)
@@ -1140,8 +1141,8 @@ export default function CashFlowPage() {
       .lt("date", toExclusiveDate(endDate))
       .eq("is_cash_account", true)
 
-    if (selectedCustomer !== "All Customers") {
-      cashQuery = cashQuery.eq("customer", selectedCustomer)
+    if (!selectedCustomers.has("All Customers")) {
+      cashQuery = cashQuery.in("customer", Array.from(selectedCustomers))
     }
     if (selectedBankAccount !== "All Bank Accounts") {
       cashQuery = cashQuery.eq("entry_bank_account", selectedBankAccount)
@@ -1523,7 +1524,7 @@ export default function CashFlowPage() {
     selectedYear,
     customStartDate,
     customEndDate,
-    selectedCustomer,
+    selectedCustomers,
     selectedBankAccount,
     viewMode,
     periodType,
@@ -1747,18 +1748,13 @@ export default function CashFlowPage() {
             )}
 
             {/* Customer Filter */}
-            <select
-              value={selectedCustomer}
-              onChange={(e) => setSelectedCustomer(e.target.value)}
-              className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-              style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
-            >
-              {availableCustomers.map((customer) => (
-                <option key={customer} value={customer}>
-                  {customer}
-                </option>
-              ))}
-            </select>
+            <CustomerMultiSelect
+              options={availableCustomers}
+              selected={selectedCustomers}
+              onChange={setSelectedCustomers}
+              accentColor={BRAND_COLORS.secondary}
+              label="Customer"
+            />
 
             {/* Bank Account Filter */}
             {(viewMode === "offset" ||
@@ -1861,9 +1857,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedCustomer !== "All Customers" && (
+                  {!selectedCustomers.has("All Customers") && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Customer: {selectedCustomer}
+                      Customer: {Array.from(selectedCustomers).join(", ")}
                     </span>
                   )}
                 </div>
@@ -2006,9 +2002,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedCustomer !== "All Customers" && (
+                  {!selectedCustomers.has("All Customers") && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Customer: {selectedCustomer}
+                      Customer: {Array.from(selectedCustomers).join(", ")}
                     </span>
                   )}
                   {selectedBankAccount !== "All Bank Accounts" && (
@@ -2938,9 +2934,9 @@ export default function CashFlowPage() {
                           : timePeriod === "Trailing 12"
                             ? `For ${formatDate(calculateDateRange().startDate)} - ${formatDate(calculateDateRange().endDate)}`
                             : `For ${timePeriod} Period`}
-                  {selectedCustomer !== "All Customers" && (
+                  {!selectedCustomers.has("All Customers") && (
                     <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
-                      Customer: {selectedCustomer}
+                      Customer: {Array.from(selectedCustomers).join(", ")}
                     </span>
                   )}
                   {selectedBankAccount !== "All Bank Accounts" && (

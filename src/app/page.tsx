@@ -40,6 +40,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { supabase } from "@/lib/supabaseClient";
+import CustomerMultiSelect from "@/components/CustomerMultiSelect";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -150,11 +151,9 @@ export default function FinancialOverviewPage() {
   const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false);
   const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
   const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
-  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const timePeriodDropdownRef = useRef<HTMLDivElement>(null);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const yearDropdownRef = useRef<HTMLDivElement>(null);
-  const customerDropdownRef = useRef<HTMLDivElement>(null);
   const [financialData, setFinancialData] = useState(null);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -353,12 +352,6 @@ export default function FinancialOverviewPage() {
   // Click outside handler for dropdowns
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        customerDropdownRef.current &&
-        !customerDropdownRef.current.contains(event.target as Node)
-      ) {
-        setCustomerDropdownOpen(false);
-      }
       if (
         timePeriodDropdownRef.current &&
         !timePeriodDropdownRef.current.contains(event.target as Node)
@@ -1584,57 +1577,13 @@ export default function FinancialOverviewPage() {
                     </CardTitle>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="relative" ref={customerDropdownRef}>
-                      <button
-                        onClick={() => setCustomerDropdownOpen(!customerDropdownOpen)}
-                        className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
-                        style={
-                          {
-                            "--tw-ring-color": BRAND_COLORS.primary + "33",
-                          } as React.CSSProperties
-                        }
-                      >
-                        Customer: {Array.from(selectedCustomers).join(", ")}
-                        <ChevronDown className="w-4 h-4 ml-1" />
-                      </button>
-
-                      {customerDropdownOpen && (
-                        <div className="absolute right-0 z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                          {availableCustomers.map((cust) => (
-                            <label
-                              key={cust}
-                              className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedCustomers.has(cust)}
-                                onChange={(e) => {
-                                  const newSelected = new Set(selectedCustomers);
-                                  if (e.target.checked) {
-                                    if (cust === "All Customers") {
-                                      newSelected.clear();
-                                      newSelected.add("All Customers");
-                                    } else {
-                                      newSelected.delete("All Customers");
-                                      newSelected.add(cust);
-                                    }
-                                  } else {
-                                    newSelected.delete(cust);
-                                    if (newSelected.size === 0) {
-                                      newSelected.add("All Customers");
-                                    }
-                                  }
-                                  setSelectedCustomers(newSelected);
-                                }}
-                                className="mr-3 rounded"
-                                style={{ accentColor: BRAND_COLORS.primary }}
-                              />
-                              {cust}
-                            </label>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <CustomerMultiSelect
+                      options={availableCustomers}
+                      selected={selectedCustomers}
+                      onChange={setSelectedCustomers}
+                      accentColor={BRAND_COLORS.primary}
+                      label="Customer"
+                    />
                     <Button
                       className={`h-8 w-8 p-0 ${chartType === "line" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
                       onClick={() => setChartType("line")}
