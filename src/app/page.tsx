@@ -201,6 +201,14 @@ export default function FinancialOverviewPage() {
   const allFilteredSelected =
     filteredCustomers.length > 0 &&
     filteredCustomers.every((c) => selectedCustomers.has(c));
+  const selectedCustomerList = Array.from(selectedCustomers);
+  const customerLabel =
+    selectedCustomers.size === 0 ||
+    selectedCustomers.size === availableCustomers.length
+      ? "All Customers"
+      : selectedCustomerList.length <= 3
+        ? selectedCustomerList.join(", ")
+        : `${selectedCustomerList.slice(0, 3).join(", ")} (+${selectedCustomerList.length - 3} more)`;
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -1597,11 +1605,8 @@ export default function FinancialOverviewPage() {
                           "--tw-ring-color": BRAND_COLORS.primary + "33",
                         } as React.CSSProperties}
                       >
-                        Customer:
-                        {selectedCustomers.size === 0 ||
-                        selectedCustomers.size === availableCustomers.length
-                          ? " All Customers"
-                          : ` ${Array.from(selectedCustomers).join(", ")}`}
+                        <span className="mr-1">Customers:</span>
+                        <span className="max-w-[8rem] truncate">{customerLabel}</span>
                         <ChevronDown className="w-4 h-4 ml-1" />
                       </button>
 

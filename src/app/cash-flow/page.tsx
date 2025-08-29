@@ -198,6 +198,13 @@ export default function CashFlowPage() {
   }, [customerDropdownOpen])
 
   const selectedCustomerList = Array.from(selectedCustomers)
+  const customerLabel =
+    selectedCustomers.size === 0 ||
+    selectedCustomers.size === availableCustomers.length
+      ? "All Customers"
+      : selectedCustomerList.length <= 3
+        ? selectedCustomerList.join(", ")
+        : `${selectedCustomerList.slice(0, 3).join(", ")} (+${selectedCustomerList.length - 3} more)`
 
   // Collapsible sections state
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
@@ -1786,11 +1793,8 @@ export default function CashFlowPage() {
                 className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
                 style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
               >
-                Customers:
-                {selectedCustomers.size === 0 ||
-                selectedCustomers.size === availableCustomers.length
-                  ? " All Customers"
-                  : ` ${Array.from(selectedCustomers).join(", ")}`}
+                <span className="mr-1">Customers:</span>
+                <span className="max-w-[8rem] truncate">{customerLabel}</span>
                 <ChevronDown className="w-4 h-4 ml-2" />
               </button>
 
