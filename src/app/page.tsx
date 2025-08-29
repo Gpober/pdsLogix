@@ -198,6 +198,7 @@ export default function FinancialOverviewPage() {
   const [availableCustomers, setAvailableCustomers] = useState<string[]>([
     "All Customers",
   ]);
+  const [customerSearch, setCustomerSearch] = useState("");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -209,6 +210,36 @@ export default function FinancialOverviewPage() {
   const [sortColumn, setSortColumn] = useState<SortColumn>("netIncome");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const orgId = "1";
+
+  const filteredCustomers = availableCustomers.filter(
+    (cust) =>
+      cust !== "All Customers" &&
+      cust.toLowerCase().includes(customerSearch.toLowerCase()),
+  );
+  const selectAllCustomers =
+    customerSearch === ""
+      ? selectedCustomers.has("All Customers")
+      : filteredCustomers.every(
+          (c) =>
+            selectedCustomers.has("All Customers") ||
+            selectedCustomers.has(c),
+        );
+  const handleSelectAllCustomers = (checked: boolean) => {
+    const newSelected = new Set(selectedCustomers);
+    if (checked) {
+      if (customerSearch === "") {
+        newSelected.clear();
+        newSelected.add("All Customers");
+      } else {
+        filteredCustomers.forEach((c) => newSelected.add(c));
+        newSelected.delete("All Customers");
+      }
+    } else {
+      filteredCustomers.forEach((c) => newSelected.delete(c));
+      if (newSelected.size === 0) newSelected.add("All Customers");
+    }
+    setSelectedCustomers(newSelected);
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -1600,24 +1631,45 @@ export default function FinancialOverviewPage() {
 
                       {customerDropdownOpen && (
                         <div className="absolute right-0 z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                          {availableCustomers.map((cust) => (
+                          <div className="p-2 border-b">
+                            <input
+                              type="text"
+                              placeholder="Search..."
+                              value={customerSearch}
+                              onChange={(e) => setCustomerSearch(e.target.value)}
+                              className="w-full px-2 py-1 border rounded"
+                            />
+                          </div>
+                          <div className="px-4 py-2 border-b">
+                            <label className="flex items-center text-sm text-gray-700 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="mr-2 rounded"
+                                checked={selectAllCustomers}
+                                onChange={(e) => handleSelectAllCustomers(e.target.checked)}
+                                style={{ accentColor: BRAND_COLORS.primary }}
+                              />
+                              Select All
+                            </label>
+                          </div>
+                          {filteredCustomers.map((cust) => (
                             <label
                               key={cust}
                               className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
                             >
                               <input
                                 type="checkbox"
-                                checked={selectedCustomers.has(cust)}
+                                checked={
+                                  selectedCustomers.has("All Customers") ||
+                                  selectedCustomers.has(cust)
+                                }
                                 onChange={(e) => {
                                   const newSelected = new Set(selectedCustomers);
+                                  if (newSelected.has("All Customers")) {
+                                    newSelected.delete("All Customers");
+                                  }
                                   if (e.target.checked) {
-                                    if (cust === "All Customers") {
-                                      newSelected.clear();
-                                      newSelected.add("All Customers");
-                                    } else {
-                                      newSelected.delete("All Customers");
-                                      newSelected.add(cust);
-                                    }
+                                    newSelected.add(cust);
                                   } else {
                                     newSelected.delete(cust);
                                     if (newSelected.size === 0) {
