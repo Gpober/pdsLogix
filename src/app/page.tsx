@@ -192,12 +192,26 @@ export default function FinancialOverviewPage() {
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [propertyError, setPropertyError] = useState<string | null>(null);
-  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
-    new Set(["All Customers"]),
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set());
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>([]);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const filteredCustomers = availableCustomers.filter((c) =>
+    c.trim().toLowerCase().includes(customerSearch.toLowerCase()),
   );
-  const [availableCustomers, setAvailableCustomers] = useState<string[]>([
-    "All Customers",
-  ]);
+  const allFilteredSelected =
+    filteredCustomers.length > 0 &&
+    filteredCustomers.every((c) => selectedCustomers.has(c));
+  const selectedCustomerList = Array.from(selectedCustomers);
+  const customerLabel =
+    selectedCustomers.size === 0 ||
+    selectedCustomers.size === availableCustomers.length
+      ? "All Customers"
+      : selectedCustomerList.length <= 3
+        ? selectedCustomerList.map((c) => c.trim()).join(", ")
+        : `${selectedCustomerList
+            .slice(0, 3)
+            .map((c) => c.trim())
+            .join(", ")} (+${selectedCustomerList.length - 3} more)`;
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -395,11 +409,15 @@ export default function FinancialOverviewPage() {
       if (error) throw error;
       const customers = new Set<string>();
       data.forEach((row) => {
-        if (row.customer && row.customer.trim()) {
-          customers.add(row.customer.trim());
+        if (row.customer) {
+          customers.add(row.customer);
         }
       });
-      setAvailableCustomers(["All Customers", ...Array.from(customers).sort()]);
+      setAvailableCustomers(
+        [...Array.from(customers)].sort((a, b) =>
+          a.trim().localeCompare(b.trim()),
+        ),
+      );
     } catch (err) {
       console.error("Error fetching customers:", err);
     }
@@ -408,6 +426,12 @@ export default function FinancialOverviewPage() {
   useEffect(() => {
     fetchAvailableCustomers();
   }, []);
+
+  useEffect(() => {
+    if (!customerDropdownOpen) {
+      setCustomerSearch("");
+    }
+  }, [customerDropdownOpen]);
 
   // Fetch financial data from Supabase (same connection as other pages)
   const fetchFinancialData = async () => {
@@ -418,9 +442,7 @@ export default function FinancialOverviewPage() {
       const { startDate, endDate } = calculateDateRange();
       const monthIndex = monthsList.indexOf(selectedMonth);
       const year = Number.parseInt(selectedYear);
-      const selectedCustomerList = Array.from(selectedCustomers).filter(
-        (c) => c !== "All Customers",
-      );
+      const selectedCustomerList = Array.from(selectedCustomers);
 
       console.log(
         `🔍 FINANCIAL OVERVIEW - Fetching data for ${selectedMonth} ${selectedYear}`,
@@ -429,7 +451,7 @@ export default function FinancialOverviewPage() {
       console.log(
         `🏢 Customer Filter: ${
           selectedCustomerList.length > 0
-            ? selectedCustomerList.join(", ")
+            ? selectedCustomerList.map((c) => c.trim()).join(", ")
             : "All Customers"
         }`,
       );
@@ -949,9 +971,7 @@ export default function FinancialOverviewPage() {
       setLoadingTrend(true);
       setTrendError(null);
       const endMonth = monthsList.indexOf(selectedMonth) + 1;
-      const selectedCustomerList = Array.from(selectedCustomers).filter(
-        (c) => c !== "All Customers",
-      );
+      const selectedCustomerList = Array.from(selectedCustomers);
       const customerQuery =
         selectedCustomerList.length > 0
           ? `&customerId=${encodeURIComponent(selectedCustomerList.join(","))}`
@@ -982,8 +1002,13 @@ export default function FinancialOverviewPage() {
       setLoadingProperty(true);
       setPropertyError(null);
       const { startDate, endDate } = calculateDateRange();
+      const selectedCustomerList = Array.from(selectedCustomers);
+      const customerQuery =
+        selectedCustomerList.length > 0
+          ? `&customerId=${encodeURIComponent(selectedCustomerList.join(","))}`
+          : "";
       const res = await fetch(
-        `/api/organizations/${orgId}/dashboard-summary?start=${startDate}&end=${endDate}&includeProperties=true`,
+        `/api/organizations/${orgId}/dashboard-summary?start=${startDate}&end=${endDate}&includeProperties=true${customerQuery}`,
       );
       if (!res.ok) throw new Error("Failed to fetch customer data");
       const json: { propertyBreakdown: PropertyPoint[] } = await res.json();
@@ -1588,19 +1613,49 @@ export default function FinancialOverviewPage() {
                       <button
                         onClick={() => setCustomerDropdownOpen(!customerDropdownOpen)}
                         className="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2"
-                        style={
-                          {
-                            "--tw-ring-color": BRAND_COLORS.primary + "33",
-                          } as React.CSSProperties
-                        }
+                        style={{
+                          "--tw-ring-color": BRAND_COLORS.primary + "33",
+                        } as React.CSSProperties}
                       >
-                        Customer: {Array.from(selectedCustomers).join(", ")}
+                        <span className="mr-1">Customers:</span>
+                        <span className="max-w-[8rem] truncate">{customerLabel}</span>
                         <ChevronDown className="w-4 h-4 ml-1" />
                       </button>
 
                       {customerDropdownOpen && (
                         <div className="absolute right-0 z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                          {availableCustomers.map((cust) => (
+                          <input
+                            type="text"
+                            placeholder="Search customers..."
+                            value={customerSearch}
+                            onChange={(e) => setCustomerSearch(e.target.value)}
+                            className="w-full px-4 py-2 text-sm border-b border-gray-200 focus:outline-none"
+                          />
+                          <label
+                            className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={allFilteredSelected}
+                              onChange={() => {
+                                const newSelected = new Set(selectedCustomers);
+                                if (allFilteredSelected) {
+                                  filteredCustomers.forEach((c) =>
+                                    newSelected.delete(c),
+                                  );
+                                } else {
+                                  filteredCustomers.forEach((c) =>
+                                    newSelected.add(c),
+                                  );
+                                }
+                                setSelectedCustomers(newSelected);
+                              }}
+                              className="mr-3 rounded"
+                              style={{ accentColor: BRAND_COLORS.primary }}
+                            />
+                            Select All
+                          </label>
+                          {filteredCustomers.map((cust) => (
                             <label
                               key={cust}
                               className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
@@ -1611,25 +1666,16 @@ export default function FinancialOverviewPage() {
                                 onChange={(e) => {
                                   const newSelected = new Set(selectedCustomers);
                                   if (e.target.checked) {
-                                    if (cust === "All Customers") {
-                                      newSelected.clear();
-                                      newSelected.add("All Customers");
-                                    } else {
-                                      newSelected.delete("All Customers");
-                                      newSelected.add(cust);
-                                    }
+                                    newSelected.add(cust);
                                   } else {
                                     newSelected.delete(cust);
-                                    if (newSelected.size === 0) {
-                                      newSelected.add("All Customers");
-                                    }
                                   }
                                   setSelectedCustomers(newSelected);
                                 }}
                                 className="mr-3 rounded"
                                 style={{ accentColor: BRAND_COLORS.primary }}
                               />
-                              {cust}
+                              {cust.trim()}
                             </label>
                           ))}
                         </div>

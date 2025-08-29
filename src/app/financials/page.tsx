@@ -221,7 +221,7 @@ export default function FinancialsPage() {
   const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
   const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
   const [selectedProperties, setSelectedProperties] = useState<Set<string>>(
-    new Set(["All Customers"]),
+    new Set(),
   );
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
@@ -231,9 +231,14 @@ export default function FinancialsPage() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [plAccounts, setPlAccounts] = useState<PLAccount[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
-  const [availableProperties, setAvailableProperties] = useState<string[]>([
-    "All Customers",
-  ]);
+  const [availableProperties, setAvailableProperties] = useState<string[]>([]);
+  const [propertySearch, setPropertySearch] = useState("");
+  const filteredProperties = availableProperties.filter((property) =>
+    property.toLowerCase().includes(propertySearch.toLowerCase()),
+  );
+  const allFilteredSelected =
+    filteredProperties.length > 0 &&
+    filteredProperties.every((p) => selectedProperties.has(p));
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [transactionModalTitle, setTransactionModalTitle] = useState("");
   const [modalTransactionDetails, setModalTransactionDetails] = useState<
@@ -328,6 +333,12 @@ export default function FinancialsPage() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  useEffect(() => {
+    if (!propertyDropdownOpen) {
+      setPropertySearch("");
+    }
+  }, [propertyDropdownOpen]);
 
   // Calculate date range based on selected period - COMPLETELY TIMEZONE INDEPENDENT
   const calculateDateRange = () => {
@@ -492,12 +503,17 @@ export default function FinancialsPage() {
 
     try {
       const { startDate, endDate } = calculateDateRange();
-      const selectedProperty =
-        Array.from(selectedProperties)[0] || "All Customers";
+      const selectedPropertyList = Array.from(selectedProperties);
 
       smartLog(`🔍 TIMEZONE-INDEPENDENT P&L DATA FETCH`);
       smartLog(`📅 Period: ${startDate} to ${endDate}`);
-      smartLog(`🏢 Property Filter: "${selectedProperty}"`);
+      smartLog(
+        `🏢 Property Filter: "${
+          selectedPropertyList.length > 0
+            ? selectedPropertyList.join(", ")
+            : "All Customers"
+        }"`,
+      );
 
       // ENHANCED QUERY: Use the new database structure with better field selection
       let query = supabase
@@ -528,8 +544,8 @@ export default function FinancialsPage() {
         .order("date", { ascending: true });
 
       // Apply property filter
-      if (selectedProperty !== "All Customers") {
-        query = query.eq("customer", selectedProperty);
+      if (selectedPropertyList.length > 0) {
+        query = query.in("customer", selectedPropertyList);
       }
 
       const { data: allTransactions, error } = await query;
@@ -577,10 +593,7 @@ export default function FinancialsPage() {
           properties.add(tx.customer.trim());
         }
       });
-      setAvailableProperties([
-        "All Customers",
-        ...Array.from(properties).sort(),
-      ]);
+      setAvailableProperties([...Array.from(properties).sort()]);
 
       // Process transactions using ENHANCED logic
       const processedAccounts = await processPLTransactionsEnhanced(
@@ -1231,7 +1244,7 @@ export default function FinancialsPage() {
     if (viewMode === "Total") {
       return [];
     } else if (viewMode === "Customer") {
-      return availableProperties.filter((p) => p !== "All Customers");
+      return availableProperties;
     } else if (viewMode === "Detail") {
       // For Detail view, show months in the date range using timezone-independent method
       const { startDate, endDate } = calculateDateRange();
@@ -1682,13 +1695,45 @@ export default function FinancialsPage() {
                   } as React.CSSProperties
                 }
               >
-                Customers: {Array.from(selectedProperties).join(", ")}
+                Customers: {
+                  selectedProperties.size === 0 ||
+                  selectedProperties.size === availableProperties.length
+                    ? "All Customers"
+                    : Array.from(selectedProperties).join(", ")
+                }
                 <ChevronDown className="w-4 h-4 ml-2" />
               </button>
 
               {propertyDropdownOpen && (
                 <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                  {availableProperties.map((property) => (
+                  <input
+                    type="text"
+                    placeholder="Search customers..."
+                    value={propertySearch}
+                    onChange={(e) => setPropertySearch(e.target.value)}
+                    className="w-full px-4 py-2 text-sm border-b border-gray-200 focus:outline-none"
+                  />
+                  <label
+                    className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={() => {
+                        const newSelected = new Set(selectedProperties);
+                        if (allFilteredSelected) {
+                          filteredProperties.forEach((p) => newSelected.delete(p));
+                        } else {
+                          filteredProperties.forEach((p) => newSelected.add(p));
+                        }
+                        setSelectedProperties(newSelected);
+                      }}
+                      className="mr-3 rounded"
+                      style={{ accentColor: BRAND_COLORS.primary }}
+                    />
+                    Select All
+                  </label>
+                  {filteredProperties.map((property) => (
                     <label
                       key={property}
                       className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
@@ -1699,18 +1744,9 @@ export default function FinancialsPage() {
                         onChange={(e) => {
                           const newSelected = new Set(selectedProperties);
                           if (e.target.checked) {
-                            if (property === "All Customers") {
-                              newSelected.clear();
-                              newSelected.add("All Customers");
-                            } else {
-                              newSelected.delete("All Customers");
-                              newSelected.add(property);
-                            }
+                            newSelected.add(property);
                           } else {
                             newSelected.delete(property);
-                            if (newSelected.size === 0) {
-                              newSelected.add("All Customers");
-                            }
                           }
                           setSelectedProperties(newSelected);
                         }}
