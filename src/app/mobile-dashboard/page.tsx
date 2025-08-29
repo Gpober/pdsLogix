@@ -154,7 +154,9 @@ type RankingMetric =
   | "cogs"
   | "arTotal"
   | "arCurrent"
-  | "arOverdue";
+  | "arOverdue"
+  | "payrollDept"
+  | "payrollEmployee";
 
 const insights: Insight[] = [
   {
@@ -692,6 +694,14 @@ export default function EnhancedMobileDashboard() {
     ).name;
   }, [properties, reportType]);
 
+  const payrollTopEmployee = useMemo(() => {
+    if (reportType !== "payroll" || !employeeTotals.length) return null;
+    return employeeTotals.reduce(
+      (max, e) => (e.total || 0) > (max.total || 0) ? e : max,
+      employeeTotals[0],
+    ).name;
+  }, [employeeTotals, reportType]);
+
   const cashKing = useMemo(() => {
     if (reportType !== "cf" || !properties.length) return null;
     return properties.reduce((max, p) =>
@@ -812,6 +822,8 @@ export default function EnhancedMobileDashboard() {
     arTotal: "Total A/R",
     arCurrent: "Current Ratio",
     arOverdue: "Overdue A/R",
+    payrollDept: "Payroll",
+    payrollEmployee: "Payroll",
   };
 
   const rankedProperties = useMemo(() => {
@@ -860,12 +872,16 @@ export default function EnhancedMobileDashboard() {
             ((b.total || 0) - (b.current || 0)) -
             ((a.total || 0) - (a.current || 0)),
         );
+      case "payrollDept":
+        return arr.sort((a, b) => (b.expenses || 0) - (a.expenses || 0));
+      case "payrollEmployee":
+        return [...employeeTotals].sort((a, b) => b.total - a.total);
       default:
         return arr;
     }
-  }, [properties, rankingMetric]);
+  }, [properties, employeeTotals, rankingMetric]);
 
-  const formatRankingValue = (p: PropertySummary) => {
+  const formatRankingValue = (p: any) => {
     switch (rankingMetric) {
       case "margin":
         const m = p.revenue ? (p.netIncome || 0) / (p.revenue || 1) : 0;
@@ -892,6 +908,10 @@ export default function EnhancedMobileDashboard() {
         return `${(rc * 100).toFixed(1)}%`;
       case "arOverdue":
         return formatCompactCurrency((p.total || 0) - (p.current || 0));
+      case "payrollDept":
+        return formatCompactCurrency(p.expenses || 0);
+      case "payrollEmployee":
+        return formatCompactCurrency(p.total || 0);
       case "netIncome":
       default:
         return formatCompactCurrency(p.netIncome || 0);
@@ -1729,6 +1749,49 @@ export default function EnhancedMobileDashboard() {
                       </div>
                     </div>
                   </>
+                ) : reportType === "payroll" ? (
+                  <>
+                    <div onClick={() => showRanking("payrollDept")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.danger}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>🏢</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.danger, fontWeight: '600' }}>
+                          TOP DEPT
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {payrollKing}
+                        </div>
+                      </div>
+                    </div>
+                    <div onClick={() => showRanking("payrollEmployee")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.secondary}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>👤</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.secondary, fontWeight: '600' }}>
+                          TOP EMP
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {payrollTopEmployee}
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <div onClick={() => showRanking("arTotal")} style={{
@@ -1816,57 +1879,34 @@ export default function EnhancedMobileDashboard() {
             </div>
 
             <div style={{ display: 'grid', gap: '12px' }}>
-              {reportType === "payroll" ? (
-                <>
-                  <div style={{ background: 'white', borderRadius: '8px', padding: '16px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                    <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Total Payroll by Department</h4>
-                    {properties.map((p) => (
-                      <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
-                        <span>{p.name}</span>
-                        <span>{formatCurrency(p.expenses || 0)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ background: 'white', borderRadius: '8px', padding: '16px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
-                    <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Total Payroll by Employee</h4>
-                    {employeeTotals.slice(0, 5).map((e) => (
-                      <div key={e.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
-                        <span>{e.name}</span>
-                        <span>{formatCurrency(e.total)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                insights.map((insight, index) => {
-                  const Icon = insight.icon;
-                  const bgColor = insight.type === 'success' ? '#f0f9ff' :
-                                 insight.type === 'warning' ? '#fffbeb' : '#f8fafc';
-                  const iconColor = insight.type === 'success' ? BRAND_COLORS.success :
-                                   insight.type === 'warning' ? BRAND_COLORS.warning : BRAND_COLORS.primary;
+              {insights.map((insight, index) => {
+                const Icon = insight.icon;
+                const bgColor = insight.type === 'success' ? '#f0f9ff' :
+                               insight.type === 'warning' ? '#fffbeb' : '#f8fafc';
+                const iconColor = insight.type === 'success' ? BRAND_COLORS.success :
+                                 insight.type === 'warning' ? BRAND_COLORS.warning : BRAND_COLORS.primary;
 
-                  return (
-                    <div key={index} style={{
-                      background: bgColor,
-                      padding: '16px',
-                      borderRadius: '8px',
-                      border: `1px solid ${BRAND_COLORS.gray[200]}`
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'start', gap: '12px' }}>
-                        <Icon size={20} style={{ color: iconColor, marginTop: '2px' }} />
-                        <div>
-                          <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>
-                            {insight.title}
-                          </h4>
-                          <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.4' }}>
-                            {insight.message}
-                          </p>
-                        </div>
+                return (
+                  <div key={index} style={{
+                    background: bgColor,
+                    padding: '16px',
+                    borderRadius: '8px',
+                    border: `1px solid ${BRAND_COLORS.gray[200]}`
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'start', gap: '12px' }}>
+                      <Icon size={20} style={{ color: iconColor, marginTop: '2px' }} />
+                      <div>
+                        <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>
+                          {insight.title}
+                        </h4>
+                        <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.4' }}>
+                          {insight.message}
+                        </p>
                       </div>
                     </div>
-                  );
-                })
-              )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -2332,7 +2372,11 @@ export default function EnhancedMobileDashboard() {
             }}
           >
             <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-              Top Customers by {rankingLabels[rankingMetric]}
+              {rankingMetric === 'payrollDept'
+                ? 'Top Departments by Payroll'
+                : rankingMetric === 'payrollEmployee'
+                  ? 'Top Employees by Payroll'
+                  : `Top Customers by ${rankingLabels[rankingMetric]}`}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
               {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
