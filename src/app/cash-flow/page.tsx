@@ -196,16 +196,6 @@ export default function CashFlowPage() {
       setCustomerSearch("")
     }
   }, [customerDropdownOpen])
-
-  const selectedCustomerList = Array.from(selectedCustomers)
-  const customerLabel =
-    selectedCustomers.size === 0 ||
-    selectedCustomers.size === availableCustomers.length
-      ? "All Customers"
-      : selectedCustomerList.length <= 3
-        ? selectedCustomerList.join(", ")
-        : `${selectedCustomerList.slice(0, 3).join(", ")} (+${selectedCustomerList.length - 3} more)`
-
   // Collapsible sections state
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
     operatingInflows: false,
@@ -250,6 +240,14 @@ export default function CashFlowPage() {
   const allFilteredSelected =
     filteredCustomers.length > 0 &&
     filteredCustomers.every((c) => selectedCustomers.has(c))
+  const selectedCustomerList = Array.from(selectedCustomers)
+  const customerLabel =
+    selectedCustomers.size === 0 ||
+    selectedCustomers.size === availableCustomers.length
+      ? "All Customers"
+      : selectedCustomerList.length <= 3
+        ? selectedCustomerList.join(", ")
+        : `${selectedCustomerList.slice(0, 3).join(", ")} (+${selectedCustomerList.length - 3} more)`
   const [availableBankAccounts, setAvailableBankAccounts] = useState<string[]>(["All Bank Accounts"])
   const [error, setError] = useState<string | null>(null)
   const [showTransactionModal, setShowTransactionModal] = useState(false)
