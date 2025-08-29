@@ -199,10 +199,26 @@ export const availableFunctions = {
   // =========================
   // Payroll Payments Summary
   // =========================
-  getPaymentsSummary: async ({ department = null } = {}) => {
+  getPaymentsSummary: async ({
+    startDate = null,
+    endDate = null,
+    employee = null,
+    department = null,
+    minAmount = null,
+    maxAmount = null,
+  } = {}) => {
     try {
       let query = supabase.from('payments').select('*');
+
+      if (startDate) query = query.gte('date', startDate);
+      if (endDate) query = query.lte('date', endDate);
       if (department) query = query.eq('department', department);
+      if (employee)
+        query = query.or(
+          `first_name.ilike.%${employee}%,last_name.ilike.%${employee}%`
+        );
+      if (minAmount !== null) query = query.gte('total_amount', minAmount);
+      if (maxAmount !== null) query = query.lte('total_amount', maxAmount);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -213,14 +229,23 @@ export const availableFunctions = {
           summary: 'No payment data found',
           total_payroll: 0,
           department_breakdown: {},
+          employee_breakdown: {},
           payments: [],
         };
       }
 
-      const total = data.reduce((sum, p) => sum + (p.total_amount || 0), 0);
+      const total = data.reduce(
+        (sum, p) => sum + (p.total_amount || 0),
+        0
+      );
       const departmentBreakdown = data.reduce((acc, p) => {
         const dept = p.department || 'Unknown';
         acc[dept] = (acc[dept] || 0) + (p.total_amount || 0);
+        return acc;
+      }, {});
+      const employeeBreakdown = data.reduce((acc, p) => {
+        const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown';
+        acc[name] = (acc[name] || 0) + (p.total_amount || 0);
         return acc;
       }, {});
 
@@ -229,11 +254,16 @@ export const availableFunctions = {
         summary: 'Payroll payment summary',
         total_payroll: total,
         department_breakdown: departmentBreakdown,
+        employee_breakdown: employeeBreakdown,
         payments: data,
       };
     } catch (error) {
       console.error('❌ getPaymentsSummary error:', error);
-      return { success: false, error: 'Failed to fetch payments', details: error.message };
+      return {
+        success: false,
+        error: 'Failed to fetch payments',
+        details: error.message,
+      };
     }
   },
 

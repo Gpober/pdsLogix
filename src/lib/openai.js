@@ -77,13 +77,33 @@ export const createCFOCompletion = async (message, context) => {
           type: "function",
           function: {
             name: "getPaymentsSummary",
-            description: "Get payroll payments summarized by department with optional department filter",
+            description: "Get payroll payments with optional filters for date range, employee, department, and amount",
             parameters: {
               type: "object",
               properties: {
+                startDate: {
+                  type: "string",
+                  description: "Start date in YYYY-MM-DD format"
+                },
+                endDate: {
+                  type: "string",
+                  description: "End date in YYYY-MM-DD format"
+                },
+                employee: {
+                  type: "string",
+                  description: "Employee name to filter"
+                },
                 department: {
                   type: "string",
-                  description: "Optional department name to filter"
+                  description: "Department name to filter"
+                },
+                minAmount: {
+                  type: "number",
+                  description: "Minimum payment amount"
+                },
+                maxAmount: {
+                  type: "number",
+                  description: "Maximum payment amount"
                 }
               },
               required: []
@@ -189,14 +209,16 @@ export const createCFOCompletion = async (message, context) => {
           type: "function",
           function: {
             name: "getPaymentsSummary",
-            description: "Get payroll payments summarized by department with optional department filter",
+            description: "Get payroll payments with optional filters for date range, employee, department, and amount",
             parameters: {
               type: "object",
               properties: {
-                department: {
-                  type: "string",
-                  description: "Optional department name to filter"
-                }
+                startDate: { type: "string", description: "Start date in YYYY-MM-DD format" },
+                endDate: { type: "string", description: "End date in YYYY-MM-DD format" },
+                employee: { type: "string", description: "Employee name to filter" },
+                department: { type: "string", description: "Department name to filter" },
+                minAmount: { type: "number", description: "Minimum payment amount" },
+                maxAmount: { type: "number", description: "Maximum payment amount" }
               },
               required: []
             }
