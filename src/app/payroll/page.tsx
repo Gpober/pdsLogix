@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   Download,
   RefreshCw,
@@ -11,6 +11,7 @@ import {
   PieChart as PieIcon,
   Search,
   BarChart3,
+  Calendar,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -62,6 +63,8 @@ type Payment = {
   total_amount: number | null;   // numeric in Postgres -> number here
 };
 
+type TimePeriod = "Monthly" | "Quarterly" | "YTD" | "Trailing 12" | "Custom";
+
 // I AM CFO Logo
 const IAMCFOLogo = ({ className = "w-8 h-8" }: { className?: string }) => (
   <div className={`${className} flex items-center justify-center relative`}>
@@ -96,28 +99,115 @@ export default function PayrollPage() {
   const [departmentFilter, setDepartmentFilter] = useState("All Departments");
   const [departmentDropdownOpen, setDepartmentDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly");
+  const [selectedMonth, setSelectedMonth] = useState(
+    new Date().toLocaleString("en-US", { month: "long" })
+  );
+  const [selectedYear, setSelectedYear] = useState(
+    String(new Date().getFullYear())
+  );
+  const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false);
+  const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
+  const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [chartType, setChartType] = useState<"pie" | "bar">("pie");
   const [expandedDepts, setExpandedDepts] = useState<Set<string>>(new Set());
 
+  const monthsList = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const yearsList = Array.from({ length: 10 }, (_, i) =>
+    String(new Date().getFullYear() - 5 + i)
+  );
+
+  const timePeriodDropdownRef = useRef<HTMLDivElement>(null);
+  const monthDropdownRef = useRef<HTMLDivElement>(null);
+  const yearDropdownRef = useRef<HTMLDivElement>(null);
+
   // Data state
   const [payments, setPayments] = useState<Payment[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        timePeriodDropdownRef.current &&
+        !timePeriodDropdownRef.current.contains(event.target as Node)
+      ) {
+        setTimePeriodDropdownOpen(false);
+      }
+      if (
+        monthDropdownRef.current &&
+        !monthDropdownRef.current.contains(event.target as Node)
+      ) {
+        setMonthDropdownOpen(false);
+      }
+      if (
+        yearDropdownRef.current &&
+        !yearDropdownRef.current.contains(event.target as Node)
+      ) {
+        setYearDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const monthIndex = monthsList.indexOf(selectedMonth);
+    const yearNum = parseInt(selectedYear, 10);
+    let start = "";
+    let end = "";
+    if (timePeriod === "Monthly") {
+      start = new Date(yearNum, monthIndex, 1).toISOString().split("T")[0];
+      end = new Date(yearNum, monthIndex + 1, 0).toISOString().split("T")[0];
+    } else if (timePeriod === "Quarterly") {
+      const qStart = Math.floor(monthIndex / 3) * 3;
+      start = new Date(yearNum, qStart, 1).toISOString().split("T")[0];
+      end = new Date(yearNum, qStart + 3, 0).toISOString().split("T")[0];
+    } else if (timePeriod === "YTD") {
+      start = new Date(yearNum, 0, 1).toISOString().split("T")[0];
+      end = new Date(yearNum, monthIndex + 1, 0).toISOString().split("T")[0];
+    } else if (timePeriod === "Trailing 12") {
+      const endDate = new Date(yearNum, monthIndex + 1, 0);
+      const startDate = new Date(yearNum, monthIndex - 11, 1);
+      start = startDate.toISOString().split("T")[0];
+      end = endDate.toISOString().split("T")[0];
+    } else {
+      start = customStartDate;
+      end = customEndDate;
+    }
+    setStartDate(start);
+    setEndDate(end);
+  }, [timePeriod, selectedMonth, selectedYear, customStartDate, customEndDate]);
 
   // Fetch payments
   const fetchPayments = async () => {
-    setLoading(true);
-    setLoadError(null);
     const { data, error } = await supabase
       .from("payments")
-      .select("id, last_name, first_name, department, payment_method, date, total_amount")
+      .select(
+        "id, last_name, first_name, department, payment_method, date, total_amount"
+      )
       .order("date", { ascending: false })
       .limit(5000); // adjust as needed
-    if (error) setLoadError(error.message);
+    if (error) {
+      showNotification(error.message, "error");
+      return;
+    }
     setPayments((data ?? []) as Payment[]);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -182,13 +272,12 @@ export default function PayrollPage() {
     return { totalTx, total, monthTotal, avg, topDept };
   }, [filteredPayments]);
 
-  // Trend (last 6 months) & Department pie (live)
+  // Trend (year-to-date) & Department totals
   const trendData = useMemo(() => {
-    // buckets for last 6 months
     const now = new Date();
     const labels: { key: string; y: number; m: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    for (let m = 0; m <= now.getMonth(); m++) {
+      const d = new Date(now.getFullYear(), m, 1);
       labels.push({
         key: d.toLocaleString("en-US", { month: "short" }) + " " + d.getFullYear(),
         y: d.getFullYear(),
@@ -259,11 +348,12 @@ export default function PayrollPage() {
   // UI helpers
   const CHART_COLORS = [BRAND_COLORS.primary, BRAND_COLORS.success, BRAND_COLORS.warning, BRAND_COLORS.danger, BRAND_COLORS.secondary];
 
+  const ringStyle = {
+    "--tw-ring-color": BRAND_COLORS.secondary + "33",
+  } as React.CSSProperties;
+
   const formatCurrency = (amount: number): string =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
-
-  const formatDate = (dateString?: string | null): string =>
-    dateString ? new Date(dateString).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
 
   const showNotification = (message: string, type: "info" | "success" | "error" | "warning" = "info") => {
     setNotification({ show: true, message, type });
@@ -328,7 +418,7 @@ export default function PayrollPage() {
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 transition-all w-64"
-                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
+                  style={ringStyle}
                 />
               </div>
 
@@ -337,7 +427,7 @@ export default function PayrollPage() {
                 <button
                   onClick={() => setDepartmentDropdownOpen((v) => !v)}
                   className="flex items-center justify-between w-56 px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
+                  style={ringStyle}
                 >
                   <span>{departmentFilter}</span>
                   <ChevronDown className={`w-4 h-4 transition-transform ${departmentDropdownOpen ? "rotate-180" : ""}`} />
@@ -360,23 +450,115 @@ export default function PayrollPage() {
                 )}
               </div>
 
-              {/* Date Range */}
+              {/* Time Period */}
               <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
-                />
-                <span className="text-gray-500">to</span>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                  style={{ ["--tw-ring-color" as any]: BRAND_COLORS.secondary + "33" }}
-                />
+                <div className="relative" ref={timePeriodDropdownRef}>
+                  <button
+                    onClick={() => setTimePeriodDropdownOpen(!timePeriodDropdownOpen)}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                    style={ringStyle}
+                  >
+                    <Calendar className="w-4 h-4 mr-2" />
+                    {timePeriod}
+                    <ChevronDown className="w-4 h-4 ml-2" />
+                  </button>
+                  {timePeriodDropdownOpen && (
+                    <div className="absolute z-10 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg">
+                      {(["Monthly", "Quarterly", "YTD", "Trailing 12", "Custom"] as TimePeriod[]).map((p) => (
+                        <div
+                          key={p}
+                          className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                          onClick={() => {
+                            setTimePeriod(p);
+                            setTimePeriodDropdownOpen(false);
+                          }}
+                        >
+                          {p}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {(timePeriod === "Monthly" ||
+                  timePeriod === "Quarterly" ||
+                  timePeriod === "YTD" ||
+                  timePeriod === "Trailing 12") && (
+                  <>
+                    <div className="relative" ref={monthDropdownRef}>
+                      <button
+                        onClick={() => setMonthDropdownOpen(!monthDropdownOpen)}
+                        className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                        style={ringStyle}
+                      >
+                        {selectedMonth}
+                        <ChevronDown className="w-4 h-4 ml-2" />
+                      </button>
+                      {monthDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {monthsList.map((m) => (
+                            <div
+                              key={m}
+                              className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                              onClick={() => {
+                                setSelectedMonth(m);
+                                setMonthDropdownOpen(false);
+                              }}
+                            >
+                              {m}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="relative" ref={yearDropdownRef}>
+                      <button
+                        onClick={() => setYearDropdownOpen(!yearDropdownOpen)}
+                        className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                        style={ringStyle}
+                      >
+                        {selectedYear}
+                        <ChevronDown className="w-4 h-4 ml-2" />
+                      </button>
+                      {yearDropdownOpen && (
+                        <div className="absolute z-10 mt-1 w-32 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {yearsList.map((y) => (
+                            <div
+                              key={y}
+                              className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                              onClick={() => {
+                                setSelectedYear(y);
+                                setYearDropdownOpen(false);
+                              }}
+                            >
+                              {y}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {timePeriod === "Custom" && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={customStartDate}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                      style={ringStyle}
+                    />
+                    <span className="text-gray-500">to</span>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                      style={ringStyle}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Export & Refresh */}
@@ -449,7 +631,7 @@ export default function PayrollPage() {
             {/* Trend */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="p-6 border-b border-gray-200">
-                <h3 className="text-xl font-semibold text-gray-900">6-Month Payments Trend</h3>
+                <h3 className="text-xl font-semibold text-gray-900">Year-to-Date Payments Trend</h3>
                 <p className="text-sm text-gray-600 mt-1">Gross/Net show same value (no tax split in table)</p>
               </div>
               <div className="p-6">
@@ -493,7 +675,10 @@ export default function PayrollPage() {
                 <ResponsiveContainer width="100%" height={300}>
                   {chartType === "pie" ? (
                     <RechartsPieChart>
-                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Tooltip
+                        formatter={(v) => [formatCurrency(Number(v)), "Total"]}
+                        labelFormatter={(label) => `Department: ${label}`}
+                      />
                       <Pie
                         data={departmentData}
                         dataKey="cost"
@@ -512,7 +697,10 @@ export default function PayrollPage() {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="department" hide />
                       <YAxis tickFormatter={(v) => formatCurrency(Number(v))} />
-                      <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                      <Tooltip
+                        formatter={(v) => [formatCurrency(Number(v)), "Total"]}
+                        labelFormatter={(label) => `Department: ${label}`}
+                      />
                       <Bar dataKey="cost">
                         {departmentData.map((_, i) => (
                           <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
@@ -524,47 +712,6 @@ export default function PayrollPage() {
               </div>
             </div>
 
-            {/* Recent Payments */}
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden lg:col-span-2">
-              <div className="p-6 border-b border-gray-200">
-                <h3 className="text-xl font-semibold text-gray-900">Recent Payments</h3>
-              </div>
-              <div className="p-6">
-                {loading && <div className="text-sm text-gray-600">Loading payments…</div>}
-                {loadError && <div className="text-sm text-red-600">Error: {loadError}</div>}
-                {!loading && !loadError && (
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                      <thead>
-                        <tr>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Date</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Employee</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Department</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Method</th>
-                          <th className="px-4 py-2 text-left text-sm font-medium text-gray-500">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {filteredPayments.map((p) => (
-                          <tr key={p.id ?? `${p.first_name}-${p.last_name}-${p.date}`}>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{formatDate(p.date)}</td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
-                              {(p.first_name ?? "") + " " + (p.last_name ?? "")}
-                            </td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{p.department ?? "—"}</td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{p.payment_method ?? "—"}</td>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">{formatCurrency(Number(p.total_amount || 0))}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {filteredPayments.length === 0 && (
-                      <div className="text-sm text-gray-600 mt-4">No results match your filters.</div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
 
           {/* Department Summary */}
