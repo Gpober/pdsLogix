@@ -192,12 +192,10 @@ export default function FinancialOverviewPage() {
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [propertyError, setPropertyError] = useState<string | null>(null);
-  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
-    new Set(["All Customers"]),
-  );
-  const [availableCustomers, setAvailableCustomers] = useState<string[]>([
-    "All Customers",
-  ]);
+  const [selectedCustomers, setSelectedCustomers] =
+    useState<Set<string>>(new Set());
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>([]);
+  const [customerSearch, setCustomerSearch] = useState("");
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -399,7 +397,7 @@ export default function FinancialOverviewPage() {
           customers.add(row.customer.trim());
         }
       });
-      setAvailableCustomers(["All Customers", ...Array.from(customers).sort()]);
+      setAvailableCustomers(Array.from(customers).sort());
     } catch (err) {
       console.error("Error fetching customers:", err);
     }
@@ -418,9 +416,7 @@ export default function FinancialOverviewPage() {
       const { startDate, endDate } = calculateDateRange();
       const monthIndex = monthsList.indexOf(selectedMonth);
       const year = Number.parseInt(selectedYear);
-      const selectedCustomerList = Array.from(selectedCustomers).filter(
-        (c) => c !== "All Customers",
-      );
+      const selectedCustomerList = Array.from(selectedCustomers);
 
       console.log(
         `🔍 FINANCIAL OVERVIEW - Fetching data for ${selectedMonth} ${selectedYear}`,
@@ -949,9 +945,7 @@ export default function FinancialOverviewPage() {
       setLoadingTrend(true);
       setTrendError(null);
       const endMonth = monthsList.indexOf(selectedMonth) + 1;
-      const selectedCustomerList = Array.from(selectedCustomers).filter(
-        (c) => c !== "All Customers",
-      );
+      const selectedCustomerList = Array.from(selectedCustomers);
       const customerQuery =
         selectedCustomerList.length > 0
           ? `&customerId=${encodeURIComponent(selectedCustomerList.join(","))}`
@@ -1215,6 +1209,13 @@ export default function FinancialOverviewPage() {
       color: BRAND_COLORS.warning,
     },
   ];
+
+  const filteredCustomers = availableCustomers.filter((cust) =>
+    cust.toLowerCase().includes(customerSearch.toLowerCase()),
+  );
+  const allVisibleSelected =
+    filteredCustomers.length > 0 &&
+    filteredCustomers.every((c) => selectedCustomers.has(c));
 
   if (error) {
     return (
@@ -1594,44 +1595,66 @@ export default function FinancialOverviewPage() {
                           } as React.CSSProperties
                         }
                       >
-                        Customer: {Array.from(selectedCustomers).join(", ")}
+                        Customer: {selectedCustomers.size > 0
+                          ? Array.from(selectedCustomers).join(", ")
+                          : "All Customers"}
                         <ChevronDown className="w-4 h-4 ml-1" />
                       </button>
 
                       {customerDropdownOpen && (
-                        <div className="absolute right-0 z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                          {availableCustomers.map((cust) => (
-                            <label
-                              key={cust}
-                              className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-                            >
+                        <div className="absolute right-0 z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg">
+                          <div className="p-2">
+                            <input
+                              type="text"
+                              placeholder="Search..."
+                              value={customerSearch}
+                              onChange={(e) => setCustomerSearch(e.target.value)}
+                              className="w-full px-2 py-1 border border-gray-300 rounded"
+                            />
+                          </div>
+                          <div className="max-h-56 overflow-y-auto">
+                            <label className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
                               <input
                                 type="checkbox"
-                                checked={selectedCustomers.has(cust)}
+                                checked={allVisibleSelected}
                                 onChange={(e) => {
                                   const newSelected = new Set(selectedCustomers);
                                   if (e.target.checked) {
-                                    if (cust === "All Customers") {
-                                      newSelected.clear();
-                                      newSelected.add("All Customers");
-                                    } else {
-                                      newSelected.delete("All Customers");
-                                      newSelected.add(cust);
-                                    }
+                                    filteredCustomers.forEach((c) => newSelected.add(c));
                                   } else {
-                                    newSelected.delete(cust);
-                                    if (newSelected.size === 0) {
-                                      newSelected.add("All Customers");
-                                    }
+                                    filteredCustomers.forEach((c) => newSelected.delete(c));
                                   }
                                   setSelectedCustomers(newSelected);
                                 }}
                                 className="mr-3 rounded"
                                 style={{ accentColor: BRAND_COLORS.primary }}
                               />
-                              {cust}
+                              Select All
                             </label>
-                          ))}
+                            {filteredCustomers.map((cust) => (
+                              <label
+                                key={cust}
+                                className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedCustomers.has(cust)}
+                                  onChange={(e) => {
+                                    const newSelected = new Set(selectedCustomers);
+                                    if (e.target.checked) {
+                                      newSelected.add(cust);
+                                    } else {
+                                      newSelected.delete(cust);
+                                    }
+                                    setSelectedCustomers(newSelected);
+                                  }}
+                                  className="mr-3 rounded"
+                                  style={{ accentColor: BRAND_COLORS.primary }}
+                                />
+                                {cust}
+                              </label>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>

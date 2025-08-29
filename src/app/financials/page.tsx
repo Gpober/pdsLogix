@@ -220,9 +220,8 @@ export default function FinancialsPage() {
   const [propertyDropdownOpen, setPropertyDropdownOpen] = useState(false);
   const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
   const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
-  const [selectedProperties, setSelectedProperties] = useState<Set<string>>(
-    new Set(["All Customers"]),
-  );
+  const [selectedProperties, setSelectedProperties] =
+    useState<Set<string>>(new Set());
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(
@@ -231,9 +230,8 @@ export default function FinancialsPage() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [plAccounts, setPlAccounts] = useState<PLAccount[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
-  const [availableProperties, setAvailableProperties] = useState<string[]>([
-    "All Customers",
-  ]);
+  const [availableProperties, setAvailableProperties] = useState<string[]>([]);
+  const [propertySearch, setPropertySearch] = useState("");
   const [showTransactionModal, setShowTransactionModal] = useState(false);
   const [transactionModalTitle, setTransactionModalTitle] = useState("");
   const [modalTransactionDetails, setModalTransactionDetails] = useState<
@@ -245,6 +243,29 @@ export default function FinancialsPage() {
   const [showJournalEntryModal, setShowJournalEntryModal] = useState(false);
   const [journalEntryTitle, setJournalEntryTitle] = useState("");
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+
+  const fetchAvailableCustomers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("journal_entry_lines")
+        .select("customer")
+        .not("customer", "is", null);
+      if (error) throw error;
+      const properties = new Set<string>();
+      data.forEach((row) => {
+        if (row.customer && row.customer.trim()) {
+          properties.add(row.customer.trim());
+        }
+      });
+      setAvailableProperties(Array.from(properties).sort());
+    } catch (err) {
+      smartLog("Error fetching customers:", err, "error");
+    }
+  };
+
+  useEffect(() => {
+    fetchAvailableCustomers();
+  }, []);
 
   // Refs for click outside functionality
   const propertyDropdownRef = useRef<HTMLDivElement>(null);
@@ -492,12 +513,17 @@ export default function FinancialsPage() {
 
     try {
       const { startDate, endDate } = calculateDateRange();
-      const selectedProperty =
-        Array.from(selectedProperties)[0] || "All Customers";
+      const selectedPropertyList = Array.from(selectedProperties);
 
       smartLog(`🔍 TIMEZONE-INDEPENDENT P&L DATA FETCH`);
       smartLog(`📅 Period: ${startDate} to ${endDate}`);
-      smartLog(`🏢 Property Filter: "${selectedProperty}"`);
+      smartLog(
+        `🏢 Property Filter: ${
+          selectedPropertyList.length > 0
+            ? selectedPropertyList.join(", ")
+            : "All Customers"
+        }`,
+      );
 
       // ENHANCED QUERY: Use the new database structure with better field selection
       let query = supabase
@@ -528,8 +554,8 @@ export default function FinancialsPage() {
         .order("date", { ascending: true });
 
       // Apply property filter
-      if (selectedProperty !== "All Customers") {
-        query = query.eq("customer", selectedProperty);
+      if (selectedPropertyList.length > 0) {
+        query = query.in("customer", selectedPropertyList);
       }
 
       const { data: allTransactions, error } = await query;
@@ -569,18 +595,6 @@ export default function FinancialsPage() {
 
       smartLog(`📈 Filtered to ${plTransactions.length} P&L transactions`);
       smartLog(`🔍 Sample P&L transactions:`, plTransactions.slice(0, 5));
-
-      // Get unique customers for filter dropdown using 'customer' field
-      const properties = new Set<string>();
-      plTransactions.forEach((tx) => {
-        if (tx.customer && tx.customer.trim()) {
-          properties.add(tx.customer.trim());
-        }
-      });
-      setAvailableProperties([
-        "All Customers",
-        ...Array.from(properties).sort(),
-      ]);
 
       // Process transactions using ENHANCED logic
       const processedAccounts = await processPLTransactionsEnhanced(
@@ -1231,7 +1245,7 @@ export default function FinancialsPage() {
     if (viewMode === "Total") {
       return [];
     } else if (viewMode === "Customer") {
-      return availableProperties.filter((p) => p !== "All Customers");
+      return availableProperties;
     } else if (viewMode === "Detail") {
       // For Detail view, show months in the date range using timezone-independent method
       const { startDate, endDate } = calculateDateRange();
@@ -1438,6 +1452,13 @@ export default function FinancialsPage() {
   const netIncome = grossProfit - totalExpenses;
   const grossProfitPercent = totalIncome !== 0 ? grossProfit / totalIncome : 0;
   const netIncomePercent = totalIncome !== 0 ? netIncome / totalIncome : 0;
+
+  const filteredProperties = availableProperties.filter((p) =>
+    p.toLowerCase().includes(propertySearch.toLowerCase()),
+  );
+  const allVisibleSelected =
+    filteredProperties.length > 0 &&
+    filteredProperties.every((p) => selectedProperties.has(p));
 
   // Get current date range for header display
   const { startDate: currentStartDate, endDate: currentEndDate } =
@@ -1682,44 +1703,66 @@ export default function FinancialsPage() {
                   } as React.CSSProperties
                 }
               >
-                Customers: {Array.from(selectedProperties).join(", ")}
+                Customers: {selectedProperties.size > 0
+                  ? Array.from(selectedProperties).join(", ")
+                  : "All Customers"}
                 <ChevronDown className="w-4 h-4 ml-2" />
               </button>
 
               {propertyDropdownOpen && (
-                <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                  {availableProperties.map((property) => (
-                    <label
-                      key={property}
-                      className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
-                    >
+                <div className="absolute z-10 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg">
+                  <div className="p-2">
+                    <input
+                      type="text"
+                      placeholder="Search..."
+                      value={propertySearch}
+                      onChange={(e) => setPropertySearch(e.target.value)}
+                      className="w-full px-2 py-1 border border-gray-300 rounded"
+                    />
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    <label className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={selectedProperties.has(property)}
+                        checked={allVisibleSelected}
                         onChange={(e) => {
                           const newSelected = new Set(selectedProperties);
                           if (e.target.checked) {
-                            if (property === "All Customers") {
-                              newSelected.clear();
-                              newSelected.add("All Customers");
-                            } else {
-                              newSelected.delete("All Customers");
-                              newSelected.add(property);
-                            }
+                            filteredProperties.forEach((p) => newSelected.add(p));
                           } else {
-                            newSelected.delete(property);
-                            if (newSelected.size === 0) {
-                              newSelected.add("All Customers");
-                            }
+                            filteredProperties.forEach((p) => newSelected.delete(p));
                           }
                           setSelectedProperties(newSelected);
                         }}
                         className="mr-3 rounded"
                         style={{ accentColor: BRAND_COLORS.primary }}
                       />
-                      {property}
+                      Select All
                     </label>
-                  ))}
+                    {filteredProperties.map((property) => (
+                      <label
+                        key={property}
+                        className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedProperties.has(property)}
+                          onChange={(e) => {
+                            const newSelected = new Set(selectedProperties);
+                            if (e.target.checked) {
+                              newSelected.add(property);
+                            } else {
+                              newSelected.delete(property);
+                            }
+                            setSelectedProperties(newSelected);
+                          }}
+                          className="mr-3 rounded"
+                          style={{ accentColor: BRAND_COLORS.primary }}
+                        />
+                        {property}
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
