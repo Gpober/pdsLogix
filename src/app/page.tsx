@@ -196,7 +196,7 @@ export default function FinancialOverviewPage() {
   const [availableCustomers, setAvailableCustomers] = useState<string[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
   const filteredCustomers = availableCustomers.filter((c) =>
-    c.toLowerCase().includes(customerSearch.toLowerCase()),
+    c.trim().toLowerCase().includes(customerSearch.toLowerCase()),
   );
   const allFilteredSelected =
     filteredCustomers.length > 0 &&
@@ -207,8 +207,11 @@ export default function FinancialOverviewPage() {
     selectedCustomers.size === availableCustomers.length
       ? "All Customers"
       : selectedCustomerList.length <= 3
-        ? selectedCustomerList.join(", ")
-        : `${selectedCustomerList.slice(0, 3).join(", ")} (+${selectedCustomerList.length - 3} more)`;
+        ? selectedCustomerList.map((c) => c.trim()).join(", ")
+        : `${selectedCustomerList
+            .slice(0, 3)
+            .map((c) => c.trim())
+            .join(", ")} (+${selectedCustomerList.length - 3} more)`;
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -406,11 +409,15 @@ export default function FinancialOverviewPage() {
       if (error) throw error;
       const customers = new Set<string>();
       data.forEach((row) => {
-        if (row.customer && row.customer.trim()) {
-          customers.add(row.customer.trim());
+        if (row.customer) {
+          customers.add(row.customer);
         }
       });
-      setAvailableCustomers([...Array.from(customers).sort()]);
+      setAvailableCustomers(
+        [...Array.from(customers)].sort((a, b) =>
+          a.trim().localeCompare(b.trim()),
+        ),
+      );
     } catch (err) {
       console.error("Error fetching customers:", err);
     }
@@ -444,7 +451,7 @@ export default function FinancialOverviewPage() {
       console.log(
         `🏢 Customer Filter: ${
           selectedCustomerList.length > 0
-            ? selectedCustomerList.join(", ")
+            ? selectedCustomerList.map((c) => c.trim()).join(", ")
             : "All Customers"
         }`,
       );
@@ -1663,7 +1670,7 @@ export default function FinancialOverviewPage() {
                                 className="mr-3 rounded"
                                 style={{ accentColor: BRAND_COLORS.primary }}
                               />
-                              {cust}
+                              {cust.trim()}
                             </label>
                           ))}
                         </div>
