@@ -212,6 +212,8 @@ export default function EnhancedMobileDashboard() {
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
   const [payrollTotals, setPayrollTotals] = useState<number>(0);
+  const [employeeBreakdown, setEmployeeBreakdown] = useState<Record<string, { total: number; payments: Transaction[] }>>({});
+  const [employeeTotals, setEmployeeTotals] = useState<Category[]>([]);
 
   // AI CFO States
   const [isListening, setIsListening] = useState(false);
@@ -552,18 +554,26 @@ export default function EnhancedMobileDashboard() {
       if (reportType === "payroll") {
         const { data } = await supabase
           .from("payments")
-          .select("department, total_amount, date")
+          .select("department, total_amount, date, first_name, last_name")
           .gte("date", start)
           .lte("date", end);
-        const map: Record<string, PropertySummary> = {};
+        const deptMap: Record<string, PropertySummary> = {};
+        const empMap: Record<string, Category> = {};
         (data || []).forEach((rec: any) => {
           const dept = rec.department || "Unknown";
-          if (!map[dept]) {
-            map[dept] = { name: dept, expenses: 0 };
+          if (!deptMap[dept]) {
+            deptMap[dept] = { name: dept, expenses: 0 };
           }
-          map[dept].expenses = (map[dept].expenses || 0) + (Number(rec.total_amount) || 0);
+          deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
+
+          const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
+          if (!empMap[emp]) {
+            empMap[emp] = { name: emp, total: 0 };
+          }
+          empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
         });
-        setProperties(Object.values(map));
+        setProperties(Object.values(deptMap));
+        setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
         return;
       }
 
@@ -898,6 +908,13 @@ export default function EnhancedMobileDashboard() {
     setView("detail");
   };
 
+  const showEmployeeTransactions = (employee: string) => {
+    setSelectedCategory(employee);
+    const breakdown = employeeBreakdown[employee];
+    setTransactions(breakdown ? breakdown.payments : []);
+    setView("detail");
+  };
+
   const handlePropertySelect = async (name: string | null) => {
     setSelectedProperty(name);
     if (reportType === "pl") await loadPL(name);
@@ -1045,22 +1062,27 @@ export default function EnhancedMobileDashboard() {
       query = query.eq("department", department);
     }
     const { data } = await query;
-    let running = 0;
-    const list: Transaction[] = ((data as any[]) || [])
+    const breakdown: Record<string, { total: number; payments: Transaction[] }> = {};
+    ((data as any[]) || [])
       .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => {
+      .forEach((row) => {
         const amount = Number(row.total_amount) || 0;
-        running += amount;
-        return {
+        const name = [row.first_name, row.last_name].filter(Boolean).join(" ") || "Unknown";
+        if (!breakdown[name]) {
+          breakdown[name] = { total: 0, payments: [] };
+        }
+        breakdown[name].total += amount;
+        breakdown[name].payments.push({
           date: row.date,
           amount,
-          running,
-          payee: [row.first_name, row.last_name].filter(Boolean).join(" ") || null,
+          running: 0,
+          payee: name,
           customer: row.department,
-        };
+        });
       });
-    setTransactions(list);
-    setPayrollTotals(list.reduce((sum, t) => sum + t.amount, 0));
+    setEmployeeBreakdown(breakdown);
+    setTransactions([]);
+    setPayrollTotals(Object.values(breakdown).reduce((sum, e) => sum + e.total, 0));
   };
 
   const handleCategory = async (
@@ -1794,34 +1816,57 @@ export default function EnhancedMobileDashboard() {
             </div>
 
             <div style={{ display: 'grid', gap: '12px' }}>
-              {insights.map((insight, index) => {
-                const Icon = insight.icon;
-                const bgColor = insight.type === 'success' ? '#f0f9ff' : 
-                               insight.type === 'warning' ? '#fffbeb' : '#f8fafc';
-                const iconColor = insight.type === 'success' ? BRAND_COLORS.success :
-                                 insight.type === 'warning' ? BRAND_COLORS.warning : BRAND_COLORS.primary;
-                
-                return (
-                  <div key={index} style={{
-                    background: bgColor,
-                    padding: '16px',
-                    borderRadius: '8px',
-                    border: `1px solid ${BRAND_COLORS.gray[200]}`
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'start', gap: '12px' }}>
-                      <Icon size={20} style={{ color: iconColor, marginTop: '2px' }} />
-                      <div>
-                        <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>
-                          {insight.title}
-                        </h4>
-                        <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.4' }}>
-                          {insight.message}
-                        </p>
+              {reportType === "payroll" ? (
+                <>
+                  <div style={{ background: 'white', borderRadius: '8px', padding: '16px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Total Payroll by Department</h4>
+                    {properties.map((p) => (
+                      <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                        <span>{p.name}</span>
+                        <span>{formatCurrency(p.expenses || 0)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ background: 'white', borderRadius: '8px', padding: '16px', border: `1px solid ${BRAND_COLORS.gray[200]}` }}>
+                    <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Total Payroll by Employee</h4>
+                    {employeeTotals.slice(0, 5).map((e) => (
+                      <div key={e.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
+                        <span>{e.name}</span>
+                        <span>{formatCurrency(e.total)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                insights.map((insight, index) => {
+                  const Icon = insight.icon;
+                  const bgColor = insight.type === 'success' ? '#f0f9ff' :
+                                 insight.type === 'warning' ? '#fffbeb' : '#f8fafc';
+                  const iconColor = insight.type === 'success' ? BRAND_COLORS.success :
+                                   insight.type === 'warning' ? BRAND_COLORS.warning : BRAND_COLORS.primary;
+
+                  return (
+                    <div key={index} style={{
+                      background: bgColor,
+                      padding: '16px',
+                      borderRadius: '8px',
+                      border: `1px solid ${BRAND_COLORS.gray[200]}`
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'start', gap: '12px' }}>
+                        <Icon size={20} style={{ color: iconColor, marginTop: '2px' }} />
+                        <div>
+                          <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '4px' }}>
+                            {insight.title}
+                          </h4>
+                          <p style={{ fontSize: '13px', color: '#64748b', lineHeight: '1.4' }}>
+                            {insight.message}
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -2140,6 +2185,27 @@ export default function EnhancedMobileDashboard() {
                           textShadow: '0 1px 3px rgba(0,0,0,0.2)'
                         }}>
                           {formatCompactCurrency((p.operating || 0) + (p.financing || 0) + (p.investing || 0))}
+                        </span>
+                      </div>
+                    </div>
+                  ) : reportType === "payroll" ? (
+                    <div style={{ display: 'grid', gap: '8px' }}>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.danger}08`,
+                        borderRadius: '6px',
+                        border: `1px solid ${BRAND_COLORS.danger}20`
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Payroll</span>
+                        <span style={{
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          color: BRAND_COLORS.danger,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.expenses || 0)}
                         </span>
                       </div>
                     </div>
@@ -2678,12 +2744,18 @@ export default function EnhancedMobileDashboard() {
                   padding: '20px',
                   border: `1px solid ${BRAND_COLORS.gray[200]}`
                 }}>
-                  {transactions.map((t, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '14px' }}>
-                      <span>{t.date}</span>
-                      <span>{formatCurrency(t.amount)}</span>
-                    </div>
-                  ))}
+                  {Object.entries(employeeBreakdown)
+                    .sort((a, b) => b[1].total - a[1].total)
+                    .map(([name, info]) => (
+                      <div
+                        key={name}
+                        onClick={() => showEmployeeTransactions(name)}
+                        style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '14px', cursor: 'pointer' }}
+                      >
+                        <span>{name}</span>
+                        <span>{formatCurrency(info.total)}</span>
+                      </div>
+                    ))}
                 </div>
                 <div style={{
                   marginTop: '8px',
@@ -2828,9 +2900,9 @@ export default function EnhancedMobileDashboard() {
                       padding: '16px',
                       border: `1px solid ${BRAND_COLORS.gray[200]}`,
                       boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                      cursor: 'pointer'
+                      cursor: reportType === 'payroll' ? 'default' : 'pointer'
                     }}
-                    onClick={() => openJournalEntry(t.entryNumber)}
+                    onClick={reportType === 'payroll' ? undefined : () => openJournalEntry(t.entryNumber)}
                   >
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
                       <div style={{ fontWeight: '600' }}>DATE</div>
