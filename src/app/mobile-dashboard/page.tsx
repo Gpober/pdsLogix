@@ -154,7 +154,9 @@ type RankingMetric =
   | "cogs"
   | "arTotal"
   | "arCurrent"
-  | "arOverdue";
+  | "arOverdue"
+  | "payrollDept"
+  | "payrollEmployee";
 
 const insights: Insight[] = [
   {
@@ -179,7 +181,7 @@ const insights: Insight[] = [
 
 export default function EnhancedMobileDashboard() {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [reportType, setReportType] = useState<"pl" | "cf" | "ar">("pl");
+  const [reportType, setReportType] = useState<"pl" | "cf" | "ar" | "payroll">("pl");
   const [reportPeriod, setReportPeriod] = useState<
     "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
   >("Monthly");
@@ -211,6 +213,9 @@ export default function EnhancedMobileDashboard() {
   const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
   const [showJournalModal, setShowJournalModal] = useState(false);
   const [journalTitle, setJournalTitle] = useState("");
+  const [payrollTotals, setPayrollTotals] = useState<number>(0);
+  const [employeeBreakdown, setEmployeeBreakdown] = useState<Record<string, { total: number; payments: Transaction[] }>>({});
+  const [employeeTotals, setEmployeeTotals] = useState<Category[]>([]);
 
   // AI CFO States
   const [isListening, setIsListening] = useState(false);
@@ -548,6 +553,32 @@ export default function EnhancedMobileDashboard() {
 
       const { start, end } = getDateRange();
 
+      if (reportType === "payroll") {
+        const { data } = await supabase
+          .from("payments")
+          .select("department, total_amount, date, first_name, last_name")
+          .gte("date", start)
+          .lte("date", end);
+        const deptMap: Record<string, PropertySummary> = {};
+        const empMap: Record<string, Category> = {};
+        (data || []).forEach((rec: any) => {
+          const dept = rec.department || "Unknown";
+          if (!deptMap[dept]) {
+            deptMap[dept] = { name: dept, expenses: 0 };
+          }
+          deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
+
+          const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
+          if (!empMap[emp]) {
+            empMap[emp] = { name: emp, total: 0 };
+          }
+          empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
+        });
+        setProperties(Object.values(deptMap));
+        setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
+        return;
+      }
+
       const selectColumns = "account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
 
       let query = supabase
@@ -655,6 +686,22 @@ export default function EnhancedMobileDashboard() {
     }, properties[0]).name;
   }, [properties, reportType]);
 
+  const payrollKing = useMemo(() => {
+    if (reportType !== "payroll" || !properties.length) return null;
+    return properties.reduce(
+      (max, p) => (p.expenses || 0) > (max.expenses || 0) ? p : max,
+      properties[0],
+    ).name;
+  }, [properties, reportType]);
+
+  const payrollTopEmployee = useMemo(() => {
+    if (reportType !== "payroll" || !employeeTotals.length) return null;
+    return employeeTotals.reduce(
+      (max, e) => (e.total || 0) > (max.total || 0) ? e : max,
+      employeeTotals[0],
+    ).name;
+  }, [employeeTotals, reportType]);
+
   const cashKing = useMemo(() => {
     if (reportType !== "cf" || !properties.length) return null;
     return properties.reduce((max, p) =>
@@ -717,13 +764,16 @@ export default function EnhancedMobileDashboard() {
         acc.financing += p.financing || 0;
         acc.investing += p.investing || 0;
         acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      } else {
+      } else if (reportType === "ar") {
         acc.current += p.current || 0;
         acc.days30 += p.days30 || 0;
         acc.days60 += p.days60 || 0;
         acc.days90 += p.days90 || 0;
         acc.over90 += p.over90 || 0;
         acc.net += p.total || 0;
+      } else {
+        acc.expenses += p.expenses || 0;
+        acc.net += p.expenses || 0;
       }
       return acc;
     },
@@ -772,6 +822,8 @@ export default function EnhancedMobileDashboard() {
     arTotal: "Total A/R",
     arCurrent: "Current Ratio",
     arOverdue: "Overdue A/R",
+    payrollDept: "Payroll",
+    payrollEmployee: "Payroll",
   };
 
   const rankedProperties = useMemo(() => {
@@ -820,12 +872,16 @@ export default function EnhancedMobileDashboard() {
             ((b.total || 0) - (b.current || 0)) -
             ((a.total || 0) - (a.current || 0)),
         );
+      case "payrollDept":
+        return arr.sort((a, b) => (b.expenses || 0) - (a.expenses || 0));
+      case "payrollEmployee":
+        return [...employeeTotals].sort((a, b) => b.total - a.total);
       default:
         return arr;
     }
-  }, [properties, rankingMetric]);
+  }, [properties, employeeTotals, rankingMetric]);
 
-  const formatRankingValue = (p: PropertySummary) => {
+  const formatRankingValue = (p: any) => {
     switch (rankingMetric) {
       case "margin":
         const m = p.revenue ? (p.netIncome || 0) / (p.revenue || 1) : 0;
@@ -852,6 +908,10 @@ export default function EnhancedMobileDashboard() {
         return `${(rc * 100).toFixed(1)}%`;
       case "arOverdue":
         return formatCompactCurrency((p.total || 0) - (p.current || 0));
+      case "payrollDept":
+        return formatCompactCurrency(p.expenses || 0);
+      case "payrollEmployee":
+        return formatCompactCurrency(p.total || 0);
       case "netIncome":
       default:
         return formatCompactCurrency(p.netIncome || 0);
@@ -868,10 +928,18 @@ export default function EnhancedMobileDashboard() {
     setView("detail");
   };
 
+  const showEmployeeTransactions = (employee: string) => {
+    setSelectedCategory(employee);
+    const breakdown = employeeBreakdown[employee];
+    setTransactions(breakdown ? breakdown.payments : []);
+    setView("detail");
+  };
+
   const handlePropertySelect = async (name: string | null) => {
     setSelectedProperty(name);
     if (reportType === "pl") await loadPL(name);
     else if (reportType === "cf") await loadCF(name);
+    else if (reportType === "payroll") await loadPayroll(name);
     else await loadAR(name);
     setView("report");
   };
@@ -1001,6 +1069,40 @@ export default function EnhancedMobileDashboard() {
       memo: rec.memo || null,
     }));
     setArTransactions(list);
+  };
+
+  const loadPayroll = async (department: string | null = selectedProperty) => {
+    const { start, end } = getDateRange();
+    let query = supabase
+      .from("payments")
+      .select("date, total_amount, first_name, last_name, department")
+      .gte("date", start)
+      .lte("date", end);
+    if (department) {
+      query = query.eq("department", department);
+    }
+    const { data } = await query;
+    const breakdown: Record<string, { total: number; payments: Transaction[] }> = {};
+    ((data as any[]) || [])
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((row) => {
+        const amount = Number(row.total_amount) || 0;
+        const name = [row.first_name, row.last_name].filter(Boolean).join(" ") || "Unknown";
+        if (!breakdown[name]) {
+          breakdown[name] = { total: 0, payments: [] };
+        }
+        breakdown[name].total += amount;
+        breakdown[name].payments.push({
+          date: row.date,
+          amount,
+          running: 0,
+          payee: name,
+          customer: row.department,
+        });
+      });
+    setEmployeeBreakdown(breakdown);
+    setTransactions([]);
+    setPayrollTotals(Object.values(breakdown).reduce((sum, e) => sum + e.total, 0));
   };
 
   const handleCategory = async (
@@ -1155,10 +1257,17 @@ export default function EnhancedMobileDashboard() {
         {/* Dashboard Summary */}
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
           <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-            {reportType === "pl" ? "P&L Dashboard" : reportType === "cf" ? "Cash Flow Dashboard" : "A/R Aging Report"}
+            {reportType === "pl"
+              ? "P&L Dashboard"
+              : reportType === "cf"
+              ? "Cash Flow Dashboard"
+              : reportType === "payroll"
+              ? "Payroll Dashboard"
+              : "A/R Aging Report"}
           </h1>
           <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`} • {properties.length} Customers
+            {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`} • {properties.length}{" "}
+            {reportType === "payroll" ? "Departments" : "Customers"}
           </p>
         </div>
 
@@ -1244,6 +1353,15 @@ export default function EnhancedMobileDashboard() {
                 <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
               </div>
             </div>
+          ) : reportType === "payroll" ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px', textAlign: 'center' }}>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                  {formatCompactCurrency(companyTotals.expenses)}
+                </div>
+                <div style={{ fontSize: '11px', opacity: 0.8 }}>Payroll</div>
+              </div>
+            </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', textAlign: 'center' }}>
               <div>
@@ -1309,10 +1427,11 @@ export default function EnhancedMobileDashboard() {
                 fontSize: '16px'
               }}
               value={reportType}
-              onChange={(e) => setReportType(e.target.value as "pl" | "cf" | "ar")}
+              onChange={(e) => setReportType(e.target.value as "pl" | "cf" | "ar" | "payroll")}
             >
               <option value="pl">P&L Statement</option>
               <option value="cf">Cash Flow Statement</option>
+              <option value="payroll">Payroll</option>
               <option value="ar">A/R Aging Report</option>
             </select>
           </div>
@@ -1630,6 +1749,49 @@ export default function EnhancedMobileDashboard() {
                       </div>
                     </div>
                   </>
+                ) : reportType === "payroll" ? (
+                  <>
+                    <div onClick={() => showRanking("payrollDept")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.danger}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>🏢</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.danger, fontWeight: '600' }}>
+                          TOP DEPT
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {payrollKing}
+                        </div>
+                      </div>
+                    </div>
+                    <div onClick={() => showRanking("payrollEmployee")} style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      border: `1px solid ${BRAND_COLORS.secondary}33`,
+                      cursor: 'pointer'
+                    }}>
+                      <span style={{ fontSize: '20px' }}>👤</span>
+                      <div>
+                        <div style={{ fontSize: '11px', color: BRAND_COLORS.secondary, fontWeight: '600' }}>
+                          TOP EMP
+                        </div>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>
+                          {payrollTopEmployee}
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <div onClick={() => showRanking("arTotal")} style={{
@@ -1719,11 +1881,11 @@ export default function EnhancedMobileDashboard() {
             <div style={{ display: 'grid', gap: '12px' }}>
               {insights.map((insight, index) => {
                 const Icon = insight.icon;
-                const bgColor = insight.type === 'success' ? '#f0f9ff' : 
+                const bgColor = insight.type === 'success' ? '#f0f9ff' :
                                insight.type === 'warning' ? '#fffbeb' : '#f8fafc';
                 const iconColor = insight.type === 'success' ? BRAND_COLORS.success :
                                  insight.type === 'warning' ? BRAND_COLORS.warning : BRAND_COLORS.primary;
-                
+
                 return (
                   <div key={index} style={{
                     background: bgColor,
@@ -1759,6 +1921,7 @@ export default function EnhancedMobileDashboard() {
               const isArKing = p.name === arKing;
               const isCurrentChamp = p.name === currentChamp;
               const isOverdueAlert = p.name === overdueAlert;
+              const isPayrollKing = p.name === payrollKing;
               
               return (
                 <div
@@ -1866,6 +2029,16 @@ export default function EnhancedMobileDashboard() {
                           boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
                         }}>
                           <span style={{ fontSize: '16px' }}>⚡</span>
+                        </div>
+                      )}
+                      {reportType === "payroll" && isPayrollKing && (
+                        <div style={{
+                          background: `linear-gradient(135deg, ${BRAND_COLORS.warning}, #f59e0b)`,
+                          borderRadius: '12px',
+                          padding: '4px 6px',
+                          boxShadow: '0 2px 8px rgba(245,158,11,0.3)'
+                        }}>
+                          <span style={{ fontSize: '16px' }}>👑</span>
                         </div>
                       )}
                       {reportType === "ar" && isArKing && (
@@ -2055,6 +2228,27 @@ export default function EnhancedMobileDashboard() {
                         </span>
                       </div>
                     </div>
+                  ) : reportType === "payroll" ? (
+                    <div style={{ display: 'grid', gap: '8px' }}>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '6px 10px',
+                        background: `${BRAND_COLORS.danger}08`,
+                        borderRadius: '6px',
+                        border: `1px solid ${BRAND_COLORS.danger}20`
+                      }}>
+                        <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '500' }}>Payroll</span>
+                        <span style={{
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          color: BRAND_COLORS.danger,
+                          textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }}>
+                          {formatCompactCurrency(p.expenses || 0)}
+                        </span>
+                      </div>
+                    </div>
                   ) : (
                     <div style={{ display: 'grid', gap: '6px' }}>
                       <div style={{
@@ -2133,14 +2327,14 @@ export default function EnhancedMobileDashboard() {
                 color: BRAND_COLORS.accent
               }}
             >
-              Company Total {reportType === "pl" ? "Net Income" : reportType === "cf" ? "Net Cash" : "A/R"}
+              Company Total {reportType === "pl" ? "Net Income" : reportType === "cf" ? "Net Cash" : reportType === "payroll" ? "Payroll" : "A/R"}
             </span>
             <div
               style={{
                 fontSize: '20px',
                 fontWeight: '800',
                 marginTop: '4px',
-                color: reportType === "ar" ? BRAND_COLORS.primary : companyTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                color: reportType === "ar" ? BRAND_COLORS.primary : reportType === "payroll" ? BRAND_COLORS.danger : companyTotals.net >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
               }}
             >
               {formatCompactCurrency(companyTotals.net)}
@@ -2178,7 +2372,11 @@ export default function EnhancedMobileDashboard() {
             }}
           >
             <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-              Top Customers by {rankingLabels[rankingMetric]}
+              {rankingMetric === 'payrollDept'
+                ? 'Top Departments by Payroll'
+                : rankingMetric === 'payrollEmployee'
+                  ? 'Top Employees by Payroll'
+                  : `Top Customers by ${rankingLabels[rankingMetric]}`}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
               {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
@@ -2225,7 +2423,7 @@ export default function EnhancedMobileDashboard() {
             }}
           >
             <ChevronLeft size={20} style={{ marginRight: '4px' }} /> 
-            Back to Customers
+            Back to {reportType === "payroll" ? "Departments" : "Customers"}
           </button>
           
           <div style={{
@@ -2236,7 +2434,7 @@ export default function EnhancedMobileDashboard() {
             color: 'white'
           }}>
             <h2 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : reportType === "cf" ? "Cash Flow Statement" : "A/R Aging"}
+              {selectedProperty || "Company Total"} - {reportType === "pl" ? "P&L Statement" : reportType === "cf" ? "Cash Flow Statement" : reportType === "payroll" ? "Payroll Statement" : "A/R Aging"}
             </h2>
             <p style={{ fontSize: '14px', opacity: 0.9 }}>
               {reportType === "ar" ? "As of Today" : `${getMonthName(month)} ${year}`}
@@ -2582,6 +2780,37 @@ export default function EnhancedMobileDashboard() {
               Net Cash Flow: {formatCurrency(cfTotals.net)}
             </div>
               </>
+            ) : reportType === "payroll" ? (
+              <>
+                <div style={{
+                  background: 'white',
+                  borderRadius: '12px',
+                  padding: '20px',
+                  border: `1px solid ${BRAND_COLORS.gray[200]}`
+                }}>
+                  {Object.entries(employeeBreakdown)
+                    .sort((a, b) => b[1].total - a[1].total)
+                    .map(([name, info]) => (
+                      <div
+                        key={name}
+                        onClick={() => showEmployeeTransactions(name)}
+                        style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '14px', cursor: 'pointer' }}
+                      >
+                        <span>{name}</span>
+                        <span>{formatCurrency(info.total)}</span>
+                      </div>
+                    ))}
+                </div>
+                <div style={{
+                  marginTop: '8px',
+                  textAlign: 'right',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  color: BRAND_COLORS.danger,
+                }}>
+                  Total Payroll: {formatCurrency(payrollTotals)}
+                </div>
+              </>
             ) : (
               <div style={{ display: 'grid', gap: '12px' }}>
                 <div onClick={() => showARTransactions('current')} style={{ background: `${BRAND_COLORS.success}20`, borderRadius: '8px', padding: '16px', cursor: 'pointer' }}>
@@ -2629,7 +2858,7 @@ export default function EnhancedMobileDashboard() {
             }}
           >
             <ChevronLeft size={20} style={{ marginRight: '4px' }} />
-            Back to {reportType === "pl" ? "P&L" : reportType === "cf" ? "Cash Flow" : "A/R"}
+            Back to {reportType === "pl" ? "P&L" : reportType === "cf" ? "Cash Flow" : reportType === "payroll" ? "Payroll" : "A/R"}
           </button>
 
           {reportType === "ar" ? (
@@ -2715,9 +2944,9 @@ export default function EnhancedMobileDashboard() {
                       padding: '16px',
                       border: `1px solid ${BRAND_COLORS.gray[200]}`,
                       boxShadow: '0 2px 4px rgba(0, 0, 0, 0.05)',
-                      cursor: 'pointer'
+                      cursor: reportType === 'payroll' ? 'default' : 'pointer'
                     }}
-                    onClick={() => openJournalEntry(t.entryNumber)}
+                    onClick={reportType === 'payroll' ? undefined : () => openJournalEntry(t.entryNumber)}
                   >
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', fontSize: '12px', color: '#64748b', marginBottom: '8px' }}>
                       <div style={{ fontWeight: '600' }}>DATE</div>
@@ -2754,7 +2983,13 @@ export default function EnhancedMobileDashboard() {
                   color: transactionTotal >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
                 }}
               >
-                {reportType === "pl" ? "Total Net Income" : "Total Net Cash Flow"}: {formatCurrency(transactionTotal)}
+                {reportType === "pl"
+                  ? "Total Net Income"
+                  : reportType === "cf"
+                  ? "Total Net Cash Flow"
+                  : reportType === "payroll"
+                  ? "Total Payroll"
+                  : "Total"}: {formatCurrency(transactionTotal)}
               </div>
             </>
           )}

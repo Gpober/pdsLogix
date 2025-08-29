@@ -40,7 +40,8 @@ export const createCFOCompletion = async (message, context) => {
       'customer_analysis', 
       'financial_analysis',
       'performance_analysis',
-      'trend_analysis'  // Added for year-over-year comparisons
+      'trend_analysis',  // Added for year-over-year comparisons
+      'workforce_analysis'
     ].includes(context.queryType)
 
     console.log('🔧 Function calling needed:', needsFunctionCalling)
@@ -71,7 +72,25 @@ export const createCFOCompletion = async (message, context) => {
         role: "user",
         content: message
       }
-    ]
+        ,
+        {
+          type: "function",
+          function: {
+            name: "getPaymentsSummary",
+            description: "Get payroll payments summarized by department with optional department filter",
+            parameters: {
+              type: "object",
+              properties: {
+                department: {
+                  type: "string",
+                  description: "Optional department name to filter"
+                }
+              },
+              required: []
+            }
+          }
+        }
+        ]
 
     let completionOptions = {
       model: 'gpt-4o',
@@ -160,6 +179,23 @@ export const createCFOCompletion = async (message, context) => {
                   type: "string",
                   enum: ["all", "revenue", "expenses", "customers", "profit"],
                   description: "Specific metric to focus comparison on"
+                }
+              },
+              required: []
+            }
+          }
+        }
+        ,{
+          type: "function",
+          function: {
+            name: "getPaymentsSummary",
+            description: "Get payroll payments summarized by department with optional department filter",
+            parameters: {
+              type: "object",
+              properties: {
+                department: {
+                  type: "string",
+                  description: "Optional department name to filter"
                 }
               },
               required: []

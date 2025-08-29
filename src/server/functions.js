@@ -197,6 +197,47 @@ export const availableFunctions = {
   },
 
   // =========================
+  // Payroll Payments Summary
+  // =========================
+  getPaymentsSummary: async ({ department = null } = {}) => {
+    try {
+      let query = supabase.from('payments').select('*');
+      if (department) query = query.eq('department', department);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        return {
+          success: true,
+          summary: 'No payment data found',
+          total_payroll: 0,
+          department_breakdown: {},
+          payments: [],
+        };
+      }
+
+      const total = data.reduce((sum, p) => sum + (p.total_amount || 0), 0);
+      const departmentBreakdown = data.reduce((acc, p) => {
+        const dept = p.department || 'Unknown';
+        acc[dept] = (acc[dept] || 0) + (p.total_amount || 0);
+        return acc;
+      }, {});
+
+      return {
+        success: true,
+        summary: 'Payroll payment summary',
+        total_payroll: total,
+        department_breakdown: departmentBreakdown,
+        payments: data,
+      };
+    } catch (error) {
+      console.error('❌ getPaymentsSummary error:', error);
+      return { success: false, error: 'Failed to fetch payments', details: error.message };
+    }
+  },
+
+  // =========================
   // Customer Net Income
   // =========================
   getCustomerNetIncome: async ({ customerId = null, timeframe = 'current_month' } = {}) => {
