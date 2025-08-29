@@ -171,23 +171,27 @@ export default function PayrollPage() {
   useEffect(() => {
     const monthIndex = monthsList.indexOf(selectedMonth);
     const yearNum = parseInt(selectedYear, 10);
+
+    const makeDate = (y: number, m: number, d: number) =>
+      new Date(Date.UTC(y, m, d)).toISOString().split("T")[0];
+
     let start = "";
     let end = "";
     if (timePeriod === "Monthly") {
-      start = new Date(yearNum, monthIndex, 1).toISOString().split("T")[0];
-      end = new Date(yearNum, monthIndex + 1, 0).toISOString().split("T")[0];
+      start = makeDate(yearNum, monthIndex, 1);
+      end = makeDate(yearNum, monthIndex + 1, 0);
     } else if (timePeriod === "Quarterly") {
       const qStart = Math.floor(monthIndex / 3) * 3;
-      start = new Date(yearNum, qStart, 1).toISOString().split("T")[0];
-      end = new Date(yearNum, qStart + 3, 0).toISOString().split("T")[0];
+      start = makeDate(yearNum, qStart, 1);
+      end = makeDate(yearNum, qStart + 3, 0);
     } else if (timePeriod === "YTD") {
-      start = new Date(yearNum, 0, 1).toISOString().split("T")[0];
-      end = new Date(yearNum, monthIndex + 1, 0).toISOString().split("T")[0];
+      start = makeDate(yearNum, 0, 1);
+      end = makeDate(yearNum, monthIndex + 1, 0);
     } else if (timePeriod === "Trailing 12") {
-      const endDate = new Date(yearNum, monthIndex + 1, 0);
-      const startDate = new Date(yearNum, monthIndex - 11, 1);
-      start = startDate.toISOString().split("T")[0];
-      end = endDate.toISOString().split("T")[0];
+      const endDate = makeDate(yearNum, monthIndex + 1, 0);
+      const startDate = makeDate(yearNum, monthIndex - 11, 1);
+      start = startDate;
+      end = endDate;
     } else {
       start = customStartDate;
       end = customEndDate;
@@ -237,8 +241,8 @@ export default function PayrollPage() {
       ].join(" ");
       const matchesSearch = searchTerm.trim() === "" || hay.includes(searchTerm.toLowerCase());
       const matchesDate =
-        (!startDate || (p.date && new Date(p.date) >= new Date(startDate))) &&
-        (!endDate || (p.date && new Date(p.date) <= new Date(endDate)));
+        (!startDate || (p.date && Date.parse(p.date) >= Date.parse(startDate))) &&
+        (!endDate || (p.date && Date.parse(p.date) <= Date.parse(endDate)));
       return matchesDept && matchesSearch && matchesDate;
     });
   }, [payments, departmentFilter, searchTerm, startDate, endDate]);
@@ -258,7 +262,7 @@ export default function PayrollPage() {
       total += amt;
       if (p.date) {
         const d = new Date(p.date);
-        if (d.getMonth() === m && d.getFullYear() === y) monthTotal += amt;
+        if (d.getUTCMonth() === m && d.getUTCFullYear() === y) monthTotal += amt;
       }
     }
     const avg = totalTx ? total / totalTx : 0;
@@ -277,14 +281,12 @@ export default function PayrollPage() {
   // Trend (year-to-date) & Department totals
   const trendData = useMemo(() => {
     const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
     const labels: { key: string; y: number; m: number }[] = [];
-    for (let m = 0; m <= now.getMonth(); m++) {
-      const d = new Date(now.getFullYear(), m, 1);
-      labels.push({
-        key: d.toLocaleString("en-US", { month: "short" }) + " " + d.getFullYear(),
-        y: d.getFullYear(),
-        m: d.getMonth(),
-      });
+    for (let m = 0; m <= currentMonth; m++) {
+      const key = monthsList[m].slice(0, 3) + " " + currentYear;
+      labels.push({ key, y: currentYear, m });
     }
     const map = new Map<string, { month: string; grossPay: number; netPay: number }>();
     labels.forEach((l) => map.set(l.key, { month: l.key, grossPay: 0, netPay: 0 }));
@@ -292,7 +294,8 @@ export default function PayrollPage() {
     for (const p of filteredPayments) {
       if (!p.date) continue;
       const d = new Date(p.date);
-      const key = d.toLocaleString("en-US", { month: "short" }) + " " + d.getFullYear();
+      const key =
+        monthsList[d.getUTCMonth()].slice(0, 3) + " " + d.getUTCFullYear();
       if (!map.has(key)) continue;
       const amt = Number(p.total_amount || 0);
       const bucket = map.get(key)!;
@@ -344,7 +347,7 @@ export default function PayrollPage() {
       { total: number; people: Map<string, number> }
     >();
     for (const p of filteredPayments) {
-      const date = p.date ? new Date(p.date).toISOString().split("T")[0] : "Unknown";
+      const date = p.date ? p.date.split("T")[0] : "Unknown";
       const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Unknown";
       const amt = Number(p.total_amount || 0);
       if (!map.has(date)) map.set(date, { total: 0, people: new Map() });
@@ -361,7 +364,7 @@ export default function PayrollPage() {
           amount,
         })),
       }))
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   }, [filteredPayments]);
 
   const toggleGroup = (key: string) => {
@@ -839,7 +842,14 @@ export default function PayrollPage() {
                       onClick={() => toggleGroup(d.date)}
                       className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
                     >
-                      <span className="font-medium">{new Date(d.date).toLocaleDateString()}</span>
+                      <span className="font-medium">
+                        {d.date === "Unknown"
+                          ? "Unknown"
+                          : new Date(`${d.date}T00:00:00Z`).toLocaleDateString(
+                              "en-US",
+                              { timeZone: "UTC" }
+                            )}
+                      </span>
                       <div className="flex items-center gap-4">
                         <span>{formatCurrency(d.total)}</span>
                         <ChevronDown
