@@ -322,6 +322,13 @@ export const availableFunctions = {
         acc[name] = (acc[name] || 0) + (p.total_amount || 0);
         return acc;
       }, {});
+      const departmentEmployeeBreakdown = data.reduce((acc, p) => {
+        const dept = p.department || 'Unknown';
+        const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown';
+        acc[dept] = acc[dept] || {};
+        acc[dept][name] = (acc[dept][name] || 0) + (p.total_amount || 0);
+        return acc;
+      }, {});
 
       return {
         success: true,
@@ -329,6 +336,7 @@ export const availableFunctions = {
         total_payroll: total,
         department_breakdown: departmentBreakdown,
         employee_breakdown: employeeBreakdown,
+        department_employee_breakdown: departmentEmployeeBreakdown,
         payments: data,
         pagination: { count: count ?? data.length, limit, offset },
       };
