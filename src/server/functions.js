@@ -339,6 +339,66 @@ export const availableFunctions = {
   },
 
   // =========================
+  // Payroll By Month
+  // =========================
+  getPayrollByMonth: async ({
+    startDate = null,
+    endDate = null,
+    employee = null,
+    department = null,
+    minAmount = null,
+    maxAmount = null,
+  } = {}) => {
+    try {
+      let query = supabase
+        .from('payments')
+        .select('date, department, first_name, last_name, total_amount');
+
+      if (startDate) query = query.gte('date', toISO(startDate) || startDate);
+      if (endDate) query = query.lte('date', toISO(endDate) || endDate);
+      if (department) query = query.ilike('department', `%${safeLike(department)}%`);
+      if (employee) {
+        const e = safeLike(employee);
+        query = query.or(`first_name.ilike.%${e}%,last_name.ilike.%${e}%`);
+      }
+      if (minAmount !== null) query = query.gte('total_amount', +minAmount);
+      if (maxAmount !== null) query = query.lte('total_amount', +maxAmount);
+
+      query = query.order('date', { ascending: true }).limit(HARD_ROW_CAP);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      if (!data || data.length === 0) {
+        return {
+          success: true,
+          summary: 'No payroll data found',
+          total_payroll: 0,
+          monthly_payroll: {},
+        };
+      }
+
+      const monthly = data.reduce((acc, p) => {
+        const month = String(p.date).substring(0, 7);
+        acc[month] = (acc[month] || 0) + (p.total_amount || 0);
+        return acc;
+      }, {});
+
+      const total = Object.values(monthly).reduce((s, v) => s + v, 0);
+
+      return {
+        success: true,
+        summary: 'Monthly payroll totals',
+        total_payroll: total,
+        monthly_payroll: monthly,
+      };
+    } catch (error) {
+      console.error('❌ getPayrollByMonth error:', error);
+      return { success: false, error: 'Failed to fetch monthly payroll', details: error.message };
+    }
+  },
+
+  // =========================
   // A/R Aging Detail (Invoices) — full filters used by AI
   // =========================
   getARAgingDetail: async (raw = {}) => {
@@ -410,7 +470,8 @@ export const availableFunctions = {
         entity = null,
         groupByMonth = true,
         metricsOnly = true,     // default to aggregates only
-        detailLimit = 0,        // no detail rows by default
+        limit = 0,              // no detail rows by default
+        offset = 0,
       } = raw;
 
       // 1) Count gate (HEAD)
@@ -489,12 +550,12 @@ export const availableFunctions = {
         ...(groupByMonth ? { monthly_net: monthly } : {}),
         meta: {
           row_count: count ?? data.length,
-          capped: tooBig || metricsOnly || detailLimit === 0,
+          capped: tooBig || metricsOnly || limit === 0,
           window: { startDate, endDate },
         },
       };
 
-      if (metricsOnly || detailLimit === 0 || tooBig) {
+      if (metricsOnly || limit === 0 || tooBig) {
         return base;
       }
 
@@ -503,7 +564,7 @@ export const availableFunctions = {
         .from('journal_entry_lines')
         .select('date, account, debit, credit, customer, entity')
         .order('date', { ascending: true })
-        .limit(Math.min(detailLimit, 200));
+        .range(offset, offset + clampLimit(limit, 50, 200) - 1);
 
       if (startDate) detailQuery = detailQuery.gte('date', startDate);
       if (endDate)   detailQuery = detailQuery.lte('date', endDate);
