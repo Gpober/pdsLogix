@@ -19,6 +19,9 @@ export function useRealtimeCFO() {
   const [connected, setConnected] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [secondsLeft, setSecondsLeft] = useState(Math.floor(maxSessionMs / 1000))
+  const [response, setResponse] = useState('')
+
+  const clearResponse = useCallback(() => setResponse(''), [])
 
   const stop = useCallback(() => {
     if (countdownTimer.current) clearInterval(countdownTimer.current)
@@ -59,6 +62,8 @@ export function useRealtimeCFO() {
       const token = session?.client_secret?.value
       if (!token) throw new Error('Missing client token')
 
+      setResponse('')
+
       const pc = new RTCPeerConnection()
       pcRef.current = pc
 
@@ -88,6 +93,9 @@ export function useRealtimeCFO() {
             setSpeaking(true)
           } else if (msg.type === 'response.completed') {
             setSpeaking(false)
+          } else if (msg.type === 'response.output_text.delta') {
+            const delta = (msg.delta as string) || ''
+            setResponse(prev => prev + delta)
           } else if (msg.type === 'response.function_call') {
             const { name, id: tool_call_id, arguments: argStr } = msg
             let parsed: Record<string, unknown> = {}
@@ -153,5 +161,5 @@ export function useRealtimeCFO() {
     return () => stop()
   }, [stop])
 
-  return { start, stop, connected, speaking, secondsLeft }
+  return { start, stop, connected, speaking, secondsLeft, response, clearResponse }
 }

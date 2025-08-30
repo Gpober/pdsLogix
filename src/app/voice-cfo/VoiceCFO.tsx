@@ -3,7 +3,7 @@
 import { useRealtimeCFO } from '../hooks/useRealtimeCFO'
 
 export default function VoiceCFO() {
-  const { start, stop, connected, speaking, secondsLeft } = useRealtimeCFO()
+  const { start, stop, connected, speaking, secondsLeft, response, clearResponse } = useRealtimeCFO()
 
   const handleClick = async () => {
     try {
@@ -18,7 +18,7 @@ export default function VoiceCFO() {
   const status = connected ? (speaking ? 'assistant speaking' : 'connected') : 'disconnected'
 
   return (
-    <div className="flex flex-col items-center space-y-2 p-4 border rounded-md w-full max-w-xs text-center">
+    <div className="flex flex-col items-center space-y-2 p-4 border rounded-md w-full max-w-xs text-center relative">
       <button
         onClick={handleClick}
         aria-pressed={connected}
@@ -31,6 +31,18 @@ export default function VoiceCFO() {
       <div className={`text-sm ${countdownClass}`}>
         {connected ? `${status} • ${secondsLeft}s` : 'tap to begin'}
       </div>
+      {response && (
+        <div className="absolute top-full left-0 mt-2 w-full max-h-64 overflow-y-auto border rounded-md p-3 bg-white text-left shadow" role="region" aria-label="Assistant response">
+          <button
+            onClick={clearResponse}
+            className="absolute top-1 right-2 text-sm text-gray-500 hover:text-gray-700"
+            aria-label="Close response"
+          >
+            ×
+          </button>
+          <div className="pr-4 whitespace-pre-wrap break-words">{response}</div>
+        </div>
+      )}
     </div>
   )
 }
