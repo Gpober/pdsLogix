@@ -375,14 +375,21 @@ export const availableFunctions = {
           summary: 'No payroll data found',
           total_payroll: 0,
           monthly_payroll: {},
+          monthly_department_breakdown: {},
         };
       }
 
-      const monthly = data.reduce((acc, p) => {
-        const month = String(p.date).substring(0, 7);
-        acc[month] = (acc[month] || 0) + (p.total_amount || 0);
-        return acc;
-      }, {});
+      const { monthly, monthlyDept } = data.reduce(
+        (acc, p) => {
+          const month = String(p.date).substring(0, 7);
+          const dept = p.department || 'Unknown';
+          acc.monthly[month] = (acc.monthly[month] || 0) + (p.total_amount || 0);
+          acc.monthlyDept[month] = acc.monthlyDept[month] || {};
+          acc.monthlyDept[month][dept] = (acc.monthlyDept[month][dept] || 0) + (p.total_amount || 0);
+          return acc;
+        },
+        { monthly: {}, monthlyDept: {} },
+      );
 
       const total = Object.values(monthly).reduce((s, v) => s + v, 0);
 
@@ -391,10 +398,122 @@ export const availableFunctions = {
         summary: 'Monthly payroll totals',
         total_payroll: total,
         monthly_payroll: monthly,
+        monthly_department_breakdown: monthlyDept,
       };
     } catch (error) {
       console.error('❌ getPayrollByMonth error:', error);
       return { success: false, error: 'Failed to fetch monthly payroll', details: error.message };
+    }
+  },
+
+  // =========================
+  // Generic table queries
+  // =========================
+  queryPayroll: async ({
+    select = '*',
+    filters = {},
+    orderBy = null,
+    ascending = true,
+    limit = 100,
+    offset = 0,
+  } = {}) => {
+    try {
+      let query = supabase.from('payments').select(select, { count: 'exact' });
+
+      for (const [col, val] of Object.entries(filters || {})) {
+        if (val === null || typeof val === 'undefined') continue;
+        if (Array.isArray(val)) query = query.in(col, val);
+        else if (typeof val === 'string') query = query.ilike(col, `%${safeLike(val)}%`);
+        else query = query.eq(col, val);
+      }
+
+      if (orderBy) query = query.order(orderBy, { ascending });
+
+      query = query.range(offset, offset + clampLimit(limit, 500) - 1);
+
+      const { data, error, count } = await query;
+      if (error) throw error;
+
+      return {
+        success: true,
+        records: data || [],
+        pagination: { count: count ?? data?.length ?? 0, limit, offset },
+      };
+    } catch (error) {
+      console.error('❌ queryPayroll error:', error);
+      return { success: false, error: 'Failed to query payroll', details: error.message };
+    }
+  },
+
+  queryARAgingDetailTable: async ({
+    select = '*',
+    filters = {},
+    orderBy = null,
+    ascending = true,
+    limit = 100,
+    offset = 0,
+  } = {}) => {
+    try {
+      let query = supabase.from('ar_aging_detail').select(select, { count: 'exact' });
+
+      for (const [col, val] of Object.entries(filters || {})) {
+        if (val === null || typeof val === 'undefined') continue;
+        if (Array.isArray(val)) query = query.in(col, val);
+        else if (typeof val === 'string') query = query.ilike(col, `%${safeLike(val)}%`);
+        else query = query.eq(col, val);
+      }
+
+      if (orderBy) query = query.order(orderBy, { ascending });
+
+      query = query.range(offset, offset + clampLimit(limit, 500) - 1);
+
+      const { data, error, count } = await query;
+      if (error) throw error;
+
+      return {
+        success: true,
+        records: data || [],
+        pagination: { count: count ?? data?.length ?? 0, limit, offset },
+      };
+    } catch (error) {
+      console.error('❌ queryARAgingDetailTable error:', error);
+      return { success: false, error: 'Failed to query ar_aging_detail', details: error.message };
+    }
+  },
+
+  queryJournalEntryLines: async ({
+    select = '*',
+    filters = {},
+    orderBy = null,
+    ascending = true,
+    limit = 100,
+    offset = 0,
+  } = {}) => {
+    try {
+      let query = supabase.from('journal_entry_lines').select(select, { count: 'exact' });
+
+      for (const [col, val] of Object.entries(filters || {})) {
+        if (val === null || typeof val === 'undefined') continue;
+        if (Array.isArray(val)) query = query.in(col, val);
+        else if (typeof val === 'string') query = query.ilike(col, `%${safeLike(val)}%`);
+        else query = query.eq(col, val);
+      }
+
+      if (orderBy) query = query.order(orderBy, { ascending });
+
+      query = query.range(offset, offset + clampLimit(limit, 500) - 1);
+
+      const { data, error, count } = await query;
+      if (error) throw error;
+
+      return {
+        success: true,
+        records: data || [],
+        pagination: { count: count ?? data?.length ?? 0, limit, offset },
+      };
+    } catch (error) {
+      console.error('❌ queryJournalEntryLines error:', error);
+      return { success: false, error: 'Failed to query journal_entry_lines', details: error.message };
     }
   },
 

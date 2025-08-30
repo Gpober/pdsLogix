@@ -260,7 +260,7 @@ function buildTools(topic: Topic, intent: Intent) {
         type: 'function',
         function: {
           name: monthly,
-          description: 'Monthly payroll totals from payments.',
+          description: 'Monthly payroll totals from payments with department breakdown.',
           parameters: {
             type: 'object',
             properties: {
@@ -270,6 +270,33 @@ function buildTools(topic: Topic, intent: Intent) {
               department: { type: 'string' },
               minAmount: { type: 'number' },
               maxAmount: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+
+    const payrollRaw = pickFunctionName(['queryPayroll', 'queryPayments', 'queryPayrollTable']);
+    if (payrollRaw) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: payrollRaw,
+          description: 'Direct query access to the payments table; supports arbitrary column filters.',
+          parameters: {
+            type: 'object',
+            properties: {
+              select: { type: 'string', description: 'Columns to return, e.g., "*" or "date,department"' },
+              filters: {
+                type: 'object',
+                description: 'Key/value filters; string values use ilike matching',
+                additionalProperties: true,
+              },
+              orderBy: { type: 'string' },
+              ascending: { type: 'boolean' },
+              limit: { type: 'number' },
+              offset: { type: 'number' },
             },
             additionalProperties: false,
           },
@@ -326,6 +353,60 @@ function buildTools(topic: Topic, intent: Intent) {
               customerId: { type: 'string' },
               customer: { type: 'string' },
               timeframe: { type: 'string', enum: ['this_week', 'last_week', '3_months', '6_months', '12_months'] },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+
+    const arRaw = pickFunctionName(['queryARAgingDetailTable', 'queryARAgingDetail', 'queryARTable']);
+    if (arRaw) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: arRaw,
+          description: 'Direct query access to ar_aging_detail with flexible column filters.',
+          parameters: {
+            type: 'object',
+            properties: {
+              select: { type: 'string', description: 'Columns to return' },
+              filters: {
+                type: 'object',
+                description: 'Key/value filters; string values use ilike matching',
+                additionalProperties: true,
+              },
+              orderBy: { type: 'string' },
+              ascending: { type: 'boolean' },
+              limit: { type: 'number' },
+              offset: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+
+    const jlRawAR = pickFunctionName(['queryJournalEntryLines', 'queryJournalEntries']);
+    if (jlRawAR) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: jlRawAR,
+          description: 'Direct query access to journal_entry_lines with arbitrary filters.',
+          parameters: {
+            type: 'object',
+            properties: {
+              select: { type: 'string', description: 'Columns to return' },
+              filters: {
+                type: 'object',
+                description: 'Key/value filters; string values use ilike matching',
+                additionalProperties: true,
+              },
+              orderBy: { type: 'string' },
+              ascending: { type: 'boolean' },
+              limit: { type: 'number' },
+              offset: { type: 'number' },
             },
             additionalProperties: false,
           },
@@ -407,6 +488,33 @@ function buildTools(topic: Topic, intent: Intent) {
           },
         });
       }
+    }
+
+    const jlRawFin = pickFunctionName(['queryJournalEntryLines', 'queryJournalEntries']);
+    if (jlRawFin) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: jlRawFin,
+          description: 'Direct query access to journal_entry_lines with flexible column filters.',
+          parameters: {
+            type: 'object',
+            properties: {
+              select: { type: 'string', description: 'Columns to return' },
+              filters: {
+                type: 'object',
+                description: 'Key/value filters; string values use ilike matching',
+                additionalProperties: true,
+              },
+              orderBy: { type: 'string' },
+              ascending: { type: 'boolean' },
+              limit: { type: 'number' },
+              offset: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
     }
   }
 
