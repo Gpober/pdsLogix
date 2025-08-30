@@ -3,11 +3,10 @@
 
 import { availableFunctions } from '../server/functions';
 
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error('Missing OPENAI_API_KEY environment variable');
-}
-
-async function createChatCompletion(body: any) {
+async function createChatCompletion(body: Record<string, unknown>) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('Missing OPENAI_API_KEY environment variable');
+  }
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
