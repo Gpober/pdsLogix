@@ -268,12 +268,19 @@ export const createCFOCompletion = async (message: string, context: any = {}) =>
       messagePreview: message.slice(0, 160),
       toolNames: tools.map((t: any) => t.function.name),
     });
+    const today = new Date().toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'America/New_York',
+    });
 
     const messages: any[] = [
       {
         role: 'system',
-        content:
-`You are the AI CFO for the "I AM CFO" platform.
+        content: `You are the AI CFO for the "I AM CFO" platform.
+
+Current date: ${today}.
 
 ROUTING:
 - Payroll → payments
