@@ -1,16 +1,17 @@
 // src/server/functions.js
-import { supabase } from '../lib/supabaseClient'
+import { supabase } from '../lib/supabaseClient';
 
-/** ---------- Small utils ---------- */
-const HARD_ROW_CAP = 5000;              // safety ceiling for any raw fetch
+/* =========================
+   Small utils
+   ========================= */
+
+const HARD_ROW_CAP = 5000;              // hard ceiling for any data scan
 const DEFAULT_TOP_ACCOUNTS = 10;
 
 const clampLimit = (n, d = 100, max = 1000) =>
   Math.max(1, Math.min(Number.isFinite(+n) ? +n : d, max));
 
-const safeLike = (s) =>
-  (s ?? '').replace(/[%_]/g, ch => '\\' + ch); // escape % and _
-
+const safeLike = (s) => (s ?? '').replace(/[%_]/g, ch => '\\' + ch); // escape % and _
 const toISO = (s) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -22,7 +23,7 @@ function normalizeARArgs(args = {}) {
     startDate,
     endDate,
     dueOnly,
-    status,
+    status,            // 'open' | 'paid' | 'overdue' (mapped using open_balance/due_date)
     minPastDueDays,
     limit,
     offset,
@@ -33,7 +34,7 @@ function normalizeARArgs(args = {}) {
     startDate: toISO(startDate),
     endDate: toISO(endDate),
     dueOnly: typeof dueOnly === 'boolean' ? dueOnly : false,
-    status: typeof status === 'string' ? status.toLowerCase() : null, // open|paid|overdue
+    status: typeof status === 'string' ? status.toLowerCase() : null,
     minPastDueDays: Number.isFinite(+minPastDueDays) ? +minPastDueDays : null,
     limit: clampLimit(limit, 100),
     offset: Number.isFinite(+offset) && +offset >= 0 ? +offset : 0,
@@ -42,15 +43,7 @@ function normalizeARArgs(args = {}) {
 
 /** Normalize Financial args */
 function normalizeFinArgs(args = {}) {
-  const {
-    startDate,
-    endDate,
-    accountLike,
-    entity,
-    groupByMonth,
-    limit,
-    offset,
-  } = args;
+  const { startDate, endDate, accountLike, entity, groupByMonth, limit, offset } = args;
   return {
     startDate: toISO(startDate),
     endDate: toISO(endDate),
@@ -63,15 +56,15 @@ function normalizeFinArgs(args = {}) {
 }
 
 export const availableFunctions = {
-  // =========================
-  // A/R Aging Analysis (bucketed by due date)
-  // =========================
+  /* =========================
+     A/R Aging Analysis (bucketed by due date)
+     ========================= */
   getARAgingAnalysis: async ({ customerId = null, customer = null } = {}) => {
     try {
       const cust = customer ?? customerId;
       let query = supabase
         .from('ar_aging_detail')
-        .select('customer, due_date, open_balance, amount');
+        .select('customer, due_date, open_balance');
 
       if (cust) query = query.ilike('customer', `%${safeLike(cust)}%`);
 
@@ -89,44 +82,38 @@ export const availableFunctions = {
           total_ar: 0,
           customer_count: 0,
           total_invoices: 0,
-          message: 'No open invoices or aging data available',
+          message: 'No invoices or aging data available',
         };
       }
 
-      const currentDate = new Date();
-      const agingAnalysis = arData.reduce((acc, record) => {
-        const custName = record.customer || 'Unknown';
-        const dueDate = record.due_date ? new Date(record.due_date) : null;
-        const daysPastDue = dueDate ? Math.floor((+currentDate - +dueDate) / 86400000) : 0;
-        const openBalance = record.open_balance ?? record.amount ?? 0;
+      const now = new Date();
+      const buckets = arData.reduce((acc, row) => {
+        const custName = row.customer || 'Unknown';
+        const ob = row.open_balance ?? 0;
+        const dpd = row.due_date ? Math.floor((+now - +new Date(row.due_date)) / 86400000) : 0;
 
         if (!acc[custName]) {
           acc[custName] = {
             customer_name: custName,
-            current: 0,
-            days_1_30: 0,
-            days_31_60: 0,
-            days_61_90: 0,
-            days_over_90: 0,
-            total_outstanding: 0,
-            invoice_count: 0,
-            oldest_invoice_days: 0,
+            current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_over_90: 0,
+            total_outstanding: 0, invoice_count: 0, oldest_invoice_days: 0,
           };
         }
 
-        if (daysPastDue <= 0) acc[custName].current += openBalance;
-        else if (daysPastDue <= 30) acc[custName].days_1_30 += openBalance;
-        else if (daysPastDue <= 60) acc[custName].days_31_60 += openBalance;
-        else if (daysPastDue <= 90) acc[custName].days_61_90 += openBalance;
-        else acc[custName].days_over_90 += openBalance;
+        if (dpd <= 0) acc[custName].current += ob;
+        else if (dpd <= 30) acc[custName].days_1_30 += ob;
+        else if (dpd <= 60) acc[custName].days_31_60 += ob;
+        else if (dpd <= 90) acc[custName].days_61_90 += ob;
+        else acc[custName].days_over_90 += ob;
 
-        acc[custName].total_outstanding += openBalance;
+        acc[custName].total_outstanding += ob;
         acc[custName].invoice_count += 1;
-        acc[custName].oldest_invoice_days = Math.max(acc[custName].oldest_invoice_days, daysPastDue);
+        acc[custName].oldest_invoice_days = Math.max(acc[custName].oldest_invoice_days, dpd || 0);
+
         return acc;
       }, {});
 
-      const customers = Object.values(agingAnalysis);
+      const customers = Object.values(buckets);
       const totalAR = customers.reduce((sum, c) => sum + c.total_outstanding, 0);
 
       return {
@@ -143,26 +130,6 @@ export const availableFunctions = {
           days_61_90: customers.reduce((s, c) => s + c.days_61_90, 0),
           days_over_90: customers.reduce((s, c) => s + c.days_over_90, 0),
         },
-        risk_analysis: {
-          high_risk: customers.filter(c => c.days_over_90 > 1000),
-          medium_risk: customers.filter(c => c.days_61_90 > 500),
-          current_good: customers.filter(c => c.current > c.days_1_30),
-          worst_aging: [...customers].sort((a, b) => b.oldest_invoice_days - a.oldest_invoice_days).slice(0, 5),
-        },
-        insights: {
-          largest_outstanding: customers.reduce(
-            (max, c) => (c.total_outstanding > (max.total_outstanding || 0) ? c : max),
-            {}
-          ),
-          collection_priority: customers
-            .filter(c => c.days_over_90 > 0)
-            .sort((a, b) => b.days_over_90 - a.days_over_90)
-            .slice(0, 5),
-          aging_percentage: {
-            current_pct: totalAR > 0 ? (customers.reduce((s, c) => s + c.current, 0) / totalAR) * 100 : 0,
-            past_due_pct: totalAR > 0 ? ((totalAR - customers.reduce((s, c) => s + c.current, 0)) / totalAR) * 100 : 0,
-          },
-        },
       };
     } catch (error) {
       console.error('❌ getARAgingAnalysis error:', error);
@@ -170,9 +137,9 @@ export const availableFunctions = {
     }
   },
 
-  // =========================
-  // A/R Payment History (journal_entry_lines subset)
-  // =========================
+  /* =========================
+     A/R Payment History (journal_entry_lines subset)
+     ========================= */
   getARPaymentHistory: async ({ customerId = null, customer = null, timeframe = '6_months' } = {}) => {
     try {
       const cust = customer ?? customerId;
@@ -180,7 +147,14 @@ export const availableFunctions = {
         .from('journal_entry_lines')
         .select('date, account, account_type, debit, credit, customer, name');
 
-      query = query.or('account.ilike.%Accounts Receivable%,account.ilike.%A/R%,account.ilike.%AR%,account_type.ilike.%Accounts Receivable%');
+      // tolerant AR account matching
+      query = query.or([
+        'account.ilike.%Accounts Receivable%',
+        'account.ilike.%A/R%',
+        'account.ilike.%AR%',
+        'account_type.ilike.%Accounts Receivable%',
+      ].join(','));
+
       if (cust) query = query.ilike('customer', `%${safeLike(cust)}%`);
 
       const dateLimit = new Date();
@@ -191,53 +165,37 @@ export const availableFunctions = {
       query = query
         .gte('date', dateLimit.toISOString().slice(0, 10))
         .order('date', { ascending: true })
-        .limit(5000);
+        .limit(HARD_ROW_CAP);
 
-      const { data: journalData, error } = await query;
+      const { data, error } = await query;
       if (error) throw error;
 
-      if (!journalData || journalData.length === 0) {
-        return {
-          success: true,
-          summary: `No A/R payment data found for ${timeframe}`,
-          timeframe,
-          message: 'No A/R transactions found in the specified period',
-        };
+      if (!data || data.length === 0) {
+        return { success: true, summary: `No A/R transactions for ${timeframe}`, timeframe, customers: [] };
       }
 
-      const paymentAnalysis = journalData.reduce((acc, entry) => {
-        const custName = entry.customer || entry.name || 'Unknown';
-        const month = String(entry.date).substring(0, 7);
-
-        if (!acc[custName]) {
-          acc[custName] = {
-            customer_name: custName,
-            total_invoiced: 0,
-            total_paid: 0,
-            payment_months: {},
-            transaction_count: 0,
-          };
+      // Debit to AR = invoice; Credit to AR = payment
+      const grouped = data.reduce((acc, e) => {
+        const key = e.customer || e.name || 'Unknown';
+        const month = String(e.date).substring(0, 7);
+        if (!acc[key]) acc[key] = { customer_name: key, total_invoiced: 0, total_paid: 0, payment_months: {}, transaction_count: 0 };
+        if ((e.credit || 0) > 0) {
+          acc[key].total_paid += e.credit || 0;
+          acc[key].payment_months[month] = (acc[key].payment_months[month] || 0) + (e.credit || 0);
+        } else if ((e.debit || 0) > 0) {
+          acc[key].total_invoiced += e.debit || 0;
         }
-
-        // Debit increases AR (invoice), Credit decreases AR (payment)
-        if ((entry.credit || 0) > 0) {
-          acc[custName].total_paid += entry.credit || 0;
-          acc[custName].payment_months[month] = (acc[custName].payment_months[month] || 0) + (entry.credit || 0);
-        } else if ((entry.debit || 0) > 0) {
-          acc[custName].total_invoiced += entry.debit || 0;
-        }
-
-        acc[custName].transaction_count += 1;
+        acc[key].transaction_count += 1;
         return acc;
       }, {});
 
-      const customers = Object.values(paymentAnalysis);
+      const customers = Object.values(grouped);
       const overallInvoiced = customers.reduce((sum, c) => sum + c.total_invoiced, 0);
       const overallPaid = customers.reduce((sum, c) => sum + c.total_paid, 0);
 
       return {
         success: true,
-        summary: `A/R payment history analysis for ${timeframe}`,
+        summary: `A/R payment history for ${timeframe}`,
         timeframe,
         customers,
         overall_stats: {
@@ -245,18 +203,6 @@ export const availableFunctions = {
           total_paid: overallPaid,
           collection_rate: overallInvoiced > 0 ? overallPaid / overallInvoiced : 0,
         },
-        best_payers: customers
-          .filter(c => c.total_invoiced > 0)
-          .map(c => ({ ...c, payment_rate: c.total_paid / c.total_invoiced }))
-          .filter(c => c.payment_rate > 0.95)
-          .sort((a, b) => b.total_paid - a.total_paid)
-          .slice(0, 5),
-        slow_payers: customers
-          .filter(c => c.total_invoiced > 0)
-          .map(c => ({ ...c, payment_rate: c.total_paid / c.total_invoiced }))
-          .filter(c => c.payment_rate < 0.8)
-          .sort((a, b) => a.payment_rate - b.payment_rate)
-          .slice(0, 5),
       };
     } catch (error) {
       console.error('❌ getARPaymentHistory error:', error);
@@ -264,9 +210,9 @@ export const availableFunctions = {
     }
   },
 
-  // =========================
-  // Payroll Payments Summary
-  // =========================
+  /* =========================
+     Payroll Payments Summary
+     ========================= */
   getPaymentsSummary: async ({
     startDate = null,
     endDate = null,
@@ -346,9 +292,9 @@ export const availableFunctions = {
     }
   },
 
-  // =========================
-  // Payroll By Month
-  // =========================
+  /* =========================
+     Payroll By Month
+     ========================= */
   getPayrollByMonth: async ({
     startDate = null,
     endDate = null,
@@ -414,9 +360,9 @@ export const availableFunctions = {
     }
   },
 
-  // =========================
-  // Generic table queries
-  // =========================
+  /* =========================
+     Generic table queries
+     ========================= */
   queryPayroll: async ({
     select = '*',
     filters = {},
@@ -436,20 +382,15 @@ export const availableFunctions = {
       }
 
       if (orderBy) query = query.order(orderBy, { ascending });
-
       query = query.range(offset, offset + clampLimit(limit, 500) - 1);
 
       const { data, error, count } = await query;
       if (error) throw error;
 
-      return {
-        success: true,
-        records: data || [],
-        pagination: { count: count ?? data?.length ?? 0, limit, offset },
-      };
+      return { success: true, records: data || [], pagination: { count: count ?? data?.length ?? 0, limit, offset } };
     } catch (error) {
       console.error('❌ queryPayroll error:', error);
-      return { success: false, error: 'Failed to query payroll', details: error.message };
+      return { success: false, error: 'Failed to query payments', details: error.message };
     }
   },
 
@@ -472,17 +413,12 @@ export const availableFunctions = {
       }
 
       if (orderBy) query = query.order(orderBy, { ascending });
-
       query = query.range(offset, offset + clampLimit(limit, 500) - 1);
 
       const { data, error, count } = await query;
       if (error) throw error;
 
-      return {
-        success: true,
-        records: data || [],
-        pagination: { count: count ?? data?.length ?? 0, limit, offset },
-      };
+      return { success: true, records: data || [], pagination: { count: count ?? data?.length ?? 0, limit, offset } };
     } catch (error) {
       console.error('❌ queryARAgingDetailTable error:', error);
       return { success: false, error: 'Failed to query ar_aging_detail', details: error.message };
@@ -508,47 +444,59 @@ export const availableFunctions = {
       }
 
       if (orderBy) query = query.order(orderBy, { ascending });
-
       query = query.range(offset, offset + clampLimit(limit, 500) - 1);
 
       const { data, error, count } = await query;
       if (error) throw error;
 
-      return {
-        success: true,
-        records: data || [],
-        pagination: { count: count ?? data?.length ?? 0, limit, offset },
-      };
+      return { success: true, records: data || [], pagination: { count: count ?? data?.length ?? 0, limit, offset } };
     } catch (error) {
       console.error('❌ queryJournalEntryLines error:', error);
       return { success: false, error: 'Failed to query journal_entry_lines', details: error.message };
     }
   },
 
-  // =========================
-  // A/R Aging Detail (Invoices) — full filters used by AI
-  // =========================
+  /* =========================
+     A/R Aging Detail (Invoices) — full filters used by AI
+     (matches your columns; no 'status' or 'invoice_number' fields)
+     ========================= */
   getARAgingDetail: async (raw = {}) => {
     try {
       const { customer, startDate, endDate, dueOnly, status, minPastDueDays, limit, offset } = normalizeARArgs(raw);
 
       let query = supabase
         .from('ar_aging_detail')
-        .select('customer, invoice_number, invoice_date, due_date, status, amount, open_balance', { count: 'exact' });
+        .select('customer, number, date, due_date, amount, open_balance, location', { count: 'exact' });
 
       if (customer) query = query.ilike('customer', `%${safeLike(customer)}%`);
 
-      if (startDate) query = query.gte('due_date', startDate);
-      if (endDate) query = query.lte('due_date', endDate);
+      // date window: use due_date if present else fallback to date
+      if (startDate) {
+        const s = toISO(startDate) || startDate;
+        query = query.or(`due_date.gte.${s},and(due_date.is.null,date.gte.${s})`);
+      }
+      if (endDate) {
+        const e = toISO(endDate) || endDate;
+        query = query.or(`due_date.lte.${e},and(due_date.is.null,date.lte.${e})`);
+      }
 
-      if (status === 'open') query = query.eq('status', 'open');
-      else if (status === 'paid') query = query.eq('status', 'paid');
-      else if (status === 'overdue') query = query.eq('status', 'open').lt('due_date', todayISO());
+      // Map 'status' param onto your schema:
+      //   open     => open_balance > 0
+      //   paid     => open_balance = 0
+      //   overdue  => open_balance > 0 AND due_date < today
+      if (status === 'open') {
+        query = query.gt('open_balance', 0);
+      } else if (status === 'paid') {
+        query = query.eq('open_balance', 0);
+      } else if (status === 'overdue') {
+        query = query.gt('open_balance', 0).lt('due_date', todayISO());
+      }
 
-      if (dueOnly) query = query.eq('status', 'open');
+      if (dueOnly) query = query.gt('open_balance', 0);
 
       query = query
-        .order('due_date', { ascending: true })
+        .order('due_date', { ascending: true, nullsFirst: false })
+        .order('date', { ascending: true })
         .order('customer', { ascending: true })
         .range(offset, offset + limit - 1);
 
@@ -556,16 +504,18 @@ export const availableFunctions = {
       if (error) throw error;
 
       let records = data || [];
+
+      // Optional local filter for minPastDueDays
       if (Number.isFinite(minPastDueDays) && minPastDueDays > 0) {
         const now = new Date();
         records = records.filter(r => {
-          if (!r.due_date || r.status !== 'open') return false;
+          if (!r.due_date) return false;
           const dpd = Math.floor((+now - +new Date(r.due_date)) / 86400000);
-          return dpd >= minPastDueDays;
+          return (r.open_balance || 0) > 0 && dpd >= minPastDueDays;
         });
       }
 
-      const totalOutstanding = records.reduce((sum, r) => sum + (r.open_balance ?? r.amount ?? 0), 0);
+      const totalOutstanding = records.reduce((sum, r) => sum + (r.open_balance ?? 0), 0);
 
       return {
         success: true,
@@ -585,9 +535,9 @@ export const availableFunctions = {
   getAROpenInvoices: async (args = {}) => availableFunctions.getARAgingDetail({ ...args, status: args.status ?? 'open' }),
   getARInvoices: async (args = {}) => availableFunctions.getARAgingDetail(args),
 
-  // =========================
-  // Financial Summary (count-gated & aggregate-first)
-  // =========================
+  /* =========================
+     Financial Summary (count-gated & aggregate-first)
+     ========================= */
   getFinancialSummary: async (raw = {}) => {
     try {
       const {
@@ -596,20 +546,20 @@ export const availableFunctions = {
         accountLike = null,
         entity = null,
         groupByMonth = true,
-        metricsOnly = true,     // default to aggregates only
-        limit = 0,              // no detail rows by default
+        metricsOnly = true,   // default to aggregates only
+        limit = 0,            // no detail rows by default
         offset = 0,
       } = raw;
 
-      // 1) Count gate (HEAD)
+      // 1) Count gate (HEAD) — use '*' to be robust
       let countQuery = supabase
         .from('journal_entry_lines')
-        .select('id', { count: 'exact', head: true });
+        .select('*', { count: 'exact', head: true });
 
-      if (startDate) countQuery = countQuery.gte('date', startDate);
-      if (endDate)   countQuery = countQuery.lte('date', endDate);
+      if (startDate)  countQuery = countQuery.gte('date', startDate);
+      if (endDate)    countQuery = countQuery.lte('date', endDate);
       if (accountLike) countQuery = countQuery.ilike('account', `%${safeLike(accountLike)}%`);
-      if (entity) countQuery = countQuery.or(`customer.ilike.%${safeLike(entity)}%,entity.ilike.%${safeLike(entity)}%`);
+      if (entity)     countQuery = countQuery.or(`customer.ilike.%${safeLike(entity)}%,entity.ilike.%${safeLike(entity)}%`);
 
       const { count, error: countErr } = await countQuery;
       if (countErr) throw countErr;
@@ -619,12 +569,12 @@ export const availableFunctions = {
       // 2) Aggregate path (only necessary columns)
       let aggQuery = supabase
         .from('journal_entry_lines')
-        .select('date, account, debit, credit, customer, entity');
+        .select('date, account, account_type, debit, credit, customer, entity');
 
-      if (startDate) aggQuery = aggQuery.gte('date', startDate);
-      if (endDate)   aggQuery = aggQuery.lte('date', endDate);
+      if (startDate)  aggQuery = aggQuery.gte('date', startDate);
+      if (endDate)    aggQuery = aggQuery.lte('date', endDate);
       if (accountLike) aggQuery = aggQuery.ilike('account', `%${safeLike(accountLike)}%`);
-      if (entity) aggQuery = aggQuery.or(`customer.ilike.%${safeLike(entity)}%,entity.ilike.%${safeLike(entity)}%`);
+      if (entity)     aggQuery = aggQuery.or(`customer.ilike.%${safeLike(entity)}%,entity.ilike.%${safeLike(entity)}%`);
 
       const { data, error } = await aggQuery.limit(HARD_ROW_CAP);
       if (error) throw error;
@@ -658,11 +608,11 @@ export const availableFunctions = {
 
       const monthly = groupByMonth
         ? data.reduce((acc, e) => {
-            const month = String(e.date).substring(0, 7);
-            if (!acc[month]) acc[month] = { debit: 0, credit: 0, net: 0 };
-            acc[month].debit  += e.debit  || 0;
-            acc[month].credit += e.credit || 0;
-            acc[month].net     = acc[month].credit - acc[month].debit;
+            const m = String(e.date).substring(0, 7);
+            if (!acc[m]) acc[m] = { debit: 0, credit: 0, net: 0 };
+            acc[m].debit  += e.debit  || 0;
+            acc[m].credit += e.credit || 0;
+            acc[m].net     = acc[m].credit - acc[m].debit;
             return acc;
           }, {})
         : undefined;
@@ -693,27 +643,24 @@ export const availableFunctions = {
         .order('date', { ascending: true })
         .range(offset, offset + clampLimit(limit, 50, 200) - 1);
 
-      if (startDate) detailQuery = detailQuery.gte('date', startDate);
-      if (endDate)   detailQuery = detailQuery.lte('date', endDate);
+      if (startDate)  detailQuery = detailQuery.gte('date', startDate);
+      if (endDate)    detailQuery = detailQuery.lte('date', endDate);
       if (accountLike) detailQuery = detailQuery.ilike('account', `%${safeLike(accountLike)}%`);
-      if (entity) detailQuery = detailQuery.or(`customer.ilike.%${safeLike(entity)}%,entity.ilike.%${safeLike(entity)}%`);
+      if (entity)     detailQuery = detailQuery.or(`customer.ilike.%${safeLike(entity)}%,entity.ilike.%${safeLike(entity)}%`);
 
-      const { data: details, error: detailErr } = await detailQuery;
-      if (detailErr) throw detailErr;
+      const { data: details, error: dErr } = await detailQuery;
+      if (dErr) throw dErr;
 
-      return {
-        ...base,
-        sample_details: details,
-      };
+      return { ...base, sample_details: details };
     } catch (error) {
       console.error('❌ getFinancialSummary error:', error);
       return { success: false, error: 'Failed to summarize financial data', details: error.message };
     }
   },
 
-  // =========================
-  // Customer Net Income (lightly hardened)
-  // =========================
+  /* =========================
+     Customer Net Income
+     ========================= */
   getCustomerNetIncome: async ({ customerId = null, customer = null, timeframe = 'current_month' } = {}) => {
     try {
       const cust = customer ?? customerId;
@@ -730,22 +677,20 @@ export const availableFunctions = {
         lte = end.toISOString().split('T')[0];
       }
 
-      let query = supabase.from('journal_entry_lines').select('*');
+      let query = supabase
+        .from('journal_entry_lines')
+        .select('date, account, account_type, debit, credit, customer, name, property');
+
       if (cust) query = query.ilike('customer', `%${safeLike(cust)}%`);
-      if (gte) query = query.gte('date', gte);
-      if (lte) query = query.lte('date', lte);
+      if (gte)  query = query.gte('date', gte);
+      if (lte)  query = query.lte('date', lte);
       query = query.order('date', { ascending: true });
 
       const { data, error } = await query;
       if (error) throw error;
 
       if (!data || data.length === 0) {
-        return {
-          success: true,
-          summary: `No financial data found for ${timeframe}`,
-          timeframe,
-          message: 'No transactions found in the specified period',
-        };
+        return { success: true, summary: `No financial data found for ${timeframe}`, timeframe, customers: [] };
       }
 
       const grouped = data.reduce((acc, entry) => {
@@ -762,31 +707,29 @@ export const availableFunctions = {
           };
         }
 
-        if (
+        const isIncomeAcct =
           (entry.account && (entry.account.includes('Income') || entry.account.includes('Revenue') || entry.account.includes('Sales'))) ||
-          (entry.account_type && entry.account_type.includes('Income'))
-        ) {
-          acc[key].revenue += entry.credit || 0;
-        }
-        if (
+          (entry.account_type && entry.account_type.includes('Income'));
+        const isExpenseAcct =
           (entry.account && (entry.account.includes('Expense') || entry.account.includes('Cost') || entry.account.includes('COGS'))) ||
-          (entry.account_type && entry.account_type.includes('Expense'))
-        ) {
-          acc[key].expenses += entry.debit || 0;
-        }
+          (entry.account_type && entry.account_type.includes('Expense'));
+
+        if (isIncomeAcct)  acc[key].revenue  += entry.credit || 0;
+        if (isExpenseAcct) acc[key].expenses += entry.debit  || 0;
+
         acc[key].transaction_count += 1;
         return acc;
       }, {});
 
       Object.values(grouped).forEach(c => { c.net_income = c.revenue - c.expenses; });
-      const customers = Object.values(grouped);
+      const customers = Object.values(grouped).sort((a, b) => b.net_income - a.net_income);
 
       return {
         success: true,
         summary: `Customer net income analysis for ${timeframe}`,
         timeframe,
         total_customers: customers.length,
-        customers: customers.sort((a, b) => b.net_income - a.net_income),
+        customers,
         company_totals: {
           total_revenue: customers.reduce((s, c) => s + c.revenue, 0),
           total_expenses: customers.reduce((s, c) => s + c.expenses, 0),
@@ -801,23 +744,23 @@ export const availableFunctions = {
     }
   },
 
-  // =========================
-  // Account Trends (+ alias)
-  // =========================
+  /* =========================
+     Account Trends (+ alias)
+     ========================= */
   getAccountTrends: async (raw = {}) => {
     try {
-      const { startDate, endDate, accountLike, entity, limit, offset } = normalizeFinArgs(raw);
+      const { startDate, endDate, accountLike, entity, limit = 500, offset = 0 } = normalizeFinArgs(raw);
 
       let query = supabase
         .from('journal_entry_lines')
         .select('date, account, debit, credit, customer, entity', { count: 'exact' });
 
-      if (startDate) query = query.gte('date', startDate);
-      if (endDate)   query = query.lte('date', endDate);
+      if (startDate)  query = query.gte('date', startDate);
+      if (endDate)    query = query.lte('date', endDate);
       if (accountLike) query = query.ilike('account', `%${accountLike}%`);
-      if (entity) query = query.or(`customer.ilike.%${entity}%,entity.ilike.%${entity}%`);
+      if (entity)     query = query.or(`customer.ilike.%${entity}%,entity.ilike.%${entity}%`);
 
-      query = query.order('date', { ascending: true }).range(offset, offset + limit - 1);
+      query = query.order('date', { ascending: true }).range(offset, offset + clampLimit(limit, 500) - 1);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -832,10 +775,7 @@ export const availableFunctions = {
         acc[month] += (e.credit || 0) - (e.debit || 0);
         return acc;
       }, {});
-
-      const trends = Object.keys(trendMap)
-        .sort()
-        .map(month => ({ month, net: trendMap[month] }));
+      const trends = Object.keys(trendMap).sort().map(month => ({ month, net: trendMap[month] }));
 
       return { success: true, summary: 'Monthly net trend', trends };
     } catch (error) {
@@ -846,10 +786,10 @@ export const availableFunctions = {
 
   getGLTrends: async (args = {}) => availableFunctions.getAccountTrends(args),
 
-  // =========================
-  // Year-over-Year Comparison (kept, small harden)
-  // =========================
-  getYearOverYearComparison: async ({ customerId = null, customer = null, metric = 'all' } = {}) => {
+  /* =========================
+     Year-over-Year Comparison
+     ========================= */
+  getYearOverYearComparison: async ({ customerId = null, customer = null } = {}) => {
     try {
       const cust = customer ?? customerId;
       const currentYear = new Date().getFullYear();
@@ -862,80 +802,69 @@ export const availableFunctions = {
 
       let currentQuery = supabase
         .from('journal_entry_lines')
-        .select('*')
+        .select('date, account, account_type, debit, credit, customer, property')
         .gte('date', currentYearStart)
         .lte('date', currentYearEnd);
       if (cust) currentQuery = currentQuery.ilike('customer', `%${safeLike(cust)}%`);
 
       let lastYearQuery = supabase
         .from('journal_entry_lines')
-        .select('*')
+        .select('date, account, account_type, debit, credit, customer, property')
         .gte('date', lastYearStart)
         .lte('date', lastYearEnd);
       if (cust) lastYearQuery = lastYearQuery.ilike('customer', `%${safeLike(cust)}%`);
 
-      const [currentData, lastYearData] = await Promise.all([currentQuery, lastYearQuery]);
-      if (currentData.error || lastYearData.error) {
-        throw new Error(currentData.error?.message || lastYearData.error?.message);
-      }
+      const [curRes, prevRes] = await Promise.all([currentQuery, lastYearQuery]);
+      if (curRes.error || prevRes.error) throw new Error(curRes.error?.message || prevRes.error?.message);
 
-      const processFinancials = (rows, year) => {
-        const summary = {
+      const process = (rows, year) => {
+        const out = {
           year,
-          revenue: 0,
-          expenses: 0,
-          net_income: 0,
+          revenue: 0, expenses: 0, net_income: 0,
           transaction_count: rows.length,
-          customers: new Set(),
-          properties: new Set(),
+          customers: new Set(), properties: new Set(),
           monthly_breakdown: {},
         };
+        rows.forEach(e => {
+          const m = String(e.date).substring(0, 7);
+          if (!out.monthly_breakdown[m]) out.monthly_breakdown[m] = { revenue: 0, expenses: 0, net_income: 0 };
+          if (e.customer) out.customers.add(e.customer);
+          if (e.property) out.properties.add(e.property);
 
-        rows.forEach(entry => {
-          const month = String(entry.date).substring(0, 7);
-          if (!summary.monthly_breakdown[month]) {
-            summary.monthly_breakdown[month] = { revenue: 0, expenses: 0, net_income: 0 };
-          }
-          if (entry.customer) summary.customers.add(entry.customer);
-          if (entry.property) summary.properties.add(entry.property);
+          const isIncome =
+            (e.account && (e.account.includes('Income') || e.account.includes('Revenue') || e.account.includes('Sales'))) ||
+            (e.account_type && e.account_type.includes('Income'));
+          const isExpense =
+            (e.account && (e.account.includes('Expense') || e.account.includes('Cost') || e.account.includes('COGS'))) ||
+            (e.account_type && e.account_type.includes('Expense'));
 
-          if (
-            (entry.account && (entry.account.includes('Income') || entry.account.includes('Revenue') || entry.account.includes('Sales'))) ||
-            (entry.account_type && entry.account_type.includes('Income'))
-          ) {
-            summary.revenue += entry.credit || 0;
-            summary.monthly_breakdown[month].revenue += entry.credit || 0;
+          if (isIncome) {
+            out.revenue += e.credit || 0;
+            out.monthly_breakdown[m].revenue += e.credit || 0;
           }
-          if (
-            (entry.account && (entry.account.includes('Expense') || entry.account.includes('Cost') || entry.account.includes('COGS'))) ||
-            (entry.account_type && entry.account_type.includes('Expense'))
-          ) {
-            summary.expenses += entry.debit || 0;
-            summary.monthly_breakdown[month].expenses += entry.debit || 0;
+          if (isExpense) {
+            out.expenses += e.debit || 0;
+            out.monthly_breakdown[m].expenses += e.debit || 0;
           }
         });
+        out.net_income = out.revenue - out.expenses;
+        out.customer_count = out.customers.size;
+        out.property_count = out.properties.size;
 
-        summary.net_income = summary.revenue - summary.expenses;
-        summary.customer_count = summary.customers.size;
-        summary.property_count = summary.properties.size;
-
-        Object.keys(summary.monthly_breakdown).forEach(m => {
-          summary.monthly_breakdown[m].net_income =
-            summary.monthly_breakdown[m].revenue - summary.monthly_breakdown[m].expenses;
+        Object.keys(out.monthly_breakdown).forEach(m => {
+          out.monthly_breakdown[m].net_income =
+            out.monthly_breakdown[m].revenue - out.monthly_breakdown[m].expenses;
         });
-        return summary;
+        return out;
       };
 
-      const cur = processFinancials(currentData.data || [], currentYear);
-      const prev = processFinancials(lastYearData.data || [], lastYear);
+      const cur = process(curRes.data || [], currentYear);
+      const prev = process(prevRes.data || [], lastYear);
 
-      const calc = (a, b) => {
+      const cmp = (a, b) => {
         const change = a - b;
         const pct = b !== 0 ? (change / b) * 100 : a > 0 ? 100 : 0;
-        return {
-          current: a, previous: b, change, percent_change: pct,
-          trend: change > 0 ? 'up' : change < 0 ? 'down' : 'flat'
-        };
+        return { current: a, previous: b, change, percent_change: pct, trend: change > 0 ? 'up' : change < 0 ? 'down' : 'flat' };
       };
 
       return {
@@ -948,37 +877,24 @@ export const availableFunctions = {
           comparison_period: `${lastYearStart} to ${lastYearEnd}`,
         },
         financial_comparison: {
-          revenue:  calc(cur.revenue,  prev.revenue),
-          expenses: calc(cur.expenses, prev.expenses),
-          net_income: calc(cur.net_income, prev.net_income),
+          revenue: cmp(cur.revenue, prev.revenue),
+          expenses: cmp(cur.expenses, prev.expenses),
+          net_income: cmp(cur.net_income, prev.net_income),
           profit_margin: {
             current:  cur.revenue  > 0 ? (cur.net_income  / cur.revenue ) * 100 : 0,
             previous: prev.revenue > 0 ? (prev.net_income / prev.revenue) * 100 : 0,
           },
         },
         business_metrics: {
-          customers:    calc(cur.customer_count,  prev.customer_count),
-          properties:   calc(cur.property_count,  prev.property_count),
-          transactions: calc(cur.transaction_count, prev.transaction_count),
+          customers:    cmp(cur.customer_count,  prev.customer_count),
+          properties:   cmp(cur.property_count,  prev.property_count),
+          transactions: cmp(cur.transaction_count, prev.transaction_count),
           avg_revenue_per_customer: {
             current:  cur.customer_count  > 0 ? cur.revenue / cur.customer_count   : 0,
             previous: prev.customer_count > 0 ? prev.revenue / prev.customer_count : 0,
           },
         },
-        insights: {
-          strongest_growth: cur.revenue > prev.revenue ? 'revenue' : 'cost_control',
-          biggest_concern:  cur.expenses > prev.expenses * 1.1 ? 'expense_growth' : null,
-          overall_performance: cur.net_income > prev.net_income ? 'improved' : 'declined',
-          key_metrics: {
-            revenue_growth: (((cur.revenue - prev.revenue) / (prev.revenue || 1)) * 100).toFixed(1),
-            expense_growth: (((cur.expenses - prev.expenses) / (prev.expenses || 1)) * 100).toFixed(1),
-            profit_growth:  (((cur.net_income - prev.net_income) / (Math.abs(prev.net_income) || 1)) * 100).toFixed(1),
-          },
-        },
-        monthly_trends: {
-          current_year: cur.monthly_breakdown,
-          last_year:    prev.monthly_breakdown,
-        },
+        monthly_trends: { current_year: cur.monthly_breakdown, last_year: prev.monthly_breakdown },
       };
     } catch (error) {
       console.error('❌ getYearOverYearComparison error:', error);
