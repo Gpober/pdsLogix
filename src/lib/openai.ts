@@ -253,6 +253,29 @@ function buildTools(topic: Topic, intent: Intent) {
         },
       });
     }
+
+    const monthly = pickFunctionName(['getPayrollByMonth', 'getMonthlyPayroll', 'payrollByMonth']);
+    if (monthly) {
+      tools.push({
+        type: 'function',
+        function: {
+          name: monthly,
+          description: 'Monthly payroll totals from payments.',
+          parameters: {
+            type: 'object',
+            properties: {
+              startDate: { type: 'string' },
+              endDate: { type: 'string' },
+              employee: { type: 'string' },
+              department: { type: 'string' },
+              minAmount: { type: 'number' },
+              maxAmount: { type: 'number' },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
   }
 
   // A/R
@@ -356,7 +379,6 @@ function buildTools(topic: Topic, intent: Intent) {
               entity: { type: 'string', description: 'Customer/Entity filter' },
               groupByMonth: { type: 'boolean' },
               metricsOnly: { type: 'boolean' },
-              detailLimit: { type: 'number' },
               limit: { type: 'number' },
               offset: { type: 'number' },
             },
@@ -471,7 +493,7 @@ GROSS PROFIT LOGIC
       } else if (/ar/i.test(fnName)) {
         ['customer','customerId','startDate','endDate','dueOnly','status','minPastDueDays','limit','offset','timeframe'].forEach(k => allow.add(k));
       } else { // financial
-        ['customer','startDate','endDate','includeCOGS','includeOverhead','groupByMonth','accountLike','entity','metricsOnly','detailLimit','limit','offset'].forEach(k => allow.add(k));
+        ['customer','startDate','endDate','includeCOGS','includeOverhead','groupByMonth','accountLike','entity','metricsOnly','limit','offset'].forEach(k => allow.add(k));
       }
       const out: any = {};
       if (rawArgs && typeof rawArgs === 'object') {
@@ -506,7 +528,8 @@ GROSS PROFIT LOGIC
         rawArgs.endDate = rawArgs.endDate || end;
         if (typeof rawArgs.groupByMonth === 'undefined') rawArgs.groupByMonth = true;
         if (typeof rawArgs.metricsOnly === 'undefined') rawArgs.metricsOnly = true;
-        if (typeof rawArgs.detailLimit === 'undefined') rawArgs.detailLimit = 0;
+        if (typeof rawArgs.limit === 'undefined') rawArgs.limit = 0;
+        if (typeof rawArgs.offset === 'undefined') rawArgs.offset = 0;
 
         // If intent is gross_profit, give the model a nudge: it can set accountLike itself, but
         // providing a sane default often helps (it will still override if it wants).
