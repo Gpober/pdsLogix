@@ -34,18 +34,6 @@ export const createCFOCompletion = async (message, context) => {
   try {
     console.log('🚀 Starting createCFOCompletion with:', { message, queryType: context.queryType })
     
-    // Determine if we need function calling based on query type
-    const needsFunctionCalling = [
-      'ar_analysis',
-      'customer_analysis', 
-      'financial_analysis',
-      'performance_analysis',
-      'trend_analysis',  // Added for year-over-year comparisons
-      'workforce_analysis'
-    ].includes(context.queryType)
-
-    console.log('🔧 Function calling needed:', needsFunctionCalling)
-
     let messages = [
       {
         role: "system",
@@ -72,44 +60,6 @@ export const createCFOCompletion = async (message, context) => {
         role: "user",
         content: message
       }
-        ,
-        {
-          type: "function",
-          function: {
-            name: "getPaymentsSummary",
-            description: "Get payroll payments with optional filters for date range, employee, department, and amount",
-            parameters: {
-              type: "object",
-              properties: {
-                startDate: {
-                  type: "string",
-                  description: "Start date in YYYY-MM-DD format"
-                },
-                endDate: {
-                  type: "string",
-                  description: "End date in YYYY-MM-DD format"
-                },
-                employee: {
-                  type: "string",
-                  description: "Employee name to filter"
-                },
-                department: {
-                  type: "string",
-                  description: "Department name to filter"
-                },
-                minAmount: {
-                  type: "number",
-                  description: "Minimum payment amount"
-                },
-                maxAmount: {
-                  type: "number",
-                  description: "Maximum payment amount"
-                }
-              },
-              required: []
-            }
-          }
-        }
         ]
 
     let completionOptions = {
@@ -118,115 +68,69 @@ export const createCFOCompletion = async (message, context) => {
       temperature: 0.3,
       max_tokens: 500
     }
+    // Select appropriate database tools based on query type
+    const getPaymentsSummaryTool = {
+      type: 'function',
+      function: {
+        name: 'getPaymentsSummary',
+        description: 'Get payroll payments with optional filters for date range, employee, department, and amount',
+        parameters: {
+          type: 'object',
+          properties: {
+            startDate: { type: 'string', description: 'Start date in YYYY-MM-DD format' },
+            endDate: { type: 'string', description: 'End date in YYYY-MM-DD format' },
+            employee: { type: 'string', description: 'Employee name to filter' },
+            department: { type: 'string', description: 'Department name to filter' },
+            minAmount: { type: 'number', description: 'Minimum payment amount' },
+            maxAmount: { type: 'number', description: 'Maximum payment amount' }
+          },
+          required: []
+        }
+      }
+    }
 
-    // Add function calling if needed - CORRECTED for single user per DB
-    if (needsFunctionCalling) {
-      completionOptions.tools = [
-        {
-          type: "function",
-          function: {
-            name: "getARAgingAnalysis",
-            description: "Get accounts receivable aging analysis showing current, 30, 60, 90+ day buckets by customer",
-            parameters: {
-              type: "object",
-              properties: {
-                customerId: {
-                  type: "string",
-                  description: "Optional specific customer ID to analyze"
-                }
-              },
-              required: []
-            }
-          }
-        },
-        {
-          type: "function",
-          function: {
-            name: "getARPaymentHistory",
-            description: "Get accounts receivable payment history and collection patterns by customer",
-            parameters: {
-              type: "object",
-              properties: {
-                customerId: {
-                  type: "string",
-                  description: "Optional specific customer ID to analyze"
-                },
-                timeframe: {
-                  type: "string",
-                  enum: ["3_months", "6_months", "12_months"],
-                  description: "Time period for payment history analysis"
-                }
-              },
-              required: []
-            }
-          }
-        },
-        {
-          type: "function",
-          function: {
-            name: "getCustomerNetIncome",
-            description: "Get customer profitability analysis showing revenue, expenses, and net income by customer",
-            parameters: {
-              type: "object",
-              properties: {
-                customerId: {
-                  type: "string",
-                  description: "Optional specific customer ID to analyze"
-                },
-                timeframe: {
-                  type: "string",
-                  enum: ["current_month", "last_month", "current_quarter", "last_quarter"],
-                  description: "Time period for financial analysis"
-                }
-              },
-              required: []
-            }
-          }
-        },
-        {
-          type: "function",
-          function: {
-            name: "getYearOverYearComparison",
-            description: "Compare current year performance vs last year including revenue, expenses, customer growth, and trends",
-            parameters: {
-              type: "object",
-              properties: {
-                customerId: {
-                  type: "string",
-                  description: "Optional specific customer ID to compare"
-                },
-                metric: {
-                  type: "string",
-                  enum: ["all", "revenue", "expenses", "customers", "profit"],
-                  description: "Specific metric to focus comparison on"
-                }
-              },
-              required: []
-            }
-          }
+    const getARAgingDetailTool = {
+      type: 'function',
+      function: {
+        name: 'getARAgingDetail',
+        description: 'Fetch detailed invoice records from the ar_aging_detail table',
+        parameters: {
+          type: 'object',
+          properties: {
+            customerId: { type: 'string', description: 'Optional customer ID to filter' }
+          },
+          required: []
         }
-        ,{
-          type: "function",
-          function: {
-            name: "getPaymentsSummary",
-            description: "Get payroll payments with optional filters for date range, employee, department, and amount",
-            parameters: {
-              type: "object",
-              properties: {
-                startDate: { type: "string", description: "Start date in YYYY-MM-DD format" },
-                endDate: { type: "string", description: "End date in YYYY-MM-DD format" },
-                employee: { type: "string", description: "Employee name to filter" },
-                department: { type: "string", description: "Department name to filter" },
-                minAmount: { type: "number", description: "Minimum payment amount" },
-                maxAmount: { type: "number", description: "Maximum payment amount" }
-              },
-              required: []
-            }
-          }
+      }
+    }
+
+    const getFinancialDataTool = {
+      type: 'function',
+      function: {
+        name: 'getFinancialData',
+        description: 'Retrieve general financial journal entries from the journal_entry_lines table',
+        parameters: {
+          type: 'object',
+          properties: {
+            startDate: { type: 'string', description: 'Start date in YYYY-MM-DD format' },
+            endDate: { type: 'string', description: 'End date in YYYY-MM-DD format' },
+            limit: { type: 'number', description: 'Maximum number of records to return' }
+          },
+          required: []
         }
-      ]
-      
-      completionOptions.tool_choice = "auto"
+      }
+    }
+
+    const toolMap = {
+      payroll: [getPaymentsSummaryTool],
+      ar_analysis: [getARAgingDetailTool],
+      financial_analysis: [getFinancialDataTool],
+      customer_analysis: [getFinancialDataTool]
+    }
+
+    if (toolMap[context.queryType]) {
+      completionOptions.tools = toolMap[context.queryType]
+      completionOptions.tool_choice = 'auto'
     }
 
     console.log('🤖 About to call OpenAI API with options:', {

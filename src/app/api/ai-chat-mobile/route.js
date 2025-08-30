@@ -7,7 +7,7 @@ export async function POST(request) {
     let body = {}
     try {
       body = await request.json()
-    } catch (_) {
+    } catch {
       body = {}
     }
 
@@ -63,11 +63,11 @@ function detectQueryType(message) {
     s.includes('a/r') || s.includes('ar') ||
     s.includes('receivable') || s.includes('aging') ||
     s.includes('outstanding') || s.includes('collection') ||
-    s.includes('payment') || s.includes('invoice') ||
+    s.includes('invoice') ||
     s.includes('overdue') || s.includes('slow pay') || s.includes('unpaid')
   ) return 'ar_analysis'
 
-  // Workforce/Labor
+  // Payroll / Workforce
   if (
     s.includes('labor') || s.includes('payroll') || s.includes('staff') ||
     s.includes('employee') || s.includes('wages') || s.includes('salary') ||
@@ -76,19 +76,23 @@ function detectQueryType(message) {
     s.includes('vendor') || s.includes('1099') ||
     s.includes('payroll by customer') || s.includes('labor by client') ||
     s.includes('staff costs by customer') || s.includes('employee costs by project')
-  ) return 'workforce_analysis'
+  ) return 'payroll'
 
   // Customer/Client
   if (s.includes('customer') || s.includes('customers') || s.includes('client') || s.includes('clients'))
     return 'customer_analysis'
 
-  // Revenue/Financial (incl. net income)
+  // Revenue/Financial (incl. expenses, COGS, net income)
   if (
     s.includes('revenue') || s.includes('income') || s.includes('profit') ||
     s.includes('money') || s.includes('earnings') || s.includes('net income') ||
     s.includes('profitability') || s.includes('margin') || s.includes('gross profit') ||
     s.includes('company total') || s.includes('total profit') ||
-    s.includes('overall profit') || s.includes('bottom line')
+    s.includes('overall profit') || s.includes('bottom line') ||
+    s.includes('financial data') || s.includes('all financial') ||
+    s.includes('journal entry') || s.includes('journal entries') ||
+    s.includes('expense') || s.includes('expenses') || s.includes('cost') ||
+    s.includes('spending') || s.includes('cogs') || s.includes('cost of goods sold')
   ) return 'financial_analysis'
 
   // Performance
@@ -106,10 +110,6 @@ function detectQueryType(message) {
   // Efficiency
   if (s.includes('efficiency') || s.includes('productivity') || s.includes('utilization') || s.includes('billable'))
     return 'efficiency_analysis'
-
-  // Expense
-  if (s.includes('expense') || s.includes('cost') || s.includes('spending'))
-    return 'expense_analysis'
 
   // Trend / Forecast / YoY
   if (
