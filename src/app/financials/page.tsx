@@ -493,7 +493,7 @@ export default function FinancialsPage() {
 
       // ENHANCED QUERY: Use the new database structure with better field selection
       let query = supabase
-        .from("journal_entry_lines")
+        .from("journal_entry_queries")
         .select(
           `
          entry_number, 
@@ -1397,7 +1397,7 @@ export default function FinancialsPage() {
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return;
     const { data, error } = await supabase
-      .from("journal_entry_lines")
+      .from("journal_entry_queries")
       .select("date, account, memo, class, debit, credit")
       .eq("entry_number", entryNumber)
       .order("line_sequence");

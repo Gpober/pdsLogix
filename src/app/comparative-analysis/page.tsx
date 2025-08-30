@@ -116,7 +116,7 @@ export default function EnhancedComparativeAnalysis() {
   }, [mode, startA, endA, startB, endB, customerA, customerB]);
 
   const fetchCustomers = async () => {
-    const { data } = await supabase.from("journal_entry_lines").select("customer");
+    const { data } = await supabase.from("journal_entry_queries").select("customer");
     if (data) {
       const unique = Array.from(
         new Set(
@@ -132,7 +132,7 @@ export default function EnhancedComparativeAnalysis() {
 
   const fetchLines = async (start: string, end: string, customer?: string) => {
     let query = supabase
-      .from("journal_entry_lines")
+      .from("journal_entry_queries")
       .select("account, account_type, debit, credit, class, date, customer")
       .gte("date", start)
       .lte("date", end);

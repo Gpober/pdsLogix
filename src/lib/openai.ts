@@ -59,7 +59,7 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   if (payrollTerms) return { topic: 'payroll', intent: 'generic_payroll' };
 
   // Customer rules you requested:
-  // - Customer + profitability → financial (journal_entry_lines)
+  // - Customer + profitability → financial (journal_entry_queries)
   if (mentionsCustomer && profitabilityTerms) {
     return { topic: 'financial', intent: 'customer_profitability' };
   }
@@ -183,7 +183,7 @@ function buildTools(topic: Topic, intent: Intent) {
     }
   }
 
-  // Financial/GL → journal_entry_lines
+  // Financial/GL → journal_entry_queries
   if (topic === 'financial') {
     // Customer profitability: prefer explicit customer profitability function if you have one, else fall back to summary
     const custProfit = pickFunctionName(['getCustomerProfitability', 'getCustomerNetIncome']);
@@ -196,7 +196,7 @@ function buildTools(topic: Topic, intent: Intent) {
         function: {
           name,
           description:
-            'Customer profitability using journal_entry_lines (revenue, COGS/expenses, net income), optionally filtered by customer.',
+            'Customer profitability using journal_entry_queries (revenue, COGS/expenses, net income), optionally filtered by customer.',
           parameters: {
             type: 'object',
             properties: {
@@ -217,7 +217,7 @@ function buildTools(topic: Topic, intent: Intent) {
           function: {
             name: finSummary,
             description:
-              'Debits, credits, net, and top accounts from journal_entry_lines. Can filter by account substring and entity/customer.',
+              'Debits, credits, net, and top accounts from journal_entry_queries. Can filter by account substring and entity/customer.',
             parameters: {
               type: 'object',
               properties: {
@@ -237,7 +237,7 @@ function buildTools(topic: Topic, intent: Intent) {
           type: 'function',
           function: {
             name: acctTrends,
-            description: 'Monthly net trend from journal_entry_lines, optionally filtered by account/entity.',
+            description: 'Monthly net trend from journal_entry_queries, optionally filtered by account/entity.',
             parameters: {
               type: 'object',
               properties: {
@@ -285,7 +285,7 @@ Current date: ${today}.
 ROUTING:
 - Payroll → payments
 - A/R → ar_aging_detail
-- Financials & customer profitability → journal_entry_lines
+- Financials & customer profitability → journal_entry_queries
 - If the user says "what's coming in this week", interpret as expected receipts from open invoices due THIS calendar week.
 
 EXECUTION:

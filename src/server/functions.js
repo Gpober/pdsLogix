@@ -111,7 +111,7 @@ export const availableFunctions = {
   getARPaymentHistory: async ({ customerId = null, timeframe = '6_months' } = {}) => {
     try {
       let query = supabase
-        .from('journal_entry_lines')
+        .from('journal_entry_queries')
         .select('*')
         .or('account.ilike.%Accounts Receivable%,account.ilike.%A/R%,account.ilike.%AR%')
 
@@ -313,7 +313,7 @@ export const availableFunctions = {
   } = {}) => {
     try {
       let query = supabase
-        .from('journal_entry_lines')
+        .from('journal_entry_queries')
         .select('date, account, debit, credit, customer, entity')
       if (startDate) query = query.gte('date', startDate)
       if (endDate) query = query.lte('date', endDate)
@@ -415,7 +415,7 @@ export const availableFunctions = {
         lte = end.toISOString().split('T')[0]
       }
 
-      let query = supabase.from('journal_entry_lines').select('*')
+      let query = supabase.from('journal_entry_queries').select('*')
       if (customerId) query = query.eq('customer', customerId)
       if (gte) query = query.gte('date', gte)
       if (lte) query = query.lte('date', lte)
@@ -496,7 +496,7 @@ export const availableFunctions = {
   } = {}) => {
     try {
       let query = supabase
-        .from('journal_entry_lines')
+        .from('journal_entry_queries')
         .select('date, account, debit, credit, customer, entity')
       if (startDate) query = query.gte('date', startDate)
       if (endDate) query = query.lte('date', endDate)
@@ -549,14 +549,14 @@ export const availableFunctions = {
       const lastYearEnd = `${lastYear}-${new Date().toISOString().split('T')[0].substring(5)}`
 
       let currentQuery = supabase
-        .from('journal_entry_lines')
+        .from('journal_entry_queries')
         .select('*')
         .gte('date', currentYearStart)
         .lte('date', currentYearEnd)
       if (customerId) currentQuery = currentQuery.eq('customer', customerId)
 
       let lastYearQuery = supabase
-        .from('journal_entry_lines')
+        .from('journal_entry_queries')
         .select('*')
         .gte('date', lastYearStart)
         .lte('date', lastYearEnd)

@@ -782,7 +782,7 @@ export default function CashFlowPage() {
     try {
       // Fetch customers from 'customer' field
       const { data: customerData, error: customerError } = await supabase
-        .from("journal_entry_lines")
+        .from("journal_entry_queries")
         .select("customer")
         .not("customer", "is", null)
 
@@ -797,7 +797,7 @@ export default function CashFlowPage() {
 
       // ENHANCED: Fetch bank accounts using entry_bank_account field
       const { data: bankData, error: bankError } = await supabase
-        .from("journal_entry_lines")
+        .from("journal_entry_queries")
         .select("entry_bank_account")
         .eq("is_cash_account", true)
         .not("entry_bank_account", "is", null)
@@ -832,7 +832,7 @@ export default function CashFlowPage() {
       const { startDate, endDate } = calculateDateRange()
 
       let query = supabase
-        .from("journal_entry_lines")
+        .from("journal_entry_queries")
         .select("entry_number,date,account,entry_bank_account,memo,debit,credit,report_category,customer,vendor,name,class,account_type")
         .gte("date", startDate)
         .lt("date", toExclusiveDate(endDate))
@@ -930,7 +930,7 @@ export default function CashFlowPage() {
 
     // Option B fallback: first fetch cash lines
     let cashQuery = supabase
-      .from("journal_entry_lines")
+      .from("journal_entry_queries")
       .select("entry_number,entry_bank_account,customer")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
@@ -968,7 +968,7 @@ export default function CashFlowPage() {
       const chunk = entryNumbers.slice(i, i + chunkSize)
 
       let offsetQuery = supabase
-        .from("journal_entry_lines")
+        .from("journal_entry_queries")
         .select(
           "entry_number,date,class,customer,vendor,name,account,memo,account_type,report_category,debit,credit"
         )
@@ -1135,7 +1135,7 @@ export default function CashFlowPage() {
   // Dev-only reconciliation between cash and offset lines
   const checkDataQuality = async (offsets: any[], startDate: string, endDate: string) => {
     let cashQuery = supabase
-      .from("journal_entry_lines")
+      .from("journal_entry_queries")
       .select("entry_number,debit,credit,entry_bank_account,memo,report_category,customer,vendor,name,class,date")
       .gte("date", startDate)
       .lt("date", toExclusiveDate(endDate))
@@ -1432,7 +1432,7 @@ export default function CashFlowPage() {
   const openJournalEntry = async (entryNumber?: string) => {
     if (!entryNumber) return
     const { data, error } = await supabase
-      .from("journal_entry_lines")
+      .from("journal_entry_queries")
       .select("date, account, memo, class, debit, credit")
       .eq("entry_number", entryNumber)
       .order("line_sequence")

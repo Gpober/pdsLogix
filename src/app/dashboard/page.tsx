@@ -345,7 +345,7 @@ const HARDCODED_CUSTOMERS = [
 const fetchCustomers = async () => {
   try {
     const { data, error } = await supabase
-      .from("journal_entry_lines")
+      .from("journal_entry_queries")
       .select("customer")
       .not("customer", "is", null)
 
@@ -584,7 +584,7 @@ const fetchTimeSeriesData = async (property = "All Customers", monthYear, timePe
 
       // CRITICAL FIX: Fetch ALL data without row limits
       // Supabase might have a default limit, so we'll use a very high limit
-      let url = `${SUPABASE_URL}/rest/v1/journal_entry_lines?select=*&date=gte.${range.start}&date=lte.${range.end}&limit=10000`
+      let url = `${SUPABASE_URL}/rest/v1/journal_entry_queries?select=*&date=gte.${range.start}&date=lte.${range.end}&limit=10000`
 
       // FIXED: For by-property view, NEVER filter by customer - we need ALL customer data
       // Only filter by customer for non-by-property views

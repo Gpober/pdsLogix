@@ -81,7 +81,7 @@ export async function GET(req: Request) {
     ).padStart(2, "0")}`
 
     let query = supabase
-      .from("journal_entry_lines")
+      .from("journal_entry_queries")
       .select("account_type,debit,credit,customer")
       .gte("date", startDate)
       .lte("date", endDate)
