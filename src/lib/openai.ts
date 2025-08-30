@@ -6,7 +6,7 @@ import { availableFunctions } from '../server/functions';
 /* -------------------------- OpenAI helpers -------------------------- */
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-const MODEL_PLANNER = 'gpt-4o';   // you can switch to 'gpt-4o-mini' to save $
+const MODEL_PLANNER = 'gpt-4o';   // switch to 'gpt-4o-mini' to save $
 const MODEL_COMPOSER = 'gpt-4o';
 
 function assertApiKey() {
@@ -57,17 +57,14 @@ async function fetchWithRetry(
 
 async function createChatCompletion(body: Record<string, unknown>) {
   assertApiKey();
-  const res = await fetchWithRetry(
-    OPENAI_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify(body),
+  const res = await fetchWithRetry(OPENAI_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
-  );
+    body: JSON.stringify(body),
+  });
 
   const text = await res.text();
   if (!res.ok) {
@@ -79,8 +76,9 @@ async function createChatCompletion(body: Record<string, unknown>) {
     });
     throw new Error(`OpenAI API error ${res.status}: ${text}`);
   }
-  try { return JSON.parse(text); }
-  catch (e: any) {
+  try {
+    return JSON.parse(text);
+  } catch (e: any) {
     console.error('❌ Failed to parse OpenAI JSON:', e?.message, text.slice(0, 500));
     throw new Error('Failed to parse OpenAI response JSON');
   }
@@ -151,7 +149,7 @@ type Intent =
   | 'customer_profitability'
   | 'incoming_cash'
   | 'aging_overview'
-  | 'gross_profit'           // NEW
+  | 'gross_profit'
   | 'generic_financial'
   | 'generic_payroll'
   | 'generic_ar';
@@ -176,7 +174,6 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   if (payrollTerms) return { topic: 'payroll', intent: 'generic_payroll' };
 
   if (mentionsCustomer && (grossProfitTerms || cogsTerms)) {
-    // Customer + GP/COGS → profitability view per customer
     return { topic: 'financial', intent: 'customer_profitability' };
   }
 
@@ -205,7 +202,7 @@ const fnKeys = Object.keys(availableFunctions || {});
 function pickFunctionName(candidates: string[]): string | null {
   // exact
   for (const c of candidates) if (fnKeys.includes(c)) return c;
-  // case-insensitive
+  // case-insensitive exact
   for (const c of candidates) {
     const hit = fnKeys.find(k => k.toLowerCase() === c.toLowerCase());
     if (hit) return hit;
@@ -444,7 +441,6 @@ function buildTools(topic: Topic, intent: Intent) {
         },
       });
     } else if (finSummary) {
-      // Use Financial Summary for GP/COGS/GP% and generic financials
       tools.push({
         type: 'function',
         function: {
@@ -549,6 +545,8 @@ export const createCFOCompletion = async (message: string, context: any = {}) =>
 
 Current date: ${today}.
 
+Keep responses concise (max ~350 words). Use bullets and short sections. If content is long, summarize and offer to drill down.
+
 ROUTING
 - Payroll → payments
 - A/R → ar_aging_detail
@@ -639,10 +637,9 @@ GROSS PROFIT LOGIC
         if (typeof rawArgs.limit === 'undefined') rawArgs.limit = 0;
         if (typeof rawArgs.offset === 'undefined') rawArgs.offset = 0;
 
-        // If intent is gross_profit, give the model a nudge: it can set accountLike itself, but
-        // providing a sane default often helps (it will still override if it wants).
+        // Nudge for GP requests
         if (intent === 'gross_profit' && !rawArgs.accountLike) {
-          rawArgs.accountLike = 'Revenue'; // the tool can be called multiple times (e.g., COGS/Revenue) by the model
+          rawArgs.accountLike = 'Revenue';
         }
       }
 
