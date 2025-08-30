@@ -270,38 +270,129 @@ export const availableFunctions = {
   // =========================
   // A/R Aging Detail (Invoices)
   // =========================
-  getARAgingDetail: async ({ customerId = null } = {}) => {
+  getARAgingDetail: async ({ customerId = null, limit = 100 } = {}) => {
     try {
       let query = supabase.from('ar_aging_detail').select('*')
       if (customerId) query = query.eq('customer', customerId)
-
-      const { data, error } = await query
-      if (error) throw error
-
-      return { success: true, records: data }
-    } catch (error) {
-      console.error('❌ getARAgingDetail error:', error)
-      return { success: false, error: 'Failed to fetch A/R aging detail', details: error.message }
-    }
-  },
-
-  // =========================
-  // General Financial Data
-  // =========================
-  getFinancialData: async ({ startDate = null, endDate = null, limit = 100 } = {}) => {
-    try {
-      let query = supabase.from('journal_entry_lines').select('*')
-      if (startDate) query = query.gte('date', startDate)
-      if (endDate) query = query.lte('date', endDate)
       if (limit) query = query.limit(limit)
 
       const { data, error } = await query
       if (error) throw error
 
-      return { success: true, entries: data }
+      const totalOutstanding = (data || []).reduce(
+        (sum, r) => sum + (r.open_balance || r.amount || 0),
+        0
+      )
+
+      return {
+        success: true,
+        summary: 'A/R aging detail (truncated)',
+        total_outstanding: totalOutstanding,
+        invoice_count: data.length,
+        records: data,
+      }
     } catch (error) {
-      console.error('❌ getFinancialData error:', error)
-      return { success: false, error: 'Failed to fetch financial data', details: error.message }
+      console.error('❌ getARAgingDetail error:', error)
+      return {
+        success: false,
+        error: 'Failed to fetch A/R aging detail',
+        details: error.message,
+      }
+    }
+  },
+
+  // =========================
+  // General Financial Summary
+  // =========================
+  getFinancialSummary: async ({
+    startDate = null,
+    endDate = null,
+    accountLike = null,
+    entity = null,
+    groupByMonth = false,
+  } = {}) => {
+    try {
+      let query = supabase
+        .from('journal_entry_lines')
+        .select('date, account, debit, credit, customer, entity')
+      if (startDate) query = query.gte('date', startDate)
+      if (endDate) query = query.lte('date', endDate)
+      if (accountLike) query = query.ilike('account', `%${accountLike}%`)
+      if (entity)
+        query = query.or(
+          `customer.ilike.%${entity}%,entity.ilike.%${entity}%`
+        )
+
+      const { data, error } = await query
+      if (error) throw error
+
+      if (!data || data.length === 0) {
+        return {
+          success: true,
+          summary: 'No financial data found',
+          total_debit: 0,
+          total_credit: 0,
+          net: 0,
+          top_accounts: [],
+          ...(groupByMonth ? { monthly_net: {} } : {}),
+        }
+      }
+
+      const totals = data.reduce(
+        (acc, e) => {
+          acc.debit += e.debit || 0
+          acc.credit += e.credit || 0
+          return acc
+        },
+        { debit: 0, credit: 0 }
+      )
+
+      const accountMap = data.reduce((acc, e) => {
+        const acct = e.account || 'Unknown'
+        if (!acc[acct]) acc[acct] = { debit: 0, credit: 0 }
+        acc[acct].debit += e.debit || 0
+        acc[acct].credit += e.credit || 0
+        return acc
+      }, {})
+
+      const topAccounts = Object.entries(accountMap)
+        .map(([account, v]) => ({
+          account,
+          debit: v.debit,
+          credit: v.credit,
+          net: v.credit - v.debit,
+        }))
+        .sort((a, b) => Math.abs(b.net) - Math.abs(a.net))
+        .slice(0, 10)
+
+      let monthly = {}
+      if (groupByMonth) {
+        monthly = data.reduce((acc, e) => {
+          const month = String(e.date).substring(0, 7)
+          if (!acc[month]) acc[month] = { debit: 0, credit: 0, net: 0 }
+          acc[month].debit += e.debit || 0
+          acc[month].credit += e.credit || 0
+          acc[month].net = acc[month].credit - acc[month].debit
+          return acc
+        }, {})
+      }
+
+      return {
+        success: true,
+        summary: 'Financial summary',
+        total_debit: totals.debit,
+        total_credit: totals.credit,
+        net: totals.credit - totals.debit,
+        top_accounts: topAccounts,
+        ...(groupByMonth ? { monthly_net: monthly } : {}),
+      }
+    } catch (error) {
+      console.error('❌ getFinancialSummary error:', error)
+      return {
+        success: false,
+        error: 'Failed to summarize financial data',
+        details: error.message,
+      }
     }
   },
 
@@ -391,6 +482,56 @@ export const availableFunctions = {
     } catch (error) {
       console.error('❌ getCustomerNetIncome error:', error)
       return { success: false, error: 'Failed to analyze customer net income', details: error.message }
+    }
+  },
+
+  // =========================
+  // Account Trends
+  // =========================
+  getAccountTrends: async ({
+    startDate = null,
+    endDate = null,
+    accountLike = null,
+    entity = null,
+  } = {}) => {
+    try {
+      let query = supabase
+        .from('journal_entry_lines')
+        .select('date, account, debit, credit, customer, entity')
+      if (startDate) query = query.gte('date', startDate)
+      if (endDate) query = query.lte('date', endDate)
+      if (accountLike) query = query.ilike('account', `%${accountLike}%`)
+      if (entity)
+        query = query.or(
+          `customer.ilike.%${entity}%,entity.ilike.%${entity}%`
+        )
+
+      const { data, error } = await query
+      if (error) throw error
+
+      if (!data || data.length === 0) {
+        return { success: true, summary: 'No financial data found', trends: [] }
+      }
+
+      const trendMap = data.reduce((acc, e) => {
+        const month = String(e.date).substring(0, 7)
+        if (!acc[month]) acc[month] = 0
+        acc[month] += (e.credit || 0) - (e.debit || 0)
+        return acc
+      }, {})
+
+      const trends = Object.keys(trendMap)
+        .sort()
+        .map(month => ({ month, net: trendMap[month] }))
+
+      return { success: true, summary: 'Monthly net trend', trends }
+    } catch (error) {
+      console.error('❌ getAccountTrends error:', error)
+      return {
+        success: false,
+        error: 'Failed to fetch account trends',
+        details: error.message,
+      }
     }
   },
 
