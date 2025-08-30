@@ -268,6 +268,44 @@ export const availableFunctions = {
   },
 
   // =========================
+  // A/R Aging Detail (Invoices)
+  // =========================
+  getARAgingDetail: async ({ customerId = null } = {}) => {
+    try {
+      let query = supabase.from('ar_aging_detail').select('*')
+      if (customerId) query = query.eq('customer', customerId)
+
+      const { data, error } = await query
+      if (error) throw error
+
+      return { success: true, records: data }
+    } catch (error) {
+      console.error('❌ getARAgingDetail error:', error)
+      return { success: false, error: 'Failed to fetch A/R aging detail', details: error.message }
+    }
+  },
+
+  // =========================
+  // General Financial Data
+  // =========================
+  getFinancialData: async ({ startDate = null, endDate = null, limit = 100 } = {}) => {
+    try {
+      let query = supabase.from('journal_entry_lines').select('*')
+      if (startDate) query = query.gte('date', startDate)
+      if (endDate) query = query.lte('date', endDate)
+      if (limit) query = query.limit(limit)
+
+      const { data, error } = await query
+      if (error) throw error
+
+      return { success: true, entries: data }
+    } catch (error) {
+      console.error('❌ getFinancialData error:', error)
+      return { success: false, error: 'Failed to fetch financial data', details: error.message }
+    }
+  },
+
+  // =========================
   // Customer Net Income
   // =========================
   getCustomerNetIncome: async ({ customerId = null, timeframe = 'current_month' } = {}) => {
