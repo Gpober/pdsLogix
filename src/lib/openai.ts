@@ -1,24 +1,25 @@
 // server/ai/createCFOCompletion.ts
 // Server-only. Do NOT import into "use client" files.
 
-import { availableFunctions } from '../server/functions';
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { availableFunctions } from "../server/functions";
 
-/* -------------------------- OpenAI helpers -------------------------- */
+/* ------------------------------ OpenAI setup ------------------------------ */
 
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-const MODEL_PLANNER = 'gpt-4o';   // switch to 'gpt-4o-mini' to save $
-const MODEL_COMPOSER = 'gpt-4o';
+const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
+const MODEL_PLANNER = "gpt-4o";      // swap to 'gpt-4o-mini' if you want to save $
+const MODEL_COMPOSER = "gpt-4o";
 
 function assertApiKey() {
   if (!process.env.OPENAI_API_KEY) {
-    throw new Error('Missing OPENAI_API_KEY environment variable');
+    throw new Error("Missing OPENAI_API_KEY environment variable");
   }
 }
 
 function redactForLog(s: string, max = 800) {
   if (!s) return s;
   try {
-    const trimmed = s.length > max ? s.slice(0, max) + '…' : s;
+    const trimmed = s.length > max ? s.slice(0, max) + "…" : s;
     return trimmed.replace(/"api_key"\s*:\s*".*?"/gi, '"api_key":"***"');
   } catch {
     return s.slice(0, max);
@@ -39,9 +40,10 @@ async function fetchWithRetry(
       const res = await fetch(input, { ...init, signal: controller.signal });
       clearTimeout(timer);
       if (res.ok) return res;
+      // Retry on rate limits and transient server errors
       if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
         const delay = 400 * Math.pow(2, i) + Math.random() * 200;
-        await new Promise(r => setTimeout(r, delay));
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
       return res;
@@ -49,18 +51,18 @@ async function fetchWithRetry(
       clearTimeout(timer);
       lastErr = e;
       const delay = 400 * Math.pow(2, i) + Math.random() * 200;
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
-  throw lastErr || new Error('Network error');
+  throw lastErr || new Error("Network error");
 }
 
 async function createChatCompletion(body: Record<string, unknown>) {
   assertApiKey();
   const res = await fetchWithRetry(OPENAI_URL, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
+      "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify(body),
@@ -68,7 +70,7 @@ async function createChatCompletion(body: Record<string, unknown>) {
 
   const text = await res.text();
   if (!res.ok) {
-    console.error('❌ OpenAI error', {
+    console.error("❌ OpenAI error", {
       status: res.status,
       statusText: res.statusText,
       responseText: text.slice(0, 1500),
@@ -76,27 +78,28 @@ async function createChatCompletion(body: Record<string, unknown>) {
     });
     throw new Error(`OpenAI API error ${res.status}: ${text}`);
   }
+
   try {
     return JSON.parse(text);
   } catch (e: any) {
-    console.error('❌ Failed to parse OpenAI JSON:', e?.message, text.slice(0, 500));
-    throw new Error('Failed to parse OpenAI response JSON');
+    console.error("❌ Failed to parse OpenAI JSON:", e?.message, text.slice(0, 500));
+    throw new Error("Failed to parse OpenAI response JSON");
   }
 }
 
-/** Compact a tool result before passing it into the second LLM call */
+/** Compact any tool result before feeding back to the LLM (keeps token use sane) */
 function compactForLLM(result: any) {
   try {
-    if (!result || typeof result !== 'object') return result;
+    if (!result || typeof result !== "object") return result;
     const MAX_ARRAY_ITEMS = 50;
     const MAX_STRING_LEN = 300;
 
     const prune = (v: any): any => {
       if (Array.isArray(v)) return v.slice(0, MAX_ARRAY_ITEMS).map(prune);
-      if (v && typeof v === 'object') {
+      if (v && typeof v === "object") {
         const out: any = {};
         for (const [k, val] of Object.entries(v)) {
-          if ((k === 'records' || k === 'payments') && Array.isArray(val)) {
+          if ((k === "records" || k === "payments") && Array.isArray(val)) {
             out[k] = val.slice(0, MAX_ARRAY_ITEMS).map(prune);
           } else {
             out[k] = prune(val);
@@ -104,7 +107,9 @@ function compactForLLM(result: any) {
         }
         return out;
       }
-      if (typeof v === 'string') return v.length > MAX_STRING_LEN ? v.slice(0, MAX_STRING_LEN) + '…' : v;
+      if (typeof v === "string") {
+        return v.length > MAX_STRING_LEN ? v.slice(0, MAX_STRING_LEN) + "…" : v;
+      }
       return v;
     };
     return prune(result);
@@ -113,54 +118,65 @@ function compactForLLM(result: any) {
   }
 }
 
-/* -------------------------- Timezone helpers -------------------------- */
+/* ------------------------------ Time helpers ------------------------------ */
 
-export const NY_TZ = 'America/New_York';
+export const NY_TZ = "America/New_York";
 
 function localISO(d: Date, tz = NY_TZ) {
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
   });
   // @ts-ignore
-  const parts = Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
+  const parts = Object.fromEntries(fmt.formatToParts(d).map((p) => [p.type, p.value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function ytdRange(tz = NY_TZ) {
   const now = new Date();
-  const year = new Intl.DateTimeFormat('en', { timeZone: tz, year: 'numeric' }).format(now);
+  const year = new Intl.DateTimeFormat("en", { timeZone: tz, year: "numeric" }).format(now);
   const jan1 = new Date(Number(year), 0, 1);
   return { start: localISO(jan1, tz), end: localISO(now, tz) };
 }
 
 function currentWeekMonSun(tz = NY_TZ) {
   const now = new Date();
-  const weekday = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'numeric' as any }).format(now)); // 1=Mon..7=Sun
+  const weekday = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "numeric" as any }).format(now)
+  ); // 1=Mon..7=Sun
   const offsetFromMon = weekday - 1;
-  const monday = new Date(now); monday.setDate(now.getDate() - offsetFromMon);
-  const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - offsetFromMon);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
   return { start: localISO(monday, tz), end: localISO(sunday, tz) };
 }
 
-/* -------------------------- Intent classification -------------------------- */
+/* -------------------------- Intent classification ------------------------- */
 
-type Topic = 'payroll' | 'ar' | 'financial';
+type Topic = "payroll" | "ar" | "financial";
 type Intent =
-  | 'customer_profitability'
-  | 'incoming_cash'
-  | 'aging_overview'
-  | 'gross_profit'
-  | 'generic_financial'
-  | 'generic_payroll'
-  | 'generic_ar';
+  | "customer_profitability"
+  | "incoming_cash"
+  | "aging_overview"
+  | "gross_profit"
+  | "generic_financial"
+  | "generic_payroll"
+  | "generic_ar";
 
 function classify(message: string): { topic: Topic; intent: Intent } {
-  const m = (message || '').toLowerCase();
+  const m = (message || "").toLowerCase();
 
   const mentionsCustomer = /\b(customers?|tenants?|clients?)\b/.test(m);
 
-  const arTerms = /\b(ar|a\/r|accounts receivable|aging|aged|past due|overdue|collections?|invoices?|receivables?)\b/.test(m);
-  const incomingTerms = /\b(this week|next week|today|tomorrow|in the next (?:\d+\s*)?day|coming in|expected cash|cash forecast|receipts?)\b/.test(m);
+  const arTerms = /\b(ar|a\/r|accounts receivable|aging|aged|past due|overdue|collections?|invoices?|receivables?)\b/.test(
+    m
+  );
+  const incomingTerms = /\b(this week|next week|today|tomorrow|in the next (?:\d+\s*)?day|coming in|expected cash|cash forecast|receipts?)\b/.test(
+    m
+  );
 
   const cogsTerms = /\bcogs\b|cost of goods\b|costs? of sales?\b/.test(m);
   const grossProfitTerms = /\bgross profit\b|\bgp\b(?!t)|\bgp%\b|\bgross margin\b/.test(m);
@@ -169,34 +185,30 @@ function classify(message: string): { topic: Topic; intent: Intent } {
     grossProfitTerms ||
     /\bprofit(ability)?\b|\bmargin(s)?\b|\bnet income\b|\brevenue\b.*\b(expenses?|cogs)\b|\bprofit per\b/.test(m);
 
-  const payrollTerms = /\bpayroll|paychecks?|wages?|gross pay|net pay|pay run|direct deposit|pay stub|employees?\b/.test(m);
+  const payrollTerms = /\bpayroll|paychecks?|wages?|gross pay|net pay|pay run|direct deposit|pay stub|employees?\b/.test(
+    m
+  );
 
-  if (payrollTerms) return { topic: 'payroll', intent: 'generic_payroll' };
+  if (payrollTerms) return { topic: "payroll", intent: "generic_payroll" };
 
   if (mentionsCustomer && (grossProfitTerms || cogsTerms)) {
-    return { topic: 'financial', intent: 'customer_profitability' };
+    return { topic: "financial", intent: "customer_profitability" };
   }
 
   if (mentionsCustomer && arTerms) {
-    return { topic: 'ar', intent: incomingTerms ? 'incoming_cash' : 'aging_overview' };
+    return { topic: "ar", intent: incomingTerms ? "incoming_cash" : "aging_overview" };
   }
 
-  if (arTerms) {
-    return { topic: 'ar', intent: incomingTerms ? 'incoming_cash' : 'generic_ar' };
-  }
+  if (arTerms) return { topic: "ar", intent: incomingTerms ? "incoming_cash" : "generic_ar" };
 
-  if (grossProfitTerms || cogsTerms) {
-    return { topic: 'financial', intent: 'gross_profit' };
-  }
+  if (grossProfitTerms || cogsTerms) return { topic: "financial", intent: "gross_profit" };
 
-  if (profitabilityTerms) {
-    return { topic: 'financial', intent: 'generic_financial' };
-  }
+  if (profitabilityTerms) return { topic: "financial", intent: "generic_financial" };
 
-  return { topic: 'financial', intent: 'generic_financial' };
+  return { topic: "financial", intent: "generic_financial" };
 }
 
-/* -------------------------- Tool picking -------------------------- */
+/* ----------------------------- Tool definition ---------------------------- */
 
 const fnKeys = Object.keys(availableFunctions || {});
 function pickFunctionName(candidates: string[]): string | null {
@@ -204,18 +216,18 @@ function pickFunctionName(candidates: string[]): string | null {
   for (const c of candidates) if (fnKeys.includes(c)) return c;
   // case-insensitive exact
   for (const c of candidates) {
-    const hit = fnKeys.find(k => k.toLowerCase() === c.toLowerCase());
+    const hit = fnKeys.find((k) => k.toLowerCase() === c.toLowerCase());
     if (hit) return hit;
   }
   // word boundary
   for (const c of candidates) {
-    const rx = new RegExp(`\\b${c}\\b`, 'i');
-    const hit = fnKeys.find(k => rx.test(k));
+    const rx = new RegExp(`\\b${c}\\b`, "i");
+    const hit = fnKeys.find((k) => rx.test(k));
     if (hit) return hit;
   }
   // substring
   for (const c of candidates) {
-    const hit = fnKeys.find(k => k.toLowerCase().includes(c.toLowerCase()));
+    const hit = fnKeys.find((k) => k.toLowerCase().includes(c.toLowerCase()));
     if (hit) return hit;
   }
   return null;
@@ -225,25 +237,25 @@ function buildTools(topic: Topic, intent: Intent) {
   const tools: any[] = [];
 
   // Payroll → payments
-  if (topic === 'payroll') {
-    const name = pickFunctionName(['getPaymentsSummary', 'paymentsSummary', 'listPayments']);
+  if (topic === "payroll") {
+    const name = pickFunctionName(["getPaymentsSummary", "paymentsSummary", "listPayments"]);
     if (name) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name,
-          description: 'Query payroll payments (Supabase: payments).',
+          description: "Query payroll payments (Supabase: payments).",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              startDate: { type: 'string' },
-              endDate: { type: 'string' },
-              employee: { type: 'string' },
-              department: { type: 'string' },
-              minAmount: { type: 'number' },
-              maxAmount: { type: 'number' },
-              limit: { type: 'number' },
-              offset: { type: 'number' },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              employee: { type: "string" },
+              department: { type: "string" },
+              minAmount: { type: "number" },
+              maxAmount: { type: "number" },
+              limit: { type: "number" },
+              offset: { type: "number" },
             },
             additionalProperties: false,
           },
@@ -251,22 +263,22 @@ function buildTools(topic: Topic, intent: Intent) {
       });
     }
 
-    const monthly = pickFunctionName(['getPayrollByMonth', 'getMonthlyPayroll', 'payrollByMonth']);
+    const monthly = pickFunctionName(["getPayrollByMonth", "getMonthlyPayroll", "payrollByMonth"]);
     if (monthly) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: monthly,
-          description: 'Monthly payroll totals from payments with department breakdown.',
+          description: "Monthly payroll totals from payments with department breakdown.",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              startDate: { type: 'string' },
-              endDate: { type: 'string' },
-              employee: { type: 'string' },
-              department: { type: 'string' },
-              minAmount: { type: 'number' },
-              maxAmount: { type: 'number' },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              employee: { type: "string" },
+              department: { type: "string" },
+              minAmount: { type: "number" },
+              maxAmount: { type: "number" },
             },
             additionalProperties: false,
           },
@@ -274,26 +286,26 @@ function buildTools(topic: Topic, intent: Intent) {
       });
     }
 
-    const payrollRaw = pickFunctionName(['queryPayroll', 'queryPayments', 'queryPayrollTable']);
+    const payrollRaw = pickFunctionName(["queryPayroll", "queryPayments", "queryPayrollTable"]);
     if (payrollRaw) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: payrollRaw,
-          description: 'Direct query access to the payments table; supports arbitrary column filters.',
+          description: "Direct query access to the payments table; supports arbitrary column filters.",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              select: { type: 'string', description: 'Columns to return, e.g., "*" or "date,department"' },
+              select: { type: "string", description: 'Columns, e.g. "*" or "date,department"' },
               filters: {
-                type: 'object',
-                description: 'Key/value filters; string values use ilike matching',
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
                 additionalProperties: true,
               },
-              orderBy: { type: 'string' },
-              ascending: { type: 'boolean' },
-              limit: { type: 'number' },
-              offset: { type: 'number' },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
             },
             additionalProperties: false,
           },
@@ -303,33 +315,33 @@ function buildTools(topic: Topic, intent: Intent) {
   }
 
   // A/R
-  if (topic === 'ar') {
+  if (topic === "ar") {
     const agingDetail = pickFunctionName([
-      'getARAgingDetail',
-      'getARAgingAnalysis',
-      'getAROpenInvoices',
-      'getARInvoices',
+      "getARAgingDetail",
+      "getARAgingAnalysis",
+      "getAROpenInvoices",
+      "getARInvoices",
     ]);
     if (agingDetail) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: agingDetail,
           description:
-            intent === 'incoming_cash'
-              ? 'Open invoices from ar_aging_detail; filter by due date window (e.g., this week).'
-              : 'A/R aging or open invoices (ar_aging_detail).',
+            intent === "incoming_cash"
+              ? "Open invoices from ar_aging_detail; filter by due date window (e.g., this week)."
+              : "A/R aging or open invoices (ar_aging_detail).",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              customer: { type: 'string', description: 'Customer name or ID' },
-              startDate: { type: 'string', description: 'Invoice due start (YYYY-MM-DD)' },
-              endDate: { type: 'string', description: 'Invoice due end (YYYY-MM-DD)' },
-              dueOnly: { type: 'boolean', description: 'Only invoices due in window' },
-              status: { type: 'string', description: 'open|paid|overdue' },
-              minPastDueDays: { type: 'number' },
-              limit: { type: 'number' },
-              offset: { type: 'number' },
+              customer: { type: "string", description: "Customer name or ID" },
+              startDate: { type: "string", description: "Invoice due start (YYYY-MM-DD)" },
+              endDate: { type: "string", description: "Invoice due end (YYYY-MM-DD)" },
+              dueOnly: { type: "boolean", description: "Only invoices due in window" },
+              status: { type: "string", description: "open|paid|overdue" },
+              minPastDueDays: { type: "number" },
+              limit: { type: "number" },
+              offset: { type: "number" },
             },
             additionalProperties: false,
           },
@@ -337,19 +349,19 @@ function buildTools(topic: Topic, intent: Intent) {
       });
     }
 
-    const arHistory = pickFunctionName(['getARPaymentHistory', 'getARHistory', 'getReceiptsHistory']);
+    const arHistory = pickFunctionName(["getARPaymentHistory", "getARHistory", "getReceiptsHistory"]);
     if (arHistory) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: arHistory,
-          description: 'A/R payment / collection history over a timeframe.',
+          description: "A/R payment / collection history over a timeframe.",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              customerId: { type: 'string' },
-              customer: { type: 'string' },
-              timeframe: { type: 'string', enum: ['this_week', 'last_week', '3_months', '6_months', '12_months'] },
+              customerId: { type: "string" },
+              customer: { type: "string" },
+              timeframe: { type: "string", enum: ["this_week", "last_week", "3_months", "6_months", "12_months"] },
             },
             additionalProperties: false,
           },
@@ -357,26 +369,26 @@ function buildTools(topic: Topic, intent: Intent) {
       });
     }
 
-    const arRaw = pickFunctionName(['queryARAgingDetailTable', 'queryARAgingDetail', 'queryARTable']);
+    const arRaw = pickFunctionName(["queryARAgingDetailTable", "queryARAgingDetail", "queryARTable"]);
     if (arRaw) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: arRaw,
-          description: 'Direct query access to ar_aging_detail with flexible column filters.',
+          description: "Direct query access to ar_aging_detail with flexible column filters.",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              select: { type: 'string', description: 'Columns to return' },
+              select: { type: "string", description: "Columns to return" },
               filters: {
-                type: 'object',
-                description: 'Key/value filters; string values use ilike matching',
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
                 additionalProperties: true,
               },
-              orderBy: { type: 'string' },
-              ascending: { type: 'boolean' },
-              limit: { type: 'number' },
-              offset: { type: 'number' },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
             },
             additionalProperties: false,
           },
@@ -384,26 +396,26 @@ function buildTools(topic: Topic, intent: Intent) {
       });
     }
 
-    const jlRawAR = pickFunctionName(['queryJournalEntryLines', 'queryJournalEntries']);
+    const jlRawAR = pickFunctionName(["queryJournalEntryLines", "queryJournalEntries"]);
     if (jlRawAR) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: jlRawAR,
-          description: 'Direct query access to journal_entry_lines with arbitrary filters.',
+          description: "Direct query access to journal_entry_lines with arbitrary filters.",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              select: { type: 'string', description: 'Columns to return' },
+              select: { type: "string", description: "Columns to return" },
               filters: {
-                type: 'object',
-                description: 'Key/value filters; string values use ilike matching',
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
                 additionalProperties: true,
               },
-              orderBy: { type: 'string' },
-              ascending: { type: 'boolean' },
-              limit: { type: 'number' },
-              offset: { type: 'number' },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
             },
             additionalProperties: false,
           },
@@ -413,28 +425,28 @@ function buildTools(topic: Topic, intent: Intent) {
   }
 
   // Financial / GL
-  if (topic === 'financial') {
-    const custProfit = pickFunctionName(['getCustomerProfitability', 'getCustomerNetIncome']);
-    const finSummary = pickFunctionName(['getFinancialSummary', 'getGLSummary', 'getJournalSummary']);
-    const acctTrends = pickFunctionName(['getAccountTrends', 'getGLTrends', 'getMonthlyTrend']);
+  if (topic === "financial") {
+    const custProfit = pickFunctionName(["getCustomerProfitability", "getCustomerNetIncome"]);
+    const finSummary = pickFunctionName(["getFinancialSummary", "getGLSummary", "getJournalSummary"]);
+    const acctTrends = pickFunctionName(["getAccountTrends", "getGLTrends", "getMonthlyTrend"]);
 
-    if (intent === 'customer_profitability' && (custProfit || finSummary)) {
+    if (intent === "customer_profitability" && (custProfit || finSummary)) {
       const name = custProfit || finSummary!;
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name,
           description:
-            'Customer profitability using journal_entry_lines (Revenue, COGS/Expenses → Net or GP). Supports customer filter.',
+            "Customer profitability using journal_entry_lines (Revenue, COGS/Expenses → Net or GP). Supports customer filter.",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              customer: { type: 'string', description: 'Customer name or ID' },
-              startDate: { type: 'string' },
-              endDate: { type: 'string' },
-              includeCOGS: { type: 'boolean' },
-              includeOverhead: { type: 'boolean' },
-              groupByMonth: { type: 'boolean' },
+              customer: { type: "string", description: "Customer name or ID" },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              includeCOGS: { type: "boolean" },
+              includeOverhead: { type: "boolean" },
+              groupByMonth: { type: "boolean" },
             },
             additionalProperties: false,
           },
@@ -442,42 +454,43 @@ function buildTools(topic: Topic, intent: Intent) {
       });
     } else if (finSummary) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: finSummary,
           description:
             'Financial summary from journal_entry_lines. Return totals and top accounts; can filter by account substring (e.g., "Revenue", "COGS") and entity/customer. Use to compute Revenue, COGS, Gross Profit (GP), and GP%.',
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              startDate: { type: 'string' },
-              endDate: { type: 'string' },
-              accountLike: { type: 'string' },
-              entity: { type: 'string', description: 'Customer/Entity filter' },
-              groupByMonth: { type: 'boolean' },
-              metricsOnly: { type: 'boolean' },
-              limit: { type: 'number' },
-              offset: { type: 'number' },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              accountLike: { type: "string" },
+              entity: { type: "string", description: "Customer/Entity filter" },
+              groupByMonth: { type: "boolean" },
+              metricsOnly: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
             },
             additionalProperties: false,
           },
         },
       });
+
       if (acctTrends) {
         tools.push({
-          type: 'function',
+          type: "function",
           function: {
             name: acctTrends,
-            description: 'Monthly net trend from journal_entry_lines, optionally filtered by account/entity.',
+            description: "Monthly net trend from journal_entry_lines, optionally filtered by account/entity.",
             parameters: {
-              type: 'object',
+              type: "object",
               properties: {
-                startDate: { type: 'string' },
-                endDate: { type: 'string' },
-                accountLike: { type: 'string' },
-                entity: { type: 'string' },
-                limit: { type: 'number' },
-                offset: { type: 'number' },
+                startDate: { type: "string" },
+                endDate: { type: "string" },
+                accountLike: { type: "string" },
+                entity: { type: "string" },
+                limit: { type: "number" },
+                offset: { type: "number" },
               },
               additionalProperties: false,
             },
@@ -486,26 +499,26 @@ function buildTools(topic: Topic, intent: Intent) {
       }
     }
 
-    const jlRawFin = pickFunctionName(['queryJournalEntryLines', 'queryJournalEntries']);
+    const jlRawFin = pickFunctionName(["queryJournalEntryLines", "queryJournalEntries"]);
     if (jlRawFin) {
       tools.push({
-        type: 'function',
+        type: "function",
         function: {
           name: jlRawFin,
-          description: 'Direct query access to journal_entry_lines with flexible column filters.',
+          description: "Direct query access to journal_entry_lines with flexible column filters.",
           parameters: {
-            type: 'object',
+            type: "object",
             properties: {
-              select: { type: 'string', description: 'Columns to return' },
+              select: { type: "string", description: "Columns to return" },
               filters: {
-                type: 'object',
-                description: 'Key/value filters; string values use ilike matching',
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
                 additionalProperties: true,
               },
-              orderBy: { type: 'string' },
-              ascending: { type: 'boolean' },
-              limit: { type: 'number' },
-              offset: { type: 'number' },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
             },
             additionalProperties: false,
           },
@@ -517,35 +530,34 @@ function buildTools(topic: Topic, intent: Intent) {
   return tools;
 }
 
-/* -------------------------- Main entry -------------------------- */
+/* --------------------------------- Main ----------------------------------- */
 
 export const createCFOCompletion = async (message: string, context: any = {}) => {
   try {
     const { topic, intent } = classify(message);
     const tools = buildTools(topic, intent);
 
-    console.log('🚀 createCFOCompletion:', {
+    console.log("🚀 createCFOCompletion:", {
       topic,
       intent,
-      messagePreview: (message || '').slice(0, 160),
+      messagePreview: (message || "").slice(0, 160),
       toolNames: tools.map((t: any) => t.function.name),
     });
 
-    const today = new Date().toLocaleDateString('en-US', {
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
+    const today = new Date().toLocaleDateString("en-US", {
+      month: "long",
+      day: "numeric",
+      year: "numeric",
       timeZone: NY_TZ,
     });
 
-    const messages: any[] = [
+    const messages: ChatCompletionMessageParam[] = [
       {
-        role: 'system',
+        role: "system",
         content: `You are the AI CFO for the "I AM CFO" platform.
 
 Current date: ${today}.
-
-Keep responses concise (max ~350 words). Use bullets and short sections. If content is long, summarize and offer to drill down.
+Keep responses concise (≈350 words). Use bullets and short sections. If content is long, summarize and offer drill-down.
 
 ROUTING
 - Payroll → payments
@@ -558,17 +570,16 @@ EXECUTION
 - If the user didn't provide a period:
   - A/R "incoming cash": use Monday–Sunday of the current week (America/New_York).
   - Financial: default to YTD (America/New_York).
-- If only a customer name is given, scope to that customer; otherwise return company-wide and highlight top contributors.
+- If only a customer name is given, scope to that customer; otherwise company-wide with top contributors.
 - Present clear KPIs and bullets. End with "More than just a balance sheet" when analysis is provided.
 
 GROSS PROFIT LOGIC
 - Revenue: sum of credits in Income/Revenue/Sales accounts.
-- COGS: sum of debits in accounts containing "COGS" or "Cost of Goods" (do NOT include overhead unless explicitly asked).
-- Gross Profit (GP) = Revenue − COGS.
-- GP% = (GP / Revenue) × 100.
-- If the user asks for GP/GP% or COGS, prefer the financial summary tool and compute GP/GP% from its output. If needed, filter with accountLike "Revenue" and "COGS".`,
+- COGS: sum of debits in accounts containing "COGS" or "Cost of Goods" (exclude overhead unless asked).
+- Gross Profit (GP) = Revenue − COGS. GP% = (GP / Revenue) × 100.
+- For GP/COGS, prefer the financial summary tool; filter with accountLike "Revenue" and "COGS" when needed.`,
       },
-      { role: 'user', content: message },
+      { role: "user", content: message },
     ];
 
     // ---- First call: let model choose tool + args
@@ -577,32 +588,58 @@ GROSS PROFIT LOGIC
       messages,
       temperature: 0.2,
       max_tokens: 500,
-      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+      ...(tools.length ? { tools, tool_choice: "auto" } : {}),
     };
 
     const completion = await createChatCompletion(firstReq);
-    let aiMsg = completion.choices?.[0]?.message ?? {};
-    console.log('✅ First call finish_reason:', completion.choices?.[0]?.finish_reason);
+    const aiMsg = completion.choices?.[0]?.message ?? {};
+    console.log("✅ First call finish_reason:", completion.choices?.[0]?.finish_reason);
 
     if (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0) {
-      console.log('ℹ️ No tool calls; returning text.');
-      return aiMsg.content ?? 'No response.';
+      console.log("ℹ️ No tool calls; returning text.");
+      return aiMsg.content ?? "No response.";
     }
 
     // ---- Execute tool calls
-    messages.push(aiMsg);
+    (messages as any).push(aiMsg);
 
     const scrubArgs = (fnName: string, rawArgs: any) => {
       const allow = new Set<string>();
       if (/payments/i.test(fnName)) {
-        ['startDate','endDate','employee','department','minAmount','maxAmount','limit','offset'].forEach(k => allow.add(k));
+        ["startDate", "endDate", "employee", "department", "minAmount", "maxAmount", "limit", "offset"].forEach((k) =>
+          allow.add(k)
+        );
       } else if (/ar/i.test(fnName)) {
-        ['customer','customerId','startDate','endDate','dueOnly','status','minPastDueDays','limit','offset','timeframe'].forEach(k => allow.add(k));
-      } else { // financial
-        ['customer','startDate','endDate','includeCOGS','includeOverhead','groupByMonth','accountLike','entity','metricsOnly','limit','offset'].forEach(k => allow.add(k));
+        [
+          "customer",
+          "customerId",
+          "startDate",
+          "endDate",
+          "dueOnly",
+          "status",
+          "minPastDueDays",
+          "limit",
+          "offset",
+          "timeframe",
+        ].forEach((k) => allow.add(k));
+      } else {
+        // financial
+        [
+          "customer",
+          "startDate",
+          "endDate",
+          "includeCOGS",
+          "includeOverhead",
+          "groupByMonth",
+          "accountLike",
+          "entity",
+          "metricsOnly",
+          "limit",
+          "offset",
+        ].forEach((k) => allow.add(k));
       }
       const out: any = {};
-      if (rawArgs && typeof rawArgs === 'object') {
+      if (rawArgs && typeof rawArgs === "object") {
         for (const [k, v] of Object.entries(rawArgs)) if (allow.has(k)) out[k] = v;
       }
       return out;
@@ -617,29 +654,29 @@ GROSS PROFIT LOGIC
         console.warn(`⚠️ Could not parse args for ${String(functionName)}:`, e?.message);
       }
 
-      // Normalize dates for AR "incoming cash" → this week Mon–Sun (NY)
-      if (topic === 'ar' && intent === 'incoming_cash') {
+      // AR "incoming cash" → this Mon–Sun (NY), open & dueOnly by default
+      if (topic === "ar" && intent === "incoming_cash") {
         const { start, end } = currentWeekMonSun(NY_TZ);
         rawArgs.startDate = rawArgs.startDate || start;
         rawArgs.endDate = rawArgs.endDate || end;
-        if (typeof rawArgs.dueOnly === 'undefined') rawArgs.dueOnly = true;
-        if (!rawArgs.status) rawArgs.status = 'open';
-        if (typeof rawArgs.limit === 'undefined') rawArgs.limit = 200;
+        if (typeof rawArgs.dueOnly === "undefined") rawArgs.dueOnly = true;
+        if (!rawArgs.status) rawArgs.status = "open";
+        if (typeof rawArgs.limit === "undefined") rawArgs.limit = 200;
       }
 
-      // Financial defaults → YTD. Prefer aggregate-only to keep payload small.
-      if (topic === 'financial') {
+      // Financial defaults → YTD; keep payload small
+      if (topic === "financial") {
         const { start, end } = ytdRange(NY_TZ);
         rawArgs.startDate = rawArgs.startDate || start;
         rawArgs.endDate = rawArgs.endDate || end;
-        if (typeof rawArgs.groupByMonth === 'undefined') rawArgs.groupByMonth = true;
-        if (typeof rawArgs.metricsOnly === 'undefined') rawArgs.metricsOnly = true;
-        if (typeof rawArgs.limit === 'undefined') rawArgs.limit = 0;
-        if (typeof rawArgs.offset === 'undefined') rawArgs.offset = 0;
+        if (typeof rawArgs.groupByMonth === "undefined") rawArgs.groupByMonth = true;
+        if (typeof rawArgs.metricsOnly === "undefined") rawArgs.metricsOnly = true;
+        if (typeof rawArgs.limit === "undefined") rawArgs.limit = 0;
+        if (typeof rawArgs.offset === "undefined") rawArgs.offset = 0;
 
         // Nudge for GP requests
-        if (intent === 'gross_profit' && !rawArgs.accountLike) {
-          rawArgs.accountLike = 'Revenue';
+        if (intent === "gross_profit" && !rawArgs.accountLike) {
+          rawArgs.accountLike = "Revenue";
         }
       }
 
@@ -648,19 +685,19 @@ GROSS PROFIT LOGIC
       let result: any;
       try {
         const fn = availableFunctions[functionName];
-        if (typeof fn !== 'function') {
+        if (typeof fn !== "function") {
           throw new Error(`Function ${String(functionName)} not found in availableFunctions`);
         }
         console.log(`🔧 Calling ${String(functionName)} with`, redactForLog(JSON.stringify(args || {}), 600));
         result = await fn(args);
       } catch (err: any) {
         console.error(`❌ Tool ${String(functionName)} failed:`, err?.message);
-        result = { success: false, error: err?.message || 'Tool error' };
+        result = { success: false, error: err?.message || "Tool error" };
       }
 
-      // IMPORTANT: tool message must NOT include name; compact to avoid huge context
-      messages.push({
-        role: 'tool',
+      // Tool response back to LLM (compact to keep tokens tidy)
+      (messages as any).push({
+        role: "tool",
         tool_call_id: tc.id,
         content: JSON.stringify(compactForLLM(result)),
       });
@@ -672,25 +709,25 @@ GROSS PROFIT LOGIC
       messages,
       temperature: 0.2,
       max_tokens: 900,
-      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+      ...(tools.length ? { tools, tool_choice: "auto" } : {}),
     });
+
     const finalMsg = second.choices?.[0]?.message ?? {};
-    console.log('✅ Second call finish_reason:', second.choices?.[0]?.finish_reason);
+    console.log("✅ Second call finish_reason:", second.choices?.[0]?.finish_reason);
 
-    return finalMsg.content ?? 'Done.';
-
+    return finalMsg.content ?? "Done.";
   } catch (error: any) {
-    console.error('❌ OpenAI Error:', { name: error?.name, message: error?.message, stack: error?.stack });
+    console.error("❌ OpenAI Error:", { name: error?.name, message: error?.message, stack: error?.stack });
 
-    const msg = (error?.message || '').toLowerCase();
-    if (msg.includes('insufficient_quota')) {
+    const msg = (error?.message || "").toLowerCase();
+    if (msg.includes("insufficient_quota")) {
       return "I'm temporarily unable to analyze your data due to API limits. Please try again in a moment.";
-    } else if (msg.includes('context_length_exceeded')) {
-      return 'Your query involves too much data. Please try asking about a specific customer or shorter time period.';
-    } else if (msg.includes('api key')) {
+    } else if (msg.includes("context_length_exceeded")) {
+      return "Your query involves too much data. Please try asking about a specific customer or shorter time period.";
+    } else if (msg.includes("api key")) {
       return "There's an issue with the API configuration. Please contact support.";
-    } else if (msg.includes('abort')) {
-      return 'The request timed out. Please try again or narrow the query.';
+    } else if (msg.includes("abort")) {
+      return "The request timed out. Please try again or narrow the query.";
     } else {
       return "I encountered an issue analyzing your financial data. Please try rephrasing your question or contact support if this persists.";
     }
