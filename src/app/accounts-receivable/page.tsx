@@ -471,7 +471,7 @@ export default function AccountsReceivablePage() {
     try {
       // Fetch the complete journal entry using the invoice number
       const { data: journalEntry, error } = await supabase
-        .from("journal_entry_queries")
+        .from("journal_entry_lines")
         .select("*")
         .eq("number", invoiceNumber)
         .order("line_number", { ascending: true })

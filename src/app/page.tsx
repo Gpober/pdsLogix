@@ -382,7 +382,7 @@ export default function FinancialOverviewPage() {
   const fetchAvailableCustomers = async () => {
     try {
       const { data, error } = await supabase
-        .from("journal_entry_queries")
+        .from("journal_entry_lines")
         .select("customer")
         .not("customer", "is", null);
       if (error) throw error;
@@ -429,7 +429,7 @@ export default function FinancialOverviewPage() {
 
       // Fetch current period data using same query structure as other pages
       let currentQuery = supabase
-        .from("journal_entry_queries")
+        .from("journal_entry_lines")
         .select(
           `
           entry_number,
@@ -488,7 +488,7 @@ export default function FinancialOverviewPage() {
       const prevEndDate = `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(prevLastDay).padStart(2, "0")}`;
 
       let prevQuery = supabase
-        .from("journal_entry_queries")
+        .from("journal_entry_lines")
         .select(
           `
           entry_number,
@@ -552,7 +552,7 @@ export default function FinancialOverviewPage() {
         const trendEndDate = `${trendYear}-${String(trendMonthIndex + 1).padStart(2, "0")}-${String(trendLastDay).padStart(2, "0")}`;
 
         let monthQuery = supabase
-          .from("journal_entry_queries")
+          .from("journal_entry_lines")
           .select(
             `
             entry_number,
