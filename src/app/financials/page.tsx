@@ -208,8 +208,12 @@ const formatDateDisplay = (dateString: string) => {
 };
 
 export default function FinancialsPage() {
-  const [selectedMonth, setSelectedMonth] = useState<string>("June");
-  const [selectedYear, setSelectedYear] = useState<string>("2025");
+  const [selectedMonth, setSelectedMonth] = useState<string>(
+    () => new Date().toLocaleString("en-US", { month: "long" }),
+  );
+  const [selectedYear, setSelectedYear] = useState<string>(
+    () => new Date().getFullYear().toString(),
+  );
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("YTD");
   const [viewMode, setViewMode] = useState<ViewMode>("Total");
   const [notification, setNotification] = useState<NotificationState>({
@@ -328,8 +332,9 @@ export default function FinancialsPage() {
     let endDate: string;
 
     if (timePeriod === "Custom") {
-      startDate = customStartDate || "2025-01-01";
-      endDate = customEndDate || "2025-06-30";
+      const year = new Date().getFullYear();
+      startDate = customStartDate || `${year}-01-01`;
+      endDate = customEndDate || `${year}-12-31`;
     } else if (timePeriod === "YTD") {
       const monthIndex = monthsList.indexOf(selectedMonth);
       const year = Number.parseInt(selectedYear);
