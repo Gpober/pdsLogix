@@ -889,8 +889,8 @@ export default function BalanceSheetPage() {
     return (
       <div className="bg-white rounded-lg shadow-sm overflow-hidden">
         <div className={`p-4 sm:p-6 border-b border-gray-200 ${colors.header}`}>
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold flex items-center">
+          <div className="flex items-center justify-between">
+            <h3 className="flex-1 text-lg font-semibold flex items-center justify-center text-center">
               <span className={`w-4 h-4 ${colors.dot} rounded-full mr-3`}></span>
               {section.title}
             </h3>
@@ -1032,9 +1032,9 @@ export default function BalanceSheetPage() {
       <div className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Balance Sheet</h1>
-              <p className="text-xs sm:text-sm text-gray-600 mt-1">
+            <div className="flex-1 text-center">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900 text-center">Balance Sheet</h1>
+              <p className="text-xs sm:text-sm text-gray-600 mt-1 text-center">
                 As of{" "}
                 {asOfDate
                   ? formatDate(asOfDate)
@@ -1044,7 +1044,7 @@ export default function BalanceSheetPage() {
                       ? `Q${Math.floor(monthsList.indexOf(selectedMonth) / 3) + 1} ${selectedYear}`
                       : `${timePeriod} Period`}
               </p>
-              <p className="text-xs text-blue-600 mt-1">
+              <p className="text-xs text-blue-600 mt-1 text-center">
                 💰 Enhanced with account type subtotals and corrected balance calculations
               </p>
             </div>
@@ -1052,7 +1052,7 @@ export default function BalanceSheetPage() {
             <button
               onClick={loadData}
               disabled={isLoading}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors shadow-sm disabled:opacity-50"
+              className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors shadow-sm disabled:opacity-50 mt-4 sm:mt-0"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
               <span className="hidden sm:inline">Refresh</span>
@@ -1246,9 +1246,9 @@ export default function BalanceSheetPage() {
             {/* Fixed Header */}
             <div className="flex-shrink-0 p-4 sm:p-6 border-b border-gray-200">
               <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">{modalTitle}</h3>
-                  <p className="text-xs sm:text-sm text-gray-600">{transactionDetails.length} transactions</p>
+                <div className="text-center flex-1">
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900 text-center">{modalTitle}</h3>
+                  <p className="text-xs sm:text-sm text-gray-600 text-center">{transactionDetails.length} transactions</p>
                 </div>
                 <button onClick={() => setShowTransactionModal(false)} className="text-gray-400 hover:text-gray-600">
                   <X className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1421,7 +1421,7 @@ export default function BalanceSheetPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-3xl w-full max-h-[80vh] flex flex-col">
             <div className="p-4 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
-              <h3 className="text-lg font-semibold text-gray-900">{journalTitle}</h3>
+              <h3 className="flex-1 text-lg font-semibold text-gray-900 text-center">{journalTitle}</h3>
               <button
                 onClick={() => setShowJournalModal(false)}
                 className="text-gray-400 hover:text-gray-600"

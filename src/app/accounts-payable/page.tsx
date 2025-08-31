@@ -404,16 +404,16 @@ export default function AccountsPayablePage() {
       {/* Header */}
       <div className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Accounts Payable</h1>
-              <p className="text-sm text-gray-600 mt-1">Real-time A/P aging from imported vendor bills</p>
-              <p className="text-xs text-blue-600 mt-1">📊 Connected to ap_aging table • Synced hourly</p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex-1 text-center">
+              <h1 className="text-2xl font-bold text-gray-900 text-center">Accounts Payable</h1>
+              <p className="text-sm text-gray-600 mt-1 text-center">Real-time A/P aging from imported vendor bills</p>
+              <p className="text-xs text-blue-600 mt-1 text-center">📊 Connected to ap_aging table • Synced hourly</p>
             </div>
             <button
               onClick={fetchAPData}
               disabled={isLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 mt-4 sm:mt-0"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
               Refresh
@@ -495,8 +495,8 @@ export default function AccountsPayablePage() {
           {/* Aging Analysis */}
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Aging Analysis (A/P)</h3>
-              <div className="text-sm text-gray-600 mt-1">Current aging breakdown from latest imported data</div>
+              <h3 className="text-lg font-semibold text-gray-900 text-center">Aging Analysis (A/P)</h3>
+              <div className="text-sm text-gray-600 mt-1 text-center">Current aging breakdown from latest imported data</div>
             </div>
 
             <div className="p-6">
@@ -582,8 +582,8 @@ export default function AccountsPayablePage() {
           {/* A/P Table */}
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Outstanding Payables</h3>
-              <div className="text-sm text-gray-600 mt-1">
+              <h3 className="text-lg font-semibold text-gray-900 text-center">Outstanding Payables</h3>
+              <div className="text-sm text-gray-600 mt-1 text-center">
                 Showing {filteredData.length} of {apGroupedData.length} vendor groups • Click any amount to drill down
               </div>
             </div>
@@ -791,8 +791,8 @@ export default function AccountsPayablePage() {
           <div className="bg-white rounded-lg max-w-5xl w-full max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-200 flex-shrink-0">
               <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
+                <div className="flex-1 text-center">
+                  <h3 className="text-lg font-semibold text-gray-900 text-center">
                     {selectedAgingFilter && selectedAgingFilter !== "all"
                       ? `${
                           selectedAgingFilter === "current"
@@ -805,7 +805,7 @@ export default function AccountsPayablePage() {
                         } Bills — ${selectedVendorData.vendor}`
                       : `All Outstanding Bills — ${selectedVendorData.vendor}`}
                   </h3>
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-gray-600 text-center">
                     {selectedAgingFilter && selectedAgingFilter !== "all"
                       ? `Showing ${filteredBills.length} bills • Total: ${formatCurrency(
                           filteredBills.reduce((s, b) => s + b.open_balance, 0)
