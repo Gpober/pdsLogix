@@ -13,6 +13,8 @@ import {
   BarChart3,
   Calendar,
   LineChart as LineChartIcon,
+  ArrowUpRight,
+  ArrowDownRight,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -136,6 +138,21 @@ export default function PayrollPage() {
     String(new Date().getFullYear() - 5 + i)
   );
 
+  const comparisonLabel = useMemo(() => {
+    switch (timePeriod) {
+      case "Monthly":
+        return "vs last month";
+      case "Quarterly":
+        return "vs last quarter";
+      case "YTD":
+        return "vs prior YTD";
+      case "Trailing 12":
+        return "vs prior 12 months";
+      default:
+        return "vs previous period";
+    }
+  }, [timePeriod]);
+
   const timePeriodDropdownRef = useRef<HTMLDivElement>(null);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const yearDropdownRef = useRef<HTMLDivElement>(null);
@@ -200,6 +217,92 @@ export default function PayrollPage() {
     setEndDate(end);
   }, [timePeriod, selectedMonth, selectedYear, customStartDate, customEndDate]);
 
+  const calculatePreviousDateRange = (startDate: string, endDate: string) => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (timePeriod === "Monthly") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = parseInt(selectedYear, 10);
+      const prevMonthIndex = monthIndex === 0 ? 11 : monthIndex - 1;
+      const prevYear = monthIndex === 0 ? year - 1 : year;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      let lastDay = daysInMonth[prevMonthIndex];
+      if (
+        prevMonthIndex === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-01`,
+        prevEndDate: `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "Quarterly") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = parseInt(selectedYear, 10);
+      const quarter = Math.floor(monthIndex / 3);
+      const prevQuarterStartMonth = quarter * 3 - 3;
+      const adjustedStartMonth = (prevQuarterStartMonth + 12) % 12;
+      const prevYear = prevQuarterStartMonth < 0 ? year - 1 : year;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      const prevQuarterEndMonth = adjustedStartMonth + 2;
+      let lastDay = daysInMonth[prevQuarterEndMonth];
+      if (
+        prevQuarterEndMonth === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-${String(adjustedStartMonth + 1).padStart(2, "0")}-01`,
+        prevEndDate: `${prevYear}-${String(prevQuarterEndMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "YTD") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = parseInt(selectedYear, 10);
+      const prevYear = year - 1;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      let lastDay = daysInMonth[monthIndex];
+      if (
+        monthIndex === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-01-01`,
+        prevEndDate: `${prevYear}-${String(monthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "Trailing 12") {
+      const prevStart = new Date(start);
+      const prevEnd = new Date(end);
+      prevStart.setFullYear(prevStart.getFullYear() - 1);
+      prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+      return {
+        prevStartDate: prevStart.toISOString().split("T")[0],
+        prevEndDate: prevEnd.toISOString().split("T")[0],
+      };
+    } else {
+      const diff =
+        Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) +
+        1;
+      const prevEnd = new Date(start);
+      prevEnd.setDate(prevEnd.getDate() - 1);
+      const prevStart = new Date(prevEnd);
+      prevStart.setDate(prevStart.getDate() - (diff - 1));
+      return {
+        prevStartDate: prevStart.toISOString().split("T")[0],
+        prevEndDate: prevEnd.toISOString().split("T")[0],
+      };
+    }
+  };
+
+  const { prevStartDate, prevEndDate } = useMemo(() => {
+    if (!startDate || !endDate) return { prevStartDate: "", prevEndDate: "" };
+    return calculatePreviousDateRange(startDate, endDate);
+  }, [startDate, endDate, timePeriod, selectedMonth, selectedYear]);
+
   // Fetch payments
   const fetchPayments = async () => {
     const { data, error } = await supabase
@@ -247,27 +350,32 @@ export default function PayrollPage() {
     });
   }, [payments, departmentFilter, searchTerm, startDate, endDate]);
 
+  const filteredPrevPayments = useMemo(() => {
+    return payments.filter((p) => {
+      const matchesDept =
+        departmentFilter === "All Departments" || (p.department ?? "") === departmentFilter;
+      const fullName = `${p.first_name ?? ""} ${p.last_name ?? ""}`.toLowerCase();
+      const hay = [
+        fullName,
+        (p.department ?? "").toLowerCase(),
+        (p.payment_method ?? "").toLowerCase(),
+      ].join(" ");
+      const matchesSearch = searchTerm.trim() === "" || hay.includes(searchTerm.toLowerCase());
+      const matchesDate =
+        (!prevStartDate || (p.date && Date.parse(p.date) >= Date.parse(prevStartDate))) &&
+        (!prevEndDate || (p.date && Date.parse(p.date) <= Date.parse(prevEndDate)));
+      return matchesDept && matchesSearch && matchesDate;
+    });
+  }, [payments, departmentFilter, searchTerm, prevStartDate, prevEndDate]);
   // KPIs
-  const kpis = useMemo(() => {
+  const currentKpis = useMemo(() => {
     const totalTx = filteredPayments.length;
     let total = 0;
-    let monthTotal = 0;
-
-    const now = new Date();
-    const m = now.getMonth();
-    const y = now.getFullYear();
-
     for (const p of filteredPayments) {
-      const amt = Number(p.total_amount || 0);
-      total += amt;
-      if (p.date) {
-        const d = new Date(p.date);
-        if (d.getUTCMonth() === m && d.getUTCFullYear() === y) monthTotal += amt;
-      }
+      total += Number(p.total_amount || 0);
     }
     const avg = totalTx ? total / totalTx : 0;
 
-    // top department by total
     const byDept = new Map<string, number>();
     for (const p of filteredPayments) {
       const dept = (p.department || "Uncategorized").trim();
@@ -275,8 +383,32 @@ export default function PayrollPage() {
     }
     const topDept = Array.from(byDept.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
 
-    return { totalTx, total, monthTotal, avg, topDept };
+    return { totalTx, total, avg, topDept };
   }, [filteredPayments]);
+
+  const prevKpis = useMemo(() => {
+    const totalTx = filteredPrevPayments.length;
+    let total = 0;
+    for (const p of filteredPrevPayments) {
+      total += Number(p.total_amount || 0);
+    }
+    const avg = totalTx ? total / totalTx : 0;
+    return { totalTx, total, avg };
+  }, [filteredPrevPayments]);
+
+  const calculateGrowth = (current: number, previous: number) => {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return ((current - previous) / Math.abs(previous)) * 100;
+  };
+
+  const kpiGrowth = useMemo(
+    () => ({
+      totalTx: calculateGrowth(currentKpis.totalTx, prevKpis.totalTx),
+      total: calculateGrowth(currentKpis.total, prevKpis.total),
+      avg: calculateGrowth(currentKpis.avg, prevKpis.avg),
+    }),
+    [currentKpis, prevKpis],
+  );
 
   // Trend (year-to-date) & Department totals
   const trendData = useMemo(() => {
@@ -385,6 +517,9 @@ export default function PayrollPage() {
 
   const formatCurrency = (amount: number): string =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+
+  const formatPercentage = (value: number): string =>
+    `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 
   const renderDeptTooltip = ({
     active,
@@ -637,7 +772,15 @@ export default function PayrollPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-gray-600 text-sm font-medium mb-2">Total Transactions</div>
-                  <div className="text-3xl font-bold text-gray-900 mb-1">{kpis.totalTx}</div>
+                  <div className="text-3xl font-bold text-gray-900 mb-1">{currentKpis.totalTx}</div>
+                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.totalTx >= 0 ? "text-green-600" : "text-red-600"}`}>
+                    {kpiGrowth.totalTx >= 0 ? (
+                      <ArrowUpRight className="w-3 h-3 mr-1" />
+                    ) : (
+                      <ArrowDownRight className="w-3 h-3 mr-1" />
+                    )}
+                    {formatPercentage(kpiGrowth.totalTx)} {comparisonLabel}
+                  </div>
                 </div>
                 <Users className="w-8 h-8" style={{ color: BRAND_COLORS.primary }} />
               </div>
@@ -646,8 +789,16 @@ export default function PayrollPage() {
             <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 hover:shadow-md transition-shadow" style={{ borderLeftColor: BRAND_COLORS.success }}>
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-gray-600 text-sm font-medium mb-2">This Month Total</div>
-                  <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(kpis.monthTotal)}</div>
+                  <div className="text-gray-600 text-sm font-medium mb-2">Total Payroll</div>
+                  <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(currentKpis.total)}</div>
+                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                    {kpiGrowth.total >= 0 ? (
+                      <ArrowUpRight className="w-3 h-3 mr-1" />
+                    ) : (
+                      <ArrowDownRight className="w-3 h-3 mr-1" />
+                    )}
+                    {formatPercentage(kpiGrowth.total)} {comparisonLabel}
+                  </div>
                 </div>
                 <DollarSign className="w-8 h-8" style={{ color: BRAND_COLORS.success }} />
               </div>
@@ -657,7 +808,15 @@ export default function PayrollPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-gray-600 text-sm font-medium mb-2">Average Payment</div>
-                  <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(kpis.avg)}</div>
+                  <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(currentKpis.avg)}</div>
+                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.avg >= 0 ? "text-green-600" : "text-red-600"}`}>
+                    {kpiGrowth.avg >= 0 ? (
+                      <ArrowUpRight className="w-3 h-3 mr-1" />
+                    ) : (
+                      <ArrowDownRight className="w-3 h-3 mr-1" />
+                    )}
+                    {formatPercentage(kpiGrowth.avg)} {comparisonLabel}
+                  </div>
                 </div>
                 <TrendingUp className="w-8 h-8" style={{ color: BRAND_COLORS.warning }} />
               </div>
@@ -667,7 +826,7 @@ export default function PayrollPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-gray-600 text-sm font-medium mb-2">Top Department</div>
-                  <div className="text-3xl font-bold text-gray-900 mb-1">{kpis.topDept}</div>
+                  <div className="text-3xl font-bold text-gray-900 mb-1">{currentKpis.topDept}</div>
                 </div>
                 <PieIcon className="w-8 h-8" style={{ color: BRAND_COLORS.accent }} />
               </div>
