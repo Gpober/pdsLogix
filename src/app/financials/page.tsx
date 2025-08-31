@@ -1351,17 +1351,17 @@ export default function FinancialsPage() {
       {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-6">
-            <div className="flex items-center space-x-4">
+          <div className="flex items-center py-6">
+            <div className="flex-1 flex items-center justify-center space-x-4">
               <TrendingUp
                 className="w-8 h-8"
                 style={{ color: BRAND_COLORS.primary }}
               />
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">
+              <div className="text-center">
+                <h1 className="text-2xl font-bold text-gray-900 text-center">
                   Profit & Loss Statement
                 </h1>
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-gray-600 text-center">
                   {timePeriod === "Custom"
                     ? `${formatDateDisplay(currentStartDate)} - ${formatDateDisplay(currentEndDate)}`
                     : timePeriod === "Monthly"
@@ -1374,7 +1374,7 @@ export default function FinancialsPage() {
                             ? `${formatDateDisplay(currentStartDate)} - ${formatDateDisplay(currentEndDate)}`
                             : `${timePeriod} Period`}
                 </p>
-                <p className="text-xs text-blue-600 mt-1">
+                <p className="text-xs text-blue-600 mt-1 text-center">
                   💰 Using timezone-independent date handling for precise P&L
                   classification
                 </p>
@@ -1663,10 +1663,10 @@ export default function FinancialsPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {dataError ? (
           <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-            <h3 className="text-lg font-medium text-red-800 mb-2">
+            <h3 className="text-lg font-medium text-red-800 mb-2 text-center">
               Error Loading Data
             </h3>
-            <p className="text-red-700">{dataError}</p>
+            <p className="text-red-700 text-center">{dataError}</p>
             <button
               onClick={fetchPLData}
               className="mt-4 inline-flex items-center px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
@@ -1780,11 +1780,11 @@ export default function FinancialsPage() {
 
             {/* P&L Statement Table */}
             <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200">
-                <h2 className="text-lg font-semibold text-gray-900">
+              <div className="px-6 py-4 border-b border-gray-200 text-center">
+                <h2 className="text-lg font-semibold text-gray-900 text-center">
                   Profit & Loss Statement - {viewMode} View
                 </h2>
-                <p className="text-sm text-gray-600 mt-1">
+                <p className="text-sm text-gray-600 mt-1 text-center">
                   {plAccounts.length} accounts • Timezone-independent date
                   handling • Using account_type for P&L classification
                   {viewMode === "Detail" && " • Monthly breakdown"}
@@ -2927,7 +2927,7 @@ export default function FinancialsPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg max-w-3xl w-full max-h-[80vh] flex flex-col">
             <div className="p-4 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
-              <h3 className="text-lg font-semibold text-gray-900">{journalEntryTitle}</h3>
+              <h3 className="flex-1 text-lg font-semibold text-gray-900 text-center">{journalEntryTitle}</h3>
               <button
                 onClick={() => setShowJournalEntryModal(false)}
                 className="text-gray-400 hover:text-gray-600"

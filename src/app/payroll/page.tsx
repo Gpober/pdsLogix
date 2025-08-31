@@ -434,16 +434,16 @@ export default function PayrollPage() {
       {/* Header */}
       <div className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center">
+          <div className="flex items-center justify-center">
             <IAMCFOLogo className="w-8 h-8 mr-4" />
             <div>
-              <div className="flex items-center space-x-3">
-                <h1 className="text-2xl font-bold text-gray-900">I AM CFO</h1>
+              <div className="flex items-center justify-center space-x-3">
+                <h1 className="text-2xl font-bold text-gray-900 text-center">I AM CFO</h1>
                 <span className="text-sm px-3 py-1 rounded-full text-white" style={{ backgroundColor: BRAND_COLORS.primary }}>
                   Payroll Management
                 </span>
               </div>
-              <p className="text-sm text-gray-600 mt-1">Live payments from Supabase • Department insights • Simple exports</p>
+              <p className="text-sm text-gray-600 mt-1 text-center">Live payments from Supabase • Department insights • Simple exports</p>
             </div>
           </div>
         </div>
@@ -453,10 +453,10 @@ export default function PayrollPage() {
         <div className="space-y-8">
           {/* Controls */}
           <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-            <h2 className="text-3xl font-bold" style={{ color: BRAND_COLORS.primary }}>
+            <h2 className="flex-1 text-3xl font-bold text-center" style={{ color: BRAND_COLORS.primary }}>
               Overview
             </h2>
-            <div className="flex flex-wrap gap-4 items-center">
+            <div className="flex flex-wrap gap-4 items-center justify-center lg:justify-end">
               {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
@@ -679,9 +679,9 @@ export default function PayrollPage() {
             {/* Trend */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900">Year-to-Date Payments Trend</h3>
-                  <p className="text-sm text-gray-600 mt-1">Gross/Net show same value (no tax split in table)</p>
+                <div className="flex-1 text-center">
+                  <h3 className="text-xl font-semibold text-gray-900 text-center">Year-to-Date Payments Trend</h3>
+                  <p className="text-sm text-gray-600 mt-1 text-center">Gross/Net show same value (no tax split in table)</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -724,9 +724,9 @@ export default function PayrollPage() {
             {/* Department Totals */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900">Totals by Department</h3>
-                  <p className="text-sm text-gray-600 mt-1">Distribution of payment totals</p>
+                <div className="flex-1 text-center">
+                  <h3 className="text-xl font-semibold text-gray-900 text-center">Totals by Department</h3>
+                  <p className="text-sm text-gray-600 mt-1 text-center">Distribution of payment totals</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -783,9 +783,9 @@ export default function PayrollPage() {
           {/* Summary */}
           <div className="bg-white rounded-xl shadow-sm overflow-hidden mt-8">
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <div className="flex items-center">
+              <div className="flex items-center justify-center flex-1">
                 <IAMCFOLogo className="w-6 h-6 mr-2" />
-                <h3 className="text-xl font-semibold text-gray-900">
+                <h3 className="text-xl font-semibold text-gray-900 text-center">
                   {summaryView === "department" ? "Department Summary" : "Date Summary"}
                 </h3>
               </div>

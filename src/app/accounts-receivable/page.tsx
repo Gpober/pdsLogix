@@ -568,20 +568,20 @@ export default function AccountsReceivablePage() {
       {/* Header */}
       <div className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Accounts Receivable</h1>
-              <p className="text-sm text-gray-600 mt-1">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex-1 text-center">
+              <h1 className="text-2xl font-bold text-gray-900 text-center">Accounts Receivable</h1>
+              <p className="text-sm text-gray-600 mt-1 text-center">
                 Real-time A/R aging from imported aging detail reports
               </p>
-              <p className="text-xs text-blue-600 mt-1">
+              <p className="text-xs text-blue-600 mt-1 text-center">
                 📊 Connected to ar_aging_detail table • Synced hourly
               </p>
             </div>
             <button
               onClick={fetchARData}
               disabled={isLoading}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 mt-4 sm:mt-0"
             >
               <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
               Refresh
@@ -675,8 +675,8 @@ export default function AccountsReceivablePage() {
           {/* Aging Analysis */}
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Aging Analysis</h3>
-              <div className="text-sm text-gray-600 mt-1">Current aging breakdown from latest imported data</div>
+              <h3 className="text-lg font-semibold text-gray-900 text-center">Aging Analysis</h3>
+              <div className="text-sm text-gray-600 mt-1 text-center">Current aging breakdown from latest imported data</div>
             </div>
 
             <div className="p-6">
@@ -774,8 +774,8 @@ export default function AccountsReceivablePage() {
           {/* A/R Table */}
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
             <div className="p-6 border-b border-gray-200">
-              <h3 className="text-lg font-semibold text-gray-900">Outstanding Receivables</h3>
-              <div className="text-sm text-gray-600 mt-1">
+              <h3 className="text-lg font-semibold text-gray-900 text-center">Outstanding Receivables</h3>
+              <div className="text-sm text-gray-600 mt-1 text-center">
                 Showing {filteredData.length} of {arGroupedData.length} customer groups • Click any amount to drill down
               </div>
             </div>
@@ -1051,17 +1051,17 @@ export default function AccountsReceivablePage() {
           <div className="bg-white rounded-lg max-w-5xl w-full max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-200 flex-shrink-0">
               <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    {selectedAgingFilter && selectedAgingFilter !== 'all' 
-                      ? `${selectedAgingFilter === 'current' ? 'Current (0-30)' : 
+                <div className="flex-1 text-center">
+                  <h3 className="text-lg font-semibold text-gray-900 text-center">
+                    {selectedAgingFilter && selectedAgingFilter !== 'all'
+                      ? `${selectedAgingFilter === 'current' ? 'Current (0-30)' :
                           selectedAgingFilter === '31-60' ? '31-60 Days' :
                           selectedAgingFilter === '61-90' ? '61-90 Days' :
                           '90+ Days'} Invoices - ${selectedCustomerData.customer}`
                       : `All Outstanding Invoices - ${selectedCustomerData.customer}`
                     }
                   </h3>
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-gray-600 text-center">
                     {selectedAgingFilter && selectedAgingFilter !== 'all'
                       ? `Showing ${filteredInvoices.length} invoices in this aging category • Total: ${formatCurrency(filteredInvoices.reduce((sum, inv) => sum + inv.open_balance, 0))}`
                       : `Outstanding balance: ${formatCurrency(selectedCustomerData.balance)} • ${selectedCustomerData.invoiceCount} invoices`
@@ -1146,7 +1146,7 @@ export default function AccountsReceivablePage() {
           <div className="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-200 flex-shrink-0">
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-semibold text-gray-900">
+                <h3 className="flex-1 text-lg font-semibold text-gray-900 text-center">
                   Payments - {selectedPaymentCustomer}
                 </h3>
                 <button
@@ -1195,11 +1195,11 @@ export default function AccountsReceivablePage() {
           <div className="bg-white rounded-lg max-w-6xl w-full max-h-[80vh] flex flex-col">
             <div className="p-6 border-b border-gray-200 flex-shrink-0">
               <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-gray-900">
+                <div className="flex-1 text-center">
+                  <h3 className="text-lg font-semibold text-gray-900 text-center">
                     Journal Entry Details
                   </h3>
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-gray-600 text-center">
                     Invoice #{selectedJournalEntry[0]?.number} • Entry #{selectedJournalEntry[0]?.entry_number} • Date: {formatDateSafe(selectedJournalEntry[0]?.date)} • {selectedJournalEntry.length} lines
                   </p>
                 </div>
