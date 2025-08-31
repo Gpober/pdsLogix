@@ -6,8 +6,6 @@ import Link from "next/link";
 import {
   DollarSign,
   TrendingUp,
-  Building2,
-  CreditCard,
   ArrowUpRight,
   ArrowDownRight,
   ArrowUp,
@@ -142,6 +140,72 @@ const classifyCashFlowTransaction = (accountType) => {
   return "other";
 };
 
+// ---------- String normalization + fuzzy match ----------
+const norm = (s: string) =>
+  (s || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[\s\-_.,/\\|]+/g, "")
+    .replace(/[^a-z0-9]/g, "");
+
+// Quick substring/containment match (cheap pass)
+const looseContains = (a: string, b: string) => a.includes(b) || b.includes(a);
+
+// Levenshtein distance (fast enough for small lists)
+const levenshtein = (a: string, b: string) => {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const v0 = new Array(b.length + 1).fill(0);
+  const v1 = new Array(b.length + 1).fill(0);
+  for (let i = 0; i <= b.length; i++) v0[i] = i;
+  for (let i = 0; i < a.length; i++) {
+    v1[0] = i + 1;
+    for (let j = 0; j < b.length; j++) {
+      const cost = a[i] === b[j] ? 0 : 1;
+      v1[j + 1] = Math.min(v1[j] + 1, v0[j + 1] + 1, v0[j] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) v0[j] = v1[j];
+  }
+  return v1[b.length];
+};
+
+// Convert distance to similarity 0..1 (1 = identical)
+const levSim = (a: string, b: string) => {
+  if (!a && !b) return 1;
+  const d = levenshtein(a, b);
+  const maxLen = Math.max(a.length, b.length) || 1;
+  return 1 - d / maxLen;
+};
+
+// Combined similarity: exact/containment first, else Levenshtein
+const similarity = (rawA: string, rawB: string) => {
+  const a = norm(rawA),
+    b = norm(rawB);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (looseContains(a, b)) return 0.98; // strong positive if substring
+  return levSim(a, b); // fallback
+};
+
+// Decide if a department matches any selected customers (threshold tuned)
+const matchesSelectedCustomers = (
+  department: string,
+  selected: string[],
+  threshold = 0.72,
+) => {
+  if (!selected.length) return true; // "All Customers"
+  const dn = norm(department);
+  if (!dn) return false;
+  let best = 0;
+  for (const cust of selected) {
+    const score = similarity(department, cust);
+    if (score > best) best = score;
+    if (best >= 0.98) break; // early exit on strong match
+  }
+  return best >= threshold;
+};
+
 export default function FinancialOverviewPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(
@@ -195,6 +259,19 @@ export default function FinancialOverviewPage() {
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [propertyError, setPropertyError] = useState<string | null>(null);
+  type PayrollSummary = {
+    employees: number;
+    w2: number;
+    contractors: number;
+    netPay: number;
+    grossPayroll: number;
+    employerTaxes: number;
+    benefits: number;
+    contractorPayments: number;
+  };
+  const [payrollSummary, setPayrollSummary] = useState<PayrollSummary | null>(null);
+  const [payrollLoading, setPayrollLoading] = useState(false);
+  const [payrollError, setPayrollError] = useState<string | null>(null);
   const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
     new Set(["All Customers"]),
   );
@@ -994,6 +1071,90 @@ export default function FinancialOverviewPage() {
     }
   };
 
+  const fetchPayrollSummary = async () => {
+    try {
+      setPayrollLoading(true);
+      setPayrollError(null);
+      const { startDate, endDate } = calculateDateRange();
+      let query = supabase.from("payments").select("*");
+      if (startDate) query = query.gte("date", startDate);
+      if (endDate) query = query.lte("date", endDate);
+      const { data, error } = await query;
+      if (error) throw error;
+      const rows = (data || []) as any[];
+      const selected = Array.from(selectedCustomers).filter(
+        (c) => c !== "All Customers",
+      );
+      const filtered = rows.filter((r) =>
+        matchesSelectedCustomers(r.department || "", selected),
+      );
+
+      const w2Ids = new Set<string>();
+      const contractorIds = new Set<string>();
+      let netPay = 0;
+      let grossPayroll = 0;
+      let employerTaxes = 0;
+      let benefits = 0;
+      let contractorPayments = 0;
+
+      const pick = (obj: any, keys: string[]) => {
+        for (const k of keys) {
+          const v = obj?.[k];
+          if (v !== undefined && v !== null) return v;
+        }
+        return undefined;
+      };
+
+      for (const r of filtered) {
+        const id = String(
+          pick(r, ["employee_id", "employeeid", "emp_id"]) ??
+            pick(r, ["employee_name", "employee", "name", "full_name"]),
+        );
+        const type = String(
+          pick(r, ["employee_type", "worker_type", "employment_type", "type"]),
+        ).toLowerCase();
+        if (id) {
+          if (type.includes("contract")) contractorIds.add(id);
+          else w2Ids.add(id);
+        }
+        netPay += Number(
+          pick(r, ["net_pay", "net", "net_payment", "netpay"]) || 0,
+        );
+        grossPayroll += Number(
+          pick(r, ["gross_pay", "gross", "gross_payroll", "total_amount"]) ||
+            0,
+        );
+        employerTaxes += Number(
+          pick(r, ["employer_taxes", "employer_tax", "taxes", "tax"]) || 0,
+        );
+        benefits += Number(
+          pick(r, ["benefits", "benefit", "total_benefits"]) || 0,
+        );
+        contractorPayments += Number(
+          pick(r, ["contractor_pay", "contractors", "contractor", "contractor_amount"]) ||
+            0,
+        );
+      }
+
+      setPayrollSummary({
+        employees: new Set([...w2Ids, ...contractorIds]).size,
+        w2: w2Ids.size,
+        contractors: contractorIds.size,
+        netPay,
+        grossPayroll,
+        employerTaxes,
+        benefits,
+        contractorPayments,
+      });
+    } catch (e) {
+      const err = e as Error;
+      setPayrollError(err.message);
+      setPayrollSummary(null);
+    } finally {
+      setPayrollLoading(false);
+    }
+  };
+
   const handleSync = async () => {
     try {
       await fetch("/api/sync", { method: "POST" });
@@ -1002,6 +1163,7 @@ export default function FinancialOverviewPage() {
     } finally {
       loadTrendData();
       loadPropertyData();
+      fetchPayrollSummary();
     }
   };
 
@@ -1011,6 +1173,7 @@ export default function FinancialOverviewPage() {
     fetchFinancialData();
     loadTrendData();
     loadPropertyData();
+    fetchPayrollSummary();
   }, [
     timePeriod,
     selectedMonth,
@@ -1180,38 +1343,6 @@ export default function FinancialOverviewPage() {
     }
     return null;
   };
-
-  // Quick actions configuration
-  const quickActions = [
-    {
-      title: "P&L Statement",
-      description: "Detailed profit and loss analysis",
-      href: "/financials",
-      icon: BarChart3,
-      color: BRAND_COLORS.primary,
-    },
-    {
-      title: "Cash Flow Analysis",
-      description: "Track cash inflows and outflows",
-      href: "/cash-flow",
-      icon: TrendingUp,
-      color: BRAND_COLORS.success,
-    },
-    {
-      title: "Balance Sheet",
-      description: "Assets, liabilities, and equity",
-      href: "/balance-sheet",
-      icon: Building2,
-      color: BRAND_COLORS.secondary,
-    },
-    {
-      title: "Accounts Receivable",
-      description: "Customer payments and aging",
-      href: "/accounts-receivable",
-      icon: CreditCard,
-      color: BRAND_COLORS.warning,
-    },
-  ];
 
   if (error) {
     return (
@@ -1815,42 +1946,79 @@ export default function FinancialOverviewPage() {
 
             {/* Financial Health Summary */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Quick Actions */}
+              {/* Payroll Summary */}
               <div className="bg-white rounded-lg shadow-sm overflow-hidden">
                 <div className="p-6 border-b border-gray-200">
                   <h3 className="text-lg font-semibold text-gray-900">
-                    Quick Actions
+                    Payroll Summary
                   </h3>
                   <div className="text-sm text-gray-600 mt-1">
-                    Access detailed financial reports
+                    Overview of payroll activity
                   </div>
                 </div>
                 <div className="p-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {quickActions.map((action) => (
-                      <Link
-                        key={action.title}
-                        href={action.href}
-                        className="group p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md transition-all"
-                      >
-                        <div className="flex items-center mb-3">
-                          <action.icon
-                            className="w-6 h-6 mr-3"
-                            style={{ color: action.color }}
-                          />
-                          <h4 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
-                            {action.title}
-                          </h4>
+                  {payrollLoading ? (
+                    <div className="text-sm text-gray-500">Loading...</div>
+                  ) : payrollError ? (
+                    <div className="text-sm text-red-500">{payrollError}</div>
+                  ) : payrollSummary ? (
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <div className="text-gray-500">Employees Paid</div>
+                        <div className="text-lg font-semibold">
+                          {payrollSummary.employees}
                         </div>
-                        <p className="text-sm text-gray-600">
-                          {action.description}
-                        </p>
-                        <div className="mt-2 text-xs text-blue-600 font-medium">
-                          View Details →
+                      </div>
+                      <div>
+                        <div className="text-gray-500">W-2 Headcount</div>
+                        <div className="text-lg font-semibold">
+                          {payrollSummary.w2}
                         </div>
-                      </Link>
-                    ))}
-                  </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">
+                          Contractor Headcount
+                        </div>
+                        <div className="text-lg font-semibold">
+                          {payrollSummary.contractors}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Net Pay</div>
+                        <div className="text-lg font-semibold">
+                          {formatCurrency(payrollSummary.netPay)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Gross Payroll</div>
+                        <div className="text-lg font-semibold">
+                          {formatCurrency(payrollSummary.grossPayroll)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Employer Taxes</div>
+                        <div className="text-lg font-semibold">
+                          {formatCurrency(payrollSummary.employerTaxes)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Benefits</div>
+                        <div className="text-lg font-semibold">
+                          {formatCurrency(payrollSummary.benefits)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Contractors</div>
+                        <div className="text-lg font-semibold">
+                          {formatCurrency(payrollSummary.contractorPayments)}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">
+                      No payroll data
+                    </div>
+                  )}
                 </div>
               </div>
 
