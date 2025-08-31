@@ -773,7 +773,7 @@ export default function PayrollPage() {
                 <div>
                   <div className="text-gray-600 text-sm font-medium mb-2">Total Transactions</div>
                   <div className="text-3xl font-bold text-gray-900 mb-1">{currentKpis.totalTx}</div>
-                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.totalTx >= 0 ? "text-green-600" : "text-red-600"}`}>
+                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.totalTx >= 0 ? "text-red-600" : "text-green-600"}`}>
                     {kpiGrowth.totalTx >= 0 ? (
                       <ArrowUpRight className="w-3 h-3 mr-1" />
                     ) : (
@@ -791,7 +791,7 @@ export default function PayrollPage() {
                 <div>
                   <div className="text-gray-600 text-sm font-medium mb-2">Total Payroll</div>
                   <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(currentKpis.total)}</div>
-                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.total >= 0 ? "text-red-600" : "text-green-600"}`}>
                     {kpiGrowth.total >= 0 ? (
                       <ArrowUpRight className="w-3 h-3 mr-1" />
                     ) : (
@@ -809,7 +809,7 @@ export default function PayrollPage() {
                 <div>
                   <div className="text-gray-600 text-sm font-medium mb-2">Average Payment</div>
                   <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(currentKpis.avg)}</div>
-                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.avg >= 0 ? "text-green-600" : "text-red-600"}`}>
+                  <div className={`flex items-center text-xs font-medium ${kpiGrowth.avg >= 0 ? "text-red-600" : "text-green-600"}`}>
                     {kpiGrowth.avg >= 0 ? (
                       <ArrowUpRight className="w-3 h-3 mr-1" />
                     ) : (
