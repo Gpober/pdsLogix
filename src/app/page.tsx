@@ -144,8 +144,12 @@ const classifyCashFlowTransaction = (accountType) => {
 
 export default function FinancialOverviewPage() {
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState("June");
-  const [selectedYear, setSelectedYear] = useState("2024");
+  const [selectedMonth, setSelectedMonth] = useState(
+    () => new Date().toLocaleString("en-US", { month: "long" }),
+  );
+  const [selectedYear, setSelectedYear] = useState(
+    () => new Date().getFullYear().toString(),
+  );
   type TimePeriod = "Monthly" | "Quarterly" | "YTD" | "Trailing 12" | "Custom";
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("YTD");
   const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false);

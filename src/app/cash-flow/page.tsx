@@ -163,8 +163,12 @@ const yearsList = Array.from({ length: 10 }, (_, i) => (new Date().getFullYear()
 
 export default function CashFlowPage() {
   // All state variables
-  const [selectedMonth, setSelectedMonth] = useState<string>("June")
-  const [selectedYear, setSelectedYear] = useState<string>("2024")
+  const [selectedMonth, setSelectedMonth] = useState<string>(
+    () => new Date().toLocaleString("en-US", { month: "long" }),
+  )
+  const [selectedYear, setSelectedYear] = useState<string>(
+    () => new Date().getFullYear().toString(),
+  )
   const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly")
   // Filter by customer instead of class/property
   const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set(["All Customers"]))
@@ -700,8 +704,9 @@ export default function CashFlowPage() {
     let endDate: string
 
     if (timePeriod === "Custom") {
-      startDate = customStartDate || "2024-01-01"
-      endDate = customEndDate || "2024-12-31"
+      const year = new Date().getFullYear()
+      startDate = customStartDate || `${year}-01-01`
+      endDate = customEndDate || `${year}-12-31`
     } else if (timePeriod === "YTD") {
       const monthIndex = monthsList.indexOf(selectedMonth)
       const year = Number.parseInt(selectedYear)
