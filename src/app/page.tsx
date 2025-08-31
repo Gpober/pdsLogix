@@ -278,6 +278,20 @@ export default function FinancialOverviewPage() {
   const [availableCustomers, setAvailableCustomers] = useState<string[]>([
     "All Customers",
   ]);
+  const comparisonLabel = useMemo(() => {
+    switch (timePeriod) {
+      case "Monthly":
+        return "vs last month";
+      case "Quarterly":
+        return "vs last quarter";
+      case "YTD":
+        return "vs prior YTD";
+      case "Trailing 12":
+        return "vs prior 12 months";
+      default:
+        return "vs previous period";
+    }
+  }, [timePeriod]);
   const [customStartDate, setCustomStartDate] = useState("");
   const [customEndDate, setCustomEndDate] = useState("");
   type SortColumn =
@@ -430,6 +444,87 @@ export default function FinancialOverviewPage() {
     return { startDate, endDate };
   };
 
+  const calculatePreviousDateRange = (startDate: string, endDate: string) => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (timePeriod === "Monthly") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = Number.parseInt(selectedYear);
+      const prevMonthIndex = monthIndex === 0 ? 11 : monthIndex - 1;
+      const prevYear = monthIndex === 0 ? year - 1 : year;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      let lastDay = daysInMonth[prevMonthIndex];
+      if (
+        prevMonthIndex === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-01`,
+        prevEndDate: `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "Quarterly") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = Number.parseInt(selectedYear);
+      const quarter = Math.floor(monthIndex / 3);
+      const prevQuarterStartMonth = quarter * 3 - 3;
+      const adjustedStartMonth = (prevQuarterStartMonth + 12) % 12;
+      const prevYear = prevQuarterStartMonth < 0 ? year - 1 : year;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      const prevQuarterEndMonth = adjustedStartMonth + 2;
+      let lastDay = daysInMonth[prevQuarterEndMonth];
+      if (
+        prevQuarterEndMonth === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-${String(adjustedStartMonth + 1).padStart(2, "0")}-01`,
+        prevEndDate: `${prevYear}-${String(prevQuarterEndMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "YTD") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = Number.parseInt(selectedYear);
+      const prevYear = year - 1;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      let lastDay = daysInMonth[monthIndex];
+      if (
+        monthIndex === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-01-01`,
+        prevEndDate: `${prevYear}-${String(monthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "Trailing 12") {
+      const prevStart = new Date(start);
+      const prevEnd = new Date(end);
+      prevStart.setFullYear(prevStart.getFullYear() - 1);
+      prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+      return {
+        prevStartDate: prevStart.toISOString().split("T")[0],
+        prevEndDate: prevEnd.toISOString().split("T")[0],
+      };
+    } else {
+      const diff =
+        Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) +
+        1;
+      const prevEnd = new Date(start);
+      prevEnd.setDate(prevEnd.getDate() - 1);
+      const prevStart = new Date(prevEnd);
+      prevStart.setDate(prevStart.getDate() - (diff - 1));
+      return {
+        prevStartDate: prevStart.toISOString().split("T")[0],
+        prevEndDate: prevEnd.toISOString().split("T")[0],
+      };
+    }
+  };
+
   // Click outside handler for dropdowns
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -554,19 +649,10 @@ export default function FinancialOverviewPage() {
       );
 
       // Fetch previous period for comparison
-      const prevMonthIndex = monthIndex === 0 ? 11 : monthIndex - 1;
-      const prevYear = monthIndex === 0 ? year - 1 : year;
-      const prevStartDate = `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-01`;
-
-      const prevDaysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-      let prevLastDay = prevDaysInMonth[prevMonthIndex];
-      if (
-        prevMonthIndex === 1 &&
-        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
-      ) {
-        prevLastDay = 29;
-      }
-      const prevEndDate = `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(prevLastDay).padStart(2, "0")}`;
+      const { prevStartDate, prevEndDate } = calculatePreviousDateRange(
+        startDate,
+        endDate,
+      );
 
       let prevQuery = supabase
         .from("journal_entry_lines")
@@ -1598,8 +1684,7 @@ export default function FinancialOverviewPage() {
                       ) : (
                         <ArrowDownRight className="w-3 h-3 mr-1" />
                       )}
-                      {formatPercentage(financialData.growth.revenue)} vs last
-                      month
+                      {formatPercentage(financialData.growth.revenue)} {comparisonLabel}
                     </div>
                   </div>
                   <DollarSign
@@ -1633,8 +1718,7 @@ export default function FinancialOverviewPage() {
                       ) : (
                         <ArrowDownRight className="w-3 h-3 mr-1" />
                       )}
-                      {formatPercentage(financialData.growth.netIncome)} vs last
-                      month
+                      {formatPercentage(financialData.growth.netIncome)} {comparisonLabel}
                     </div>
                   </div>
                   <TrendingUp className="w-8 h-8 text-green-500" />
@@ -1665,8 +1749,7 @@ export default function FinancialOverviewPage() {
                       ) : (
                         <ArrowDownRight className="w-3 h-3 mr-1" />
                       )}
-                      {formatPercentage(financialData.growth.cashFlow)} vs last
-                      month
+                      {formatPercentage(financialData.growth.cashFlow)} {comparisonLabel}
                     </div>
                   </div>
                   <Activity
