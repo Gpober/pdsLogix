@@ -637,19 +637,7 @@ export default function FinancialsPage() {
   };
 
   const handleExportExcel = () => {
-    const months = Array.from(
-      new Set(
-        plAccounts.flatMap((acc) =>
-          acc.transactions.map((tx) => getMonthYear(tx.date)),
-        ),
-      ),
-    ).sort((a, b) => {
-      const [monthA, yearA] = a.split(" ");
-      const [monthB, yearB] = b.split(" ");
-      const monthIndexA = monthsList.indexOf(monthA);
-      const monthIndexB = monthsList.indexOf(monthB);
-      return Number(yearA) - Number(yearB) || monthIndexA - monthIndexB;
-    });
+    const headers = getColumnHeaders();
 
     const incomeAccounts = plAccounts.filter(
       (acc) => acc.category === "INCOME",
@@ -665,213 +653,73 @@ export default function FinancialsPage() {
         !acc.account_type?.toLowerCase().includes("cost of goods sold"),
     );
 
-    const header = ["Account", ...months, "Total"];
-    const sheetData: (string | number | { f: string; z?: string })[][] = [
-      header,
+    const sheetData: (string | number)[][] = [
+      ["Account", ...headers, "Total"],
     ];
-    const colLetters = months.map((_, i) => XLSX.utils.encode_col(i + 1));
-    const totalCol = XLSX.utils.encode_col(months.length + 1);
-    let currentRow = 1;
 
-    const rowTotalFormula = (rowNum: number) =>
-      `SUM(${colLetters[0]}${rowNum}:${colLetters[colLetters.length - 1]}${rowNum})`;
-
-    const addAccountRows = (accounts: PLAccount[]) => {
-      const start = currentRow + 1;
-      accounts.forEach((acc) => {
-        const excelRow = currentRow + 1;
-        const values = months.map((m) => calculateMonthlyValue(acc, m));
-        const row: (string | number | { f: string })[] = [
-          acc.account,
-          ...values,
-        ];
-        row.push({ f: rowTotalFormula(excelRow) });
-        sheetData.push(row);
-        currentRow++;
-      });
-      const end = currentRow;
-      return { start, end };
+    const buildRow = (acc: PLAccount) => {
+      const row: (string | number)[] = [acc.account];
+      headers.forEach((h) => row.push(getCellValue(acc, h)));
+      row.push(acc.amount);
+      return row;
     };
 
-    const incomeRange = addAccountRows(incomeAccounts);
-    const totalIncomeRowIdx = currentRow + 1;
-    const totalIncomeRow = [
-      "Total Income",
-      ...colLetters.map((letter) =>
-        incomeAccounts.length > 0
-          ? { f: `SUM(${letter}${incomeRange.start}:${letter}${incomeRange.end})` }
-          : 0,
-      ),
-      incomeAccounts.length > 0 ? { f: rowTotalFormula(totalIncomeRowIdx) } : 0,
-    ];
-    sheetData.push(totalIncomeRow);
-    currentRow++;
+    const sumByHeader = (accounts: PLAccount[], header: string) =>
+      accounts.reduce((sum, acc) => sum + getCellValue(acc, header), 0);
 
-    const cogsRange = addAccountRows(cogsAccounts);
-    const totalCogsRowIdx = currentRow + 1;
-    const totalCogsRow = [
-      "Total COGS",
-      ...colLetters.map((letter) =>
-        cogsAccounts.length > 0
-          ? { f: `SUM(${letter}${cogsRange.start}:${letter}${cogsRange.end})` }
-          : 0,
-      ),
-      cogsAccounts.length > 0 ? { f: rowTotalFormula(totalCogsRowIdx) } : 0,
-    ];
-    sheetData.push(totalCogsRow);
-    currentRow++;
+    const addSection = (accounts: PLAccount[], name: string) => {
+      accounts.forEach((acc) => sheetData.push(buildRow(acc)));
+      const totals = headers.map((h) => sumByHeader(accounts, h));
+      const totalAmount = accounts.reduce((sum, acc) => sum + acc.amount, 0);
+      sheetData.push([`Total ${name}`, ...totals, totalAmount]);
+    };
 
-    const grossProfitRowIdx = currentRow + 1;
-    const grossProfitRow = [
-      "Gross Profit",
-      ...colLetters.map((letter) => ({
-        f: `${letter}${totalIncomeRowIdx}-${letter}${totalCogsRowIdx}`,
-      })),
-      { f: `${totalCol}${totalIncomeRowIdx}-${totalCol}${totalCogsRowIdx}` },
-    ];
-    sheetData.push(grossProfitRow);
-    currentRow++;
+    addSection(incomeAccounts, "Income");
+    addSection(cogsAccounts, "COGS");
 
-    const gpPercentRowIdx = currentRow + 1;
-    const gpPercentRow = [
+    const incomeTotals = headers.map((h) => sumByHeader(incomeAccounts, h));
+    const cogsTotals = headers.map((h) => sumByHeader(cogsAccounts, h));
+    const gross = incomeTotals.map((v, i) => v - cogsTotals[i]);
+    const grossTotal =
+      incomeAccounts.reduce((s, a) => s + a.amount, 0) -
+      cogsAccounts.reduce((s, a) => s + a.amount, 0);
+    sheetData.push(["Gross Profit", ...gross, grossTotal]);
+    const grossPct = gross.map((v, i) =>
+      incomeTotals[i] === 0 ? 0 : v / incomeTotals[i],
+    );
+    sheetData.push([
       "Gross Profit %",
-      ...colLetters.map((letter) => ({
-        f: `IF(${letter}${totalIncomeRowIdx}=0,0,${letter}${grossProfitRowIdx}/${letter}${totalIncomeRowIdx})`,
-        z: "0.00%",
-      })),
-      {
-        f: `IF(${totalCol}${totalIncomeRowIdx}=0,0,${totalCol}${grossProfitRowIdx}/${totalCol}${totalIncomeRowIdx})`,
-        z: "0.00%",
-      },
-    ];
-    sheetData.push(gpPercentRow);
-    currentRow++;
+      ...grossPct,
+      incomeAccounts.reduce((s, a) => s + a.amount, 0) === 0
+        ? 0
+        : grossTotal / incomeAccounts.reduce((s, a) => s + a.amount, 0),
+    ]);
 
-    // Blank row
-    sheetData.push([]);
-    currentRow++;
+    addSection(expenseAccounts, "Expenses");
 
-    const expenseRange = addAccountRows(expenseAccounts);
-    const totalExpenseRowIdx = currentRow + 1;
-    const totalExpenseRow = [
-      "Total Expenses",
-      ...colLetters.map((letter) =>
-        expenseAccounts.length > 0
-          ? { f: `SUM(${letter}${expenseRange.start}:${letter}${expenseRange.end})` }
-          : 0,
-      ),
-      expenseAccounts.length > 0 ? { f: rowTotalFormula(totalExpenseRowIdx) } : 0,
-    ];
-    sheetData.push(totalExpenseRow);
-    currentRow++;
-
-    const netIncomeRowIdx = currentRow + 1;
-    const netIncomeRow = [
-      "Net Income",
-      ...colLetters.map((letter) => ({
-        f: `${letter}${grossProfitRowIdx}-${letter}${totalExpenseRowIdx}`,
-      })),
-      { f: `${totalCol}${grossProfitRowIdx}-${totalCol}${totalExpenseRowIdx}` },
-    ];
-    sheetData.push(netIncomeRow);
-    currentRow++;
-
-    const netIncomePercentRowIdx = currentRow + 1;
-    const netIncomePercentRow = [
+    const expenseTotals = headers.map((h) => sumByHeader(expenseAccounts, h));
+    const net = gross.map((v, i) => v - expenseTotals[i]);
+    const netTotal = grossTotal - expenseAccounts.reduce((s, a) => s + a.amount, 0);
+    sheetData.push(["Net Income", ...net, netTotal]);
+    const netPct = net.map((v, i) =>
+      incomeTotals[i] === 0 ? 0 : v / incomeTotals[i],
+    );
+    sheetData.push([
       "Net Income %",
-      ...colLetters.map((letter) => ({
-        f: `IF(${letter}${totalIncomeRowIdx}=0,0,${letter}${netIncomeRowIdx}/${letter}${totalIncomeRowIdx})`,
-        z: "0.00%",
-      })),
-      {
-        f: `IF(${totalCol}${totalIncomeRowIdx}=0,0,${totalCol}${netIncomeRowIdx}/${totalCol}${totalIncomeRowIdx})`,
-        z: "0.00%",
-      },
-    ];
-    sheetData.push(netIncomePercentRow);
+      ...netPct,
+      incomeAccounts.reduce((s, a) => s + a.amount, 0) === 0
+        ? 0
+        : netTotal / incomeAccounts.reduce((s, a) => s + a.amount, 0),
+    ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
-
-    const applyStyleToRow = (rowIdx: number, style: any) => {
-    const range = XLSX.utils.decode_range(worksheet["!ref"] as string);
-    for (let C = range.s.c; C <= range.e.c; ++C) {
-      const cellRef = XLSX.utils.encode_cell({ r: rowIdx - 1, c: C });
-      const cell = worksheet[cellRef];
-      if (cell) {
-        cell.s = {
-          ...((cell as any).s || {}),
-          ...(style.font
-            ? { font: { ...(((cell as any).s || {}).font || {}), ...style.font } }
-            : {}),
-          ...(style.border
-            ? { border: { ...(((cell as any).s || {}).border || {}), ...style.border } }
-            : {}),
-        };
-      }
-    }
-  };
-
-    [
-      totalIncomeRowIdx,
-      totalCogsRowIdx,
-      grossProfitRowIdx,
-      totalExpenseRowIdx,
-      netIncomeRowIdx,
-    ].forEach((r) =>
-      applyStyleToRow(r, {
-        font: { bold: true },
-        border: { top: { style: "thin" } },
-      }),
-    );
-
-    [gpPercentRowIdx, netIncomePercentRowIdx].forEach((r) =>
-      applyStyleToRow(r, {
-        font: { italic: true },
-        border: { top: { style: "thin" } },
-      }),
-    );
-
-    const financialFormat = "$#,##0.00;($#,##0.00)";
-    const range = XLSX.utils.decode_range(worksheet["!ref"] as string);
-    for (let R = 1; R <= range.e.r; ++R) {
-      if (R + 1 === gpPercentRowIdx || R + 1 === netIncomePercentRowIdx) continue;
-      for (let C = 1; C <= range.e.c; ++C) {
-        const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
-        const cell = worksheet[cellRef];
-        if (cell) {
-          cell.z = financialFormat;
-        }
-      }
-    }
-
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "P&L");
     XLSX.writeFile(workbook, "pl_accounts.xlsx");
   };
 
   const handleExportPdf = () => {
-    const months = Array.from(
-      new Set(
-        plAccounts.flatMap((acc) =>
-          acc.transactions.map((tx) => getMonthYear(tx.date)),
-        ),
-      ),
-    ).sort((a, b) => {
-      const [monthA, yearA] = a.split(" ");
-      const [monthB, yearB] = b.split(" ");
-      const monthIndexA = monthsList.indexOf(monthA);
-      const monthIndexB = monthsList.indexOf(monthB);
-      return Number(yearA) - Number(yearB) || monthIndexA - monthIndexB;
-    });
-
-    const doc = new jsPDF();
-    const tableColumn = ["Account", ...months];
-    const tableRows = plAccounts.map((acc) => {
-      const row = months.map((monthYear) =>
-        calculateMonthlyValue(acc, monthYear),
-      );
-      return [acc.account, ...row];
-    });
+    const headers = getColumnHeaders();
 
     const incomeAccounts = plAccounts.filter(
       (acc) => acc.category === "INCOME",
@@ -887,52 +735,74 @@ export default function FinancialsPage() {
         !acc.account_type?.toLowerCase().includes("cost of goods sold"),
     );
 
-    const totalIncomeArr: number[] = [];
-    const totalCogs: number[] = [];
-    const grossProfit: number[] = [];
-    const grossProfitPct: number[] = [];
-    const totalExpenses: number[] = [];
-    const netIncome: number[] = [];
+    const tableColumn = ["Account", ...headers, "Total"];
+    const tableRows: (string | number)[][] = [];
 
-    months.forEach((monthYear) => {
-      const income = incomeAccounts.reduce(
-        (sum, acc) => sum + calculateMonthlyValue(acc, monthYear),
-        0,
-      );
-      const cogs = cogsAccounts.reduce(
-        (sum, acc) => sum + calculateMonthlyValue(acc, monthYear),
-        0,
-      );
-      const expenses = expenseAccounts.reduce(
-        (sum, acc) => sum + calculateMonthlyValue(acc, monthYear),
-        0,
-      );
-      const gp = income - cogs;
-      const net = gp - expenses;
-      totalIncomeArr.push(income);
-      totalCogs.push(cogs);
-      grossProfit.push(gp);
-      grossProfitPct.push(income !== 0 ? gp / income : 0);
-      totalExpenses.push(expenses);
-      netIncome.push(net);
-    });
+    const buildRow = (acc: PLAccount) => {
+      const row: (string | number)[] = [acc.account];
+      headers.forEach((h) => row.push(getCellValue(acc, h)));
+      row.push(acc.amount);
+      tableRows.push(row);
+    };
 
-    tableRows.push(
-      ["Total Income", ...totalIncomeArr],
-      ["Total COGS", ...totalCogs],
-      ["Gross Profit", ...grossProfit],
-      [
-        "Gross Profit %",
-        ...grossProfitPct.map((p) => `${(p * 100).toFixed(2)}%`),
-      ],
-      ["Total Expenses", ...totalExpenses],
-      ["Net Income", ...netIncome],
+    const sumByHeader = (accounts: PLAccount[], header: string) =>
+      accounts.reduce((sum, acc) => sum + getCellValue(acc, header), 0);
+
+    const addSection = (accounts: PLAccount[], name: string) => {
+      accounts.forEach(buildRow);
+      const totals = headers.map((h) => sumByHeader(accounts, h));
+      const totalAmount = accounts.reduce((sum, acc) => sum + acc.amount, 0);
+      tableRows.push([`Total ${name}`, ...totals, totalAmount]);
+    };
+
+    addSection(incomeAccounts, "Income");
+    addSection(cogsAccounts, "COGS");
+
+    const incomeTotals = headers.map((h) => sumByHeader(incomeAccounts, h));
+    const cogsTotals = headers.map((h) => sumByHeader(cogsAccounts, h));
+    const gross = incomeTotals.map((v, i) => v - cogsTotals[i]);
+    const grossTotal =
+      incomeAccounts.reduce((s, a) => s + a.amount, 0) -
+      cogsAccounts.reduce((s, a) => s + a.amount, 0);
+    tableRows.push(["Gross Profit", ...gross, grossTotal]);
+    const grossPct = gross.map((v, i) =>
+      incomeTotals[i] === 0 ? 0 : v / incomeTotals[i],
     );
+    tableRows.push([
+      "Gross Profit %",
+      ...grossPct.map((p) => `${(p * 100).toFixed(2)}%`),
+      incomeAccounts.reduce((s, a) => s + a.amount, 0) === 0
+        ? "0%"
+        : `${(
+            (grossTotal /
+              incomeAccounts.reduce((s, a) => s + a.amount, 0)) *
+            100
+          ).toFixed(2)}%`,
+    ]);
 
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-    });
+    addSection(expenseAccounts, "Expenses");
+
+    const expenseTotals = headers.map((h) => sumByHeader(expenseAccounts, h));
+    const net = gross.map((v, i) => v - expenseTotals[i]);
+    const netTotal = grossTotal - expenseAccounts.reduce((s, a) => s + a.amount, 0);
+    tableRows.push(["Net Income", ...net, netTotal]);
+    const netPct = net.map((v, i) =>
+      incomeTotals[i] === 0 ? 0 : v / incomeTotals[i],
+    );
+    tableRows.push([
+      "Net Income %",
+      ...netPct.map((p) => `${(p * 100).toFixed(2)}%`),
+      incomeAccounts.reduce((s, a) => s + a.amount, 0) === 0
+        ? "0%"
+        : `${(
+            (netTotal /
+              incomeAccounts.reduce((s, a) => s + a.amount, 0)) *
+            100
+          ).toFixed(2)}%`,
+    ]);
+
+    const doc = new jsPDF();
+    autoTable(doc, { head: [tableColumn], body: tableRows });
     doc.save("pl_accounts.pdf");
   };
 
