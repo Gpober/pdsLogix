@@ -509,14 +509,16 @@ export default function EnhancedMobileDashboard() {
   };
 
   const getDateRange = useCallback(() => {
+    const makeUTCDate = (y: number, m: number, d: number) =>
+      new Date(Date.UTC(y, m, d));
     const y = year;
     const m = month;
     if (reportPeriod === "Custom" && customStart && customEnd) {
       return { start: customStart, end: customEnd };
     }
     if (reportPeriod === "Monthly") {
-      const startDate = new Date(y, m - 1, 1);
-      const endDate = new Date(y, m, 0);
+      const startDate = makeUTCDate(y, m - 1, 1);
+      const endDate = makeUTCDate(y, m, 0);
       return {
         start: startDate.toISOString().split("T")[0],
         end: endDate.toISOString().split("T")[0],
@@ -524,26 +526,24 @@ export default function EnhancedMobileDashboard() {
     }
     if (reportPeriod === "Quarterly") {
       const qStart = Math.floor((m - 1) / 3) * 3;
-      const startDate = new Date(y, qStart, 1);
-      const endDate = new Date(y, qStart + 3, 0);
+      const startDate = makeUTCDate(y, qStart, 1);
+      const endDate = makeUTCDate(y, qStart + 3, 0);
       return {
         start: startDate.toISOString().split("T")[0],
         end: endDate.toISOString().split("T")[0],
       };
     }
     if (reportPeriod === "Year to Date") {
-      const startDate = new Date(y, 0, 1);
-      const endDate = new Date(y, m, 0);
+      const startDate = makeUTCDate(y, 0, 1);
+      const endDate = makeUTCDate(y, m, 0);
       return {
         start: startDate.toISOString().split("T")[0],
         end: endDate.toISOString().split("T")[0],
       };
     }
     if (reportPeriod === "Trailing 12") {
-      const endDate = new Date(y, m, 0);
-      const startDate = new Date(endDate);
-      startDate.setMonth(startDate.getMonth() - 11);
-      startDate.setDate(1);
+      const endDate = makeUTCDate(y, m, 0);
+      const startDate = makeUTCDate(y, m - 11, 1);
       return {
         start: startDate.toISOString().split("T")[0],
         end: endDate.toISOString().split("T")[0],

@@ -218,8 +218,8 @@ export default function PayrollPage() {
   }, [timePeriod, selectedMonth, selectedYear, customStartDate, customEndDate]);
 
   const calculatePreviousDateRange = (startDate: string, endDate: string) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = new Date(`${startDate}T00:00:00Z`);
+    const end = new Date(`${endDate}T00:00:00Z`);
 
     if (timePeriod === "Monthly") {
       const monthIndex = monthsList.indexOf(selectedMonth);
@@ -277,8 +277,8 @@ export default function PayrollPage() {
     } else if (timePeriod === "Trailing 12") {
       const prevStart = new Date(start);
       const prevEnd = new Date(end);
-      prevStart.setFullYear(prevStart.getFullYear() - 1);
-      prevEnd.setFullYear(prevEnd.getFullYear() - 1);
+      prevStart.setUTCFullYear(prevStart.getUTCFullYear() - 1);
+      prevEnd.setUTCFullYear(prevEnd.getUTCFullYear() - 1);
       return {
         prevStartDate: prevStart.toISOString().split("T")[0],
         prevEndDate: prevEnd.toISOString().split("T")[0],
@@ -288,9 +288,9 @@ export default function PayrollPage() {
         Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) +
         1;
       const prevEnd = new Date(start);
-      prevEnd.setDate(prevEnd.getDate() - 1);
+      prevEnd.setUTCDate(prevEnd.getUTCDate() - 1);
       const prevStart = new Date(prevEnd);
-      prevStart.setDate(prevStart.getDate() - (diff - 1));
+      prevStart.setUTCDate(prevStart.getUTCDate() - (diff - 1));
       return {
         prevStartDate: prevStart.toISOString().split("T")[0],
         prevEndDate: prevEnd.toISOString().split("T")[0],
