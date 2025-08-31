@@ -690,6 +690,14 @@ export default function CashFlowPage() {
 
     if (rc === "transfer") return "transfer"
 
+    if (
+      at.includes("accounts payable") ||
+      at.includes("a/p") ||
+      rc.includes("accounts payable") ||
+      rc.includes("a/p")
+    )
+      return "operating"
+
     if (at.includes("fixed asset") || at.includes("long term asset")) return "investing"
 
     if (at.includes("equity") || at === "long term liabilities") return "financing"
@@ -1478,11 +1486,13 @@ export default function CashFlowPage() {
       const accountType = sampleTx?.account_type?.toLowerCase() || ""
 
       if (classification === "operating") {
+        const isPayable = accountType.includes("accounts payable") || accountType.includes("a/p")
         const isInflow =
-          accountType === "income" ||
-          accountType === "other income" ||
-          accountType.includes("current asset") ||
-          accountType.includes("accounts receivable")
+          (accountType === "income" ||
+            accountType === "other income" ||
+            accountType.includes("current asset") ||
+            accountType.includes("accounts receivable")) &&
+          !isPayable
         if (isInflow) operatingInflows.push(account)
         else operatingOutflows.push(account)
       } else if (classification === "financing") {

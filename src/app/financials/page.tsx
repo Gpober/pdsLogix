@@ -224,7 +224,8 @@ export default function FinancialsPage() {
   const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false);
   const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
   const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
-  const [selectedProperties, setSelectedProperties] = useState<Set<string>>(
+  // Customer filter state (matches Cash Flow page behavior)
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
     new Set(["All Customers"]),
   );
   const [customStartDate, setCustomStartDate] = useState("");
@@ -235,7 +236,7 @@ export default function FinancialsPage() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [plAccounts, setPlAccounts] = useState<PLAccount[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
-  const [availableProperties, setAvailableProperties] = useState<string[]>([
+  const [availableCustomers, setAvailableCustomers] = useState<string[]>([
     "All Customers",
   ]);
   const [showTransactionModal, setShowTransactionModal] = useState(false);
@@ -483,6 +484,35 @@ export default function FinancialsPage() {
     return null; // Not a P&L account (likely Balance Sheet account)
   };
 
+  // Load available customers for dropdown (similar to Cash Flow page)
+  const fetchCustomers = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("journal_entry_lines")
+        .select("customer")
+        .not("customer", "is", null);
+
+      if (error) throw error;
+
+      const customers = new Set<string>();
+      data.forEach((row: any) => {
+        if (row.customer) customers.add(row.customer);
+      });
+
+      setAvailableCustomers([
+        "All Customers",
+        ...Array.from(customers).sort(),
+      ]);
+    } catch (err) {
+      console.error("Error fetching customers:", err);
+    }
+  };
+
+  // Load customers on initial mount
+  useEffect(() => {
+    fetchCustomers();
+  }, []);
+
   // Fetch P&L data using ENHANCED database strategy with TIMEZONE-INDEPENDENT dates
   const fetchPLData = async () => {
     setIsLoadingData(true);
@@ -490,11 +520,11 @@ export default function FinancialsPage() {
 
     try {
       const { startDate, endDate } = calculateDateRange();
-      const selectedList = Array.from(selectedProperties);
+      const selectedList = Array.from(selectedCustomers);
 
       smartLog(`🔍 TIMEZONE-INDEPENDENT P&L DATA FETCH`);
       smartLog(`📅 Period: ${startDate} to ${endDate}`);
-      smartLog(`🏢 Property Filter: "${selectedList.join(", ")}"`);
+      smartLog(`🏢 Customer Filter: "${selectedList.join(", ")}"`);
 
       // ENHANCED QUERY: Use the new database structure with better field selection
       let query = supabase
@@ -524,8 +554,8 @@ export default function FinancialsPage() {
         .lte("date", endDate)
         .order("date", { ascending: true });
 
-      // Apply property filter
-      if (!selectedProperties.has("All Customers")) {
+      // Apply customer filter
+      if (!selectedCustomers.has("All Customers")) {
         query = query.in("customer", selectedList);
       }
 
@@ -566,18 +596,6 @@ export default function FinancialsPage() {
 
       smartLog(`📈 Filtered to ${plTransactions.length} P&L transactions`);
       smartLog(`🔍 Sample P&L transactions:`, plTransactions.slice(0, 5));
-
-      // Get unique customers for filter dropdown using 'customer' field
-      const properties = new Set<string>();
-      plTransactions.forEach((tx) => {
-        if (tx.customer && tx.customer.trim()) {
-          properties.add(tx.customer.trim());
-        }
-      });
-      setAvailableProperties([
-        "All Customers",
-        ...Array.from(properties).sort(),
-      ]);
 
       // Process transactions using ENHANCED logic
       const processedAccounts = await processPLTransactionsEnhanced(
@@ -1055,7 +1073,7 @@ export default function FinancialsPage() {
     selectedYear,
     customStartDate,
     customEndDate,
-    selectedProperties,
+    selectedCustomers,
   ]);
 
   // Format currency
@@ -1228,7 +1246,7 @@ export default function FinancialsPage() {
     if (viewMode === "Total") {
       return [];
     } else if (viewMode === "Customer") {
-      return availableProperties.filter((p) => p !== "All Customers");
+      return availableCustomers.filter((p) => p !== "All Customers");
     } else if (viewMode === "Detail") {
       // For Detail view, show months in the date range using timezone-independent method
       const { startDate, endDate } = calculateDateRange();
@@ -1669,10 +1687,11 @@ export default function FinancialsPage() {
 
 
             <CustomerMultiSelect
-              options={availableProperties}
-              selected={selectedProperties}
-              onChange={setSelectedProperties}
+              options={availableCustomers}
+              selected={selectedCustomers}
+              onChange={setSelectedCustomers}
               accentColor={BRAND_COLORS.primary}
+              label="Customer"
             />
 
             {/* View Mode Toggle */}
