@@ -249,7 +249,7 @@ export default function PayrollPage() {
 
   // KPIs
   const kpis = useMemo(() => {
-    const totalTx = filteredPayments.length;
+    const contractorSet = new Set<string>();
     let total = 0;
     let monthTotal = 0;
 
@@ -264,8 +264,11 @@ export default function PayrollPage() {
         const d = new Date(p.date);
         if (d.getUTCMonth() === m && d.getUTCFullYear() === y) monthTotal += amt;
       }
+      const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim();
+      if (name) contractorSet.add(name);
     }
-    const avg = totalTx ? total / totalTx : 0;
+    const totalContractors = contractorSet.size;
+    const avg = totalContractors ? total / totalContractors : 0;
 
     // top department by total
     const byDept = new Map<string, number>();
@@ -275,7 +278,7 @@ export default function PayrollPage() {
     }
     const topDept = Array.from(byDept.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
 
-    return { totalTx, total, monthTotal, avg, topDept };
+    return { totalContractors, total, monthTotal, avg, topDept };
   }, [filteredPayments]);
 
   // Trend (year-to-date) & Department totals
@@ -333,6 +336,7 @@ export default function PayrollPage() {
       .map(([department, { total, people }]) => ({
         department,
         total,
+        count: people.size,
         people: Array.from(people.entries()).map(([name, amount]) => ({
           name,
           amount,
@@ -636,8 +640,8 @@ export default function PayrollPage() {
             <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 hover:shadow-md transition-shadow" style={{ borderLeftColor: BRAND_COLORS.primary }}>
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-gray-600 text-sm font-medium mb-2">Total Transactions</div>
-                  <div className="text-3xl font-bold text-gray-900 mb-1">{kpis.totalTx}</div>
+                  <div className="text-gray-600 text-sm font-medium mb-2">Contractors</div>
+                  <div className="text-3xl font-bold text-gray-900 mb-1">{kpis.totalContractors}</div>
                 </div>
                 <Users className="w-8 h-8" style={{ color: BRAND_COLORS.primary }} />
               </div>
@@ -812,7 +816,10 @@ export default function PayrollPage() {
                       onClick={() => toggleGroup(dept.department)}
                       className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
                     >
-                      <span className="font-medium">{dept.department}</span>
+                      <span className="font-medium">
+                        {dept.department}
+                        <span className="ml-2 text-sm text-gray-600">({dept.count})</span>
+                      </span>
                       <div className="flex items-center gap-4">
                         <span>{formatCurrency(dept.total)}</span>
                         <ChevronDown
