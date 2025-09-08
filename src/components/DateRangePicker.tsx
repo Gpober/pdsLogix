@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DateRange } from "react-day-picker";
-import { format } from "date-fns";
+import { format, parse } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
@@ -22,7 +22,10 @@ export default function DateRangePicker({
 }: DateRangePickerProps) {
   const [range, setRange] = React.useState<DateRange | undefined>(
     startDate && endDate
-      ? { from: new Date(startDate), to: new Date(endDate) }
+      ? {
+          from: parse(startDate, "yyyy-MM-dd", new Date()),
+          to: parse(endDate, "yyyy-MM-dd", new Date()),
+        }
       : undefined
   );
 

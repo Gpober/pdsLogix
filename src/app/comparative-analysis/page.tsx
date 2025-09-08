@@ -29,6 +29,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { parse } from "date-fns";
 
 const BRAND_COLORS = {
   primary: "#56B6E9",
@@ -100,8 +101,8 @@ export default function EnhancedComparativeAnalysis() {
     if (mode === "period") {
       const formatPeriodLabel = (start: string, end: string) => {
         if (!start || !end) return "";
-        const startDate = new Date(start);
-        const endDate = new Date(end);
+        const startDate = parse(start, "yyyy-MM-dd", new Date());
+        const endDate = parse(end, "yyyy-MM-dd", new Date());
         if (start === end) {
           return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         }
@@ -228,7 +229,7 @@ export default function EnhancedComparativeAnalysis() {
     
     const processLines = (lines: any[], key: 'A' | 'B') => {
       lines.forEach((line) => {
-        const date = new Date(line.date);
+        const date = parse(line.date, "yyyy-MM-dd", new Date());
         const weekStart = new Date(date);
         weekStart.setDate(date.getDate() - date.getDay());
         const weekKey = weekStart.toISOString().split('T')[0];
@@ -669,9 +670,14 @@ export default function EnhancedComparativeAnalysis() {
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
-                    <XAxis 
-                      dataKey="week" 
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    <XAxis
+                      dataKey="week"
+                      tickFormatter={(value) =>
+                        parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric" },
+                        )
+                      }
                       stroke="#6B7280"
                       fontSize={12}
                     />
@@ -680,10 +686,16 @@ export default function EnhancedComparativeAnalysis() {
                       stroke="#6B7280"
                       fontSize={12}
                     />
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value) => formatCurrency(Number(value))}
-                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
-                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                      labelFormatter={(value) =>
+                        `Week of ${parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString()}`
+                      }
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: "8px",
+                      }}
                     />
                     <Line 
                       type="monotone" 
@@ -713,9 +725,14 @@ export default function EnhancedComparativeAnalysis() {
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
-                    <XAxis 
-                      dataKey="week" 
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    <XAxis
+                      dataKey="week"
+                      tickFormatter={(value) =>
+                        parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric" },
+                        )
+                      }
                       stroke="#6B7280"
                       fontSize={12}
                     />
@@ -724,10 +741,16 @@ export default function EnhancedComparativeAnalysis() {
                       stroke="#6B7280"
                       fontSize={12}
                     />
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value) => formatCurrency(Number(value))}
-                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
-                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                      labelFormatter={(value) =>
+                        `Week of ${parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString()}`
+                      }
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: "8px",
+                      }}
                     />
                     <Line 
                       type="monotone" 
