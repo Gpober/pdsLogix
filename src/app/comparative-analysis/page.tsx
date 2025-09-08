@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import DateRangePicker from "@/components/DateRangePicker";
+import CustomerMultiSelect from "@/components/CustomerMultiSelect";
 import { 
   Download, 
   RefreshCw, 
@@ -68,8 +69,8 @@ export default function EnhancedComparativeAnalysis() {
   const [endA, setEndA] = useState("");
   const [startB, setStartB] = useState("");
   const [endB, setEndB] = useState("");
-  const [customerA, setCustomerA] = useState("All Customers");
-  const [customerB, setCustomerB] = useState("All Customers");
+  const [customerA, setCustomerA] = useState<Set<string>>(new Set(["All Customers"]));
+  const [customerB, setCustomerB] = useState<Set<string>>(new Set(["All Customers"]));
   const [customers, setCustomers] = useState<string[]>([]);
   const [dataA, setDataA] = useState<KPIs | null>(null);
   const [dataB, setDataB] = useState<KPIs | null>(null);
@@ -112,8 +113,14 @@ export default function EnhancedComparativeAnalysis() {
       setLabelA(formatPeriodLabel(startA, endA) || "Period A");
       setLabelB(formatPeriodLabel(startB, endB) || "Period B");
     } else {
-      setLabelA(customerA || "Customer A");
-      setLabelB(customerB || "Customer B");
+      const labelFromSet = (set: Set<string>) => {
+        if (set.has("All Customers") || set.size === 0) return "All Customers";
+        const arr = Array.from(set);
+        return arr.length > 1 ? `${arr[0]} +${arr.length - 1}` : arr[0];
+      };
+
+      setLabelA(labelFromSet(customerA) || "Customer A");
+      setLabelB(labelFromSet(customerB) || "Customer B");
     }
   }, [mode, startA, endA, startB, endB, customerA, customerB]);
 
@@ -132,15 +139,19 @@ export default function EnhancedComparativeAnalysis() {
     }
   };
 
-  const fetchLines = async (start: string, end: string, customer?: string) => {
+  const fetchLines = async (start: string, end: string, customersFilter?: string[]) => {
     let query = supabase
       .from("journal_entry_lines")
       .select("account, account_type, debit, credit, class, date, customer")
       .gte("date", start)
       .lte("date", end);
 
-    if (customer && customer !== "All Customers") {
-      query = query.eq("customer", customer);
+    if (
+      customersFilter &&
+      customersFilter.length > 0 &&
+      !customersFilter.includes("All Customers")
+    ) {
+      query = query.in("customer", customersFilter);
     }
 
     const { data, error } = await query;
@@ -341,7 +352,11 @@ export default function EnhancedComparativeAnalysis() {
 
   const fetchData = async () => {
     if (mode === "period" && (!startA || !endA || !startB || !endB)) return;
-    if (mode === "customer" && (!startA || !endA || !customerA || !customerB)) return;
+    if (
+      mode === "customer" &&
+      (!startA || !endA || customerA.size === 0 || customerB.size === 0)
+    )
+      return;
 
     setLoading(true);
     setError(null);
@@ -357,8 +372,8 @@ export default function EnhancedComparativeAnalysis() {
       } else {
         // Customer comparison: same time period, different customers
         [linesA, linesB] = await Promise.all([
-          fetchLines(startA, endA, customerA),
-          fetchLines(startA, endA, customerB),
+          fetchLines(startA, endA, Array.from(customerA)),
+          fetchLines(startA, endA, Array.from(customerB)),
         ]);
       }
       
@@ -508,36 +523,20 @@ export default function EnhancedComparativeAnalysis() {
             </>
           ) : (
             <>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Customer A</label>
-                <Select value={customerA} onValueChange={(v) => setCustomerA(v)}>
-                  <SelectTrigger className="w-48 h-11">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Customer B</label>
-                <Select value={customerB} onValueChange={(v) => setCustomerB(v)}>
-                  <SelectTrigger className="w-48 h-11">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <CustomerMultiSelect
+                options={customers}
+                selected={customerA}
+                onChange={setCustomerA}
+                accentColor={BRAND_COLORS.primary}
+                label="Customer A"
+              />
+              <CustomerMultiSelect
+                options={customers}
+                selected={customerB}
+                onChange={setCustomerB}
+                accentColor={BRAND_COLORS.primary}
+                label="Customer B"
+              />
             </>
           )}
 
