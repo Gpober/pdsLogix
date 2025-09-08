@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import DateRangePicker from "@/components/DateRangePicker";
 import { 
   Download, 
   RefreshCw, 
@@ -476,46 +477,31 @@ export default function EnhancedComparativeAnalysis() {
 
           <div className="flex flex-col">
             <label className="text-sm font-medium text-gray-700 mb-2">
-              {mode === "period" ? "Period A Start" : "Date Range Start"}
+              {mode === "period" ? "Period A" : "Date Range"}
             </label>
-            <input
-              type="date"
-              value={startA}
-              onChange={(e) => setStartA(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          
-          <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-2">
-              {mode === "period" ? "Period A End" : "Date Range End"}
-            </label>
-            <input
-              type="date"
-              value={endA}
-              onChange={(e) => setEndA(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            <DateRangePicker
+              startDate={startA}
+              endDate={endA}
+              onChange={(s, e) => {
+                setStartA(s);
+                setEndA(e);
+              }}
+              className="w-64"
             />
           </div>
 
           {mode === "period" ? (
             <>
               <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Period B Start</label>
-                <input
-                  type="date"
-                  value={startB}
-                  onChange={(e) => setStartB(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Period B End</label>
-                <input
-                  type="date"
-                  value={endB}
-                  onChange={(e) => setEndB(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                <label className="text-sm font-medium text-gray-700 mb-2">Period B</label>
+                <DateRangePicker
+                  startDate={startB}
+                  endDate={endB}
+                  onChange={(s, e) => {
+                    setStartB(s);
+                    setEndB(e);
+                  }}
+                  className="w-64"
                 />
               </div>
             </>

@@ -38,8 +38,8 @@ export default function DateRangePicker({
       <PopoverPrimitive.Trigger asChild>
         <button
           className={cn(
-            "w-[260px] px-4 py-2 border rounded-md bg-white text-left font-normal",
-            !range && "text-muted-foreground",
+            "w-[260px] px-3 py-2 text-sm border border-gray-300 rounded-md bg-white text-left",
+            !range && "text-gray-400",
             className
           )}
         >
@@ -50,7 +50,7 @@ export default function DateRangePicker({
                   "MMM d, yyyy"
                 )}`
               : format(range.from, "MMM d, yyyy")
-            : "Pick a date range"}
+            : "Select date range"}
         </button>
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Content
@@ -62,6 +62,16 @@ export default function DateRangePicker({
           selected={range}
           onSelect={handleSelect}
           numberOfMonths={1}
+          classNames={{
+            day_selected:
+              "bg-[#2CA01C] text-white hover:bg-[#2CA01C] hover:text-white",
+            day_range_start:
+              "day-range-start bg-[#2CA01C] text-white",
+            day_range_end:
+              "day-range-end bg-[#2CA01C] text-white",
+            day_range_middle: "aria-selected:bg-[#E3F7EC]",
+            day_today: "text-[#2CA01C] font-semibold",
+          }}
         />
       </PopoverPrimitive.Content>
     </PopoverPrimitive.Root>
