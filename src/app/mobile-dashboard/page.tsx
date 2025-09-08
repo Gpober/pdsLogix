@@ -312,7 +312,7 @@ export default function EnhancedMobileDashboard() {
         body: JSON.stringify({
           message: query,
           context: {
-            platform: 'I AM CFO',
+            platform: 'ALLIANCE CFO AND ADVISORY',
             userType: 'property_manager',
             requestType: 'voice_query',
             currentData: {
@@ -1413,7 +1413,7 @@ export default function EnhancedMobileDashboard() {
             onClick={() => handlePropertySelect(null)}
             style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
           >
-            I AM CFO
+            ALLIANCE CFO AND ADVISORY
           </span>
         </div>
 
