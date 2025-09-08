@@ -8,7 +8,7 @@ import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import { supabase } from "@/lib/supabaseClient"
 import CustomerMultiSelect from "@/components/CustomerMultiSelect"
-import DateRangePicker from "@/components/DateRangePicker"
+import DatePicker from "@/components/DatePicker"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -1744,7 +1744,7 @@ export default function CashFlowPage() {
 
             {/* Custom Date Range - Show for Custom */}
             {timePeriod === "Custom" && (
-              <DateRangePicker
+              <DatePicker
                 startDate={customStartDate}
                 endDate={customEndDate}
                 onChange={(start, end) => {

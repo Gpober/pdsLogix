@@ -31,7 +31,7 @@ import {
   LineChart,
 } from "recharts";
 import { supabase } from "@/lib/supabaseClient";
-import DateRangePicker from "@/components/DateRangePicker";
+import DatePicker from "@/components/DatePicker";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -725,7 +725,7 @@ export default function PayrollPage() {
                 )}
 
                 {timePeriod === "Custom" && (
-                  <DateRangePicker
+                  <DatePicker
                     startDate={customStartDate}
                     endDate={customEndDate}
                     onChange={(start, end) => {

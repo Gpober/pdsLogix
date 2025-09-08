@@ -38,7 +38,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { supabase } from "@/lib/supabaseClient";
-import DateRangePicker from "@/components/DateRangePicker";
+import DatePicker from "@/components/DatePicker";
 import CustomerMultiSelect from "@/components/CustomerMultiSelect";
 
 // I AM CFO Brand Colors
@@ -1618,7 +1618,7 @@ export default function FinancialOverviewPage() {
 
             {/* Custom Date Range */}
             {timePeriod === "Custom" && (
-              <DateRangePicker
+              <DatePicker
                 startDate={customStartDate}
                 endDate={customEndDate}
                 onChange={(start, end) => {

@@ -18,7 +18,7 @@ import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import CustomerMultiSelect from "@/components/CustomerMultiSelect";
-import DateRangePicker from "@/components/DateRangePicker";
+import DatePicker from "@/components/DatePicker";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -1613,7 +1613,7 @@ export default function FinancialsPage() {
 
             {/* Custom Date Range */}
             {timePeriod === "Custom" && (
-              <DateRangePicker
+              <DatePicker
                 startDate={customStartDate}
                 endDate={customEndDate}
                 onChange={(start, end) => {

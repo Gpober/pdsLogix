@@ -10,7 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import DateRangePicker from "@/components/DateRangePicker";
+import DatePicker from "@/components/DatePicker";
 import CustomerMultiSelect from "@/components/CustomerMultiSelect";
 import { 
   Download, 
@@ -454,7 +454,7 @@ export default function EnhancedComparativeAnalysis() {
 
           <div className="flex flex-col">
             <label className="text-sm font-medium text-gray-700 mb-2">Period A</label>
-            <DateRangePicker
+            <DatePicker
               startDate={startA}
               endDate={endA}
               onChange={(s, e) => {
@@ -467,7 +467,7 @@ export default function EnhancedComparativeAnalysis() {
 
           <div className="flex flex-col">
             <label className="text-sm font-medium text-gray-700 mb-2">Period B</label>
-            <DateRangePicker
+            <DatePicker
               startDate={startB}
               endDate={endB}
               onChange={(s, e) => {
