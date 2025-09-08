@@ -145,6 +145,15 @@ const getAgingColor = (days: number) => {
   return BRAND_COLORS.danger;
 };
 
+// Format a date string as MM/DD/YYYY in UTC to avoid timezone shifts
+const formatDate = (date: string) =>
+  new Date(date).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+
 type Insight = {
   title: string;
   message: string;
@@ -3202,8 +3211,7 @@ export default function EnhancedMobileDashboard() {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#64748b' }}>
                       <span>
-                        {new Date(t.invoiceDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        {" "}• Due {new Date(t.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {formatDate(t.invoiceDate)}{" "}• Due {formatDate(t.dueDate)}
                       </span>
                       <span style={{ color: getAgingColor(t.daysOutstanding), fontWeight: '600' }}>
                         {t.daysOutstanding} days
@@ -3259,8 +3267,7 @@ export default function EnhancedMobileDashboard() {
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#64748b' }}>
                       <span>
-                        {new Date(t.billDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                        {" "}• Due {new Date(t.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {formatDate(t.billDate)}{" "}• Due {formatDate(t.dueDate)}
                       </span>
                       <span style={{ color: getAgingColor(t.daysOutstanding), fontWeight: '600' }}>
                         {t.daysOutstanding} days
@@ -3321,7 +3328,7 @@ export default function EnhancedMobileDashboard() {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr', gap: '8px', alignItems: 'center' }}>
                       <div style={{ fontSize: '14px', fontWeight: '500' }}>
-                        {new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {formatDate(t.date)}
                       </div>
                       <div>
                         {t.payee && <div style={{ fontSize: '13px', color: '#475569', fontWeight: '500' }}>{t.payee}</div>}
