@@ -1787,13 +1787,21 @@ export default function FinancialOverviewPage() {
                       label="Customer"
                     />
                     <Button
-                      className={`h-8 w-8 p-0 ${chartType === "line" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                      className={`h-8 w-8 p-0 ${
+                        chartType === "line"
+                          ? ""
+                          : "!bg-white !text-gray-700 border border-gray-200"
+                      }`}
                       onClick={() => setChartType("line")}
                     >
                       <TrendingUp className="h-4 w-4" />
                     </Button>
                     <Button
-                      className={`h-8 w-8 p-0 ${chartType === "bar" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                      className={`h-8 w-8 p-0 ${
+                        chartType === "bar"
+                          ? ""
+                          : "!bg-white !text-gray-700 border border-gray-200"
+                      }`}
                       onClick={() => setChartType("bar")}
                     >
                       <BarChart3 className="h-4 w-4" />
@@ -1905,7 +1913,7 @@ export default function FinancialOverviewPage() {
                           className={`h-8 px-2 text-xs ${
                             propertyChartMetric === m.key
                               ? ""
-                              : "bg-white text-gray-700 border border-gray-200"
+                              : "!bg-white !text-gray-700 border border-gray-200"
                           }`}
                           onClick={() => setPropertyChartMetric(m.key)}
                         >
@@ -1918,7 +1926,7 @@ export default function FinancialOverviewPage() {
                         className={`h-8 w-8 p-0 ${
                           customerChartType === "pie"
                             ? ""
-                            : "bg-white text-gray-700 border border-gray-200"
+                            : "!bg-white !text-gray-700 border border-gray-200"
                         }`}
                         onClick={() => setCustomerChartType("pie")}
                       >
@@ -1928,7 +1936,7 @@ export default function FinancialOverviewPage() {
                         className={`h-8 w-8 p-0 ${
                           customerChartType === "bar"
                             ? ""
-                            : "bg-white text-gray-700 border border-gray-200"
+                            : "!bg-white !text-gray-700 border border-gray-200"
                         }`}
                         onClick={() => setCustomerChartType("bar")}
                       >
