@@ -1,10 +1,14 @@
 'use client'
 
-const LoadingScreenSpinner = () => {
+import React from 'react'
+
+type Line = { x: number; color: string }
+
+const LoadingScreenSpinner: React.FC = () => {
   const lineCount = 25
-  const startColor = [139, 109, 63]
-  const endColor = [59, 108, 180]
-  const lines = Array.from({ length: lineCount }, (_, i) => {
+  const startColor: [number, number, number] = [139, 109, 63]
+  const endColor: [number, number, number] = [59, 108, 180]
+  const lines: Line[] = Array.from({ length: lineCount }, (_, i) => {
     const ratio = i / (lineCount - 1)
     const color = startColor.map((c, idx) => Math.round(c + (endColor[idx] - c) * ratio))
     const x = 40 + (i * (400 - 40)) / (lineCount - 1)
