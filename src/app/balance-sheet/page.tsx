@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react"
 import { RefreshCw, X } from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
+import DateRangePicker from "@/components/DateRangePicker"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -1106,21 +1107,15 @@ export default function BalanceSheetPage() {
             )}
 
             {timePeriod === "Custom" && (
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <input
-                  type="date"
-                  value={customStartDate}
-                  onChange={(e) => setCustomStartDate(e.target.value)}
-                  className="px-3 sm:px-4 py-2 border border-gray-300 rounded-lg bg-white text-xs sm:text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                />
-                <span className="text-gray-500 text-xs">to</span>
-                <input
-                  type="date"
-                  value={customEndDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="px-3 sm:px-4 py-2 border border-gray-300 rounded-lg bg-white text-xs sm:text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                />
-              </div>
+              <DateRangePicker
+                startDate={customStartDate}
+                endDate={customEndDate}
+                onChange={(start, end) => {
+                  setCustomStartDate(start);
+                  setCustomEndDate(end);
+                }}
+                className="flex-shrink-0 w-[260px]"
+              />
             )}
 
             <select

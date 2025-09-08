@@ -10,13 +10,8 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import DateRangePicker from "@/components/DateRangePicker";
+import CustomerMultiSelect from "@/components/CustomerMultiSelect";
 import { 
   Download, 
   RefreshCw, 
@@ -28,6 +23,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { parse } from "date-fns";
 
 const BRAND_COLORS = {
   primary: "#56B6E9",
@@ -61,13 +57,11 @@ type Insight = {
 };
 
 export default function EnhancedComparativeAnalysis() {
-  const [mode, setMode] = useState<"period" | "customer">("period");
   const [startA, setStartA] = useState("");
   const [endA, setEndA] = useState("");
   const [startB, setStartB] = useState("");
   const [endB, setEndB] = useState("");
-  const [customerA, setCustomerA] = useState("All Customers");
-  const [customerB, setCustomerB] = useState("All Customers");
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set(["All Customers"]));
   const [customers, setCustomers] = useState<string[]>([]);
   const [dataA, setDataA] = useState<KPIs | null>(null);
   const [dataB, setDataB] = useState<KPIs | null>(null);
@@ -94,26 +88,21 @@ export default function EnhancedComparativeAnalysis() {
     fetchCustomers();
   }, []);
 
-  // Update labels when mode or selections change
+  // Update labels when selections change
   useEffect(() => {
-    if (mode === "period") {
-      const formatPeriodLabel = (start: string, end: string) => {
-        if (!start || !end) return "";
-        const startDate = new Date(start);
-        const endDate = new Date(end);
-        if (start === end) {
-          return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        }
-        return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-      };
-      
-      setLabelA(formatPeriodLabel(startA, endA) || "Period A");
-      setLabelB(formatPeriodLabel(startB, endB) || "Period B");
-    } else {
-      setLabelA(customerA || "Customer A");
-      setLabelB(customerB || "Customer B");
-    }
-  }, [mode, startA, endA, startB, endB, customerA, customerB]);
+    const formatPeriodLabel = (start: string, end: string) => {
+      if (!start || !end) return "";
+      const startDate = parse(start, "yyyy-MM-dd", new Date());
+      const endDate = parse(end, "yyyy-MM-dd", new Date());
+      if (start === end) {
+        return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+      return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    };
+
+    setLabelA(formatPeriodLabel(startA, endA) || "Period A");
+    setLabelB(formatPeriodLabel(startB, endB) || "Period B");
+  }, [startA, endA, startB, endB]);
 
   const fetchCustomers = async () => {
     const { data } = await supabase.from("journal_entry_lines").select("customer");
@@ -130,15 +119,19 @@ export default function EnhancedComparativeAnalysis() {
     }
   };
 
-  const fetchLines = async (start: string, end: string, customer?: string) => {
+  const fetchLines = async (start: string, end: string, customersFilter?: string[]) => {
     let query = supabase
       .from("journal_entry_lines")
       .select("account, account_type, debit, credit, class, date, customer")
       .gte("date", start)
       .lte("date", end);
 
-    if (customer && customer !== "All Customers") {
-      query = query.eq("customer", customer);
+    if (
+      customersFilter &&
+      customersFilter.length > 0 &&
+      !customersFilter.includes("All Customers")
+    ) {
+      query = query.in("customer", customersFilter);
     }
 
     const { data, error } = await query;
@@ -227,7 +220,7 @@ export default function EnhancedComparativeAnalysis() {
     
     const processLines = (lines: any[], key: 'A' | 'B') => {
       lines.forEach((line) => {
-        const date = new Date(line.date);
+        const date = parse(line.date, "yyyy-MM-dd", new Date());
         const weekStart = new Date(date);
         weekStart.setDate(date.getDate() - date.getDay());
         const weekKey = weekStart.toISOString().split('T')[0];
@@ -338,28 +331,18 @@ export default function EnhancedComparativeAnalysis() {
   };
 
   const fetchData = async () => {
-    if (mode === "period" && (!startA || !endA || !startB || !endB)) return;
-    if (mode === "customer" && (!startA || !endA || !customerA || !customerB)) return;
+    if (!startA || !endA || !startB || !endB || selectedCustomers.size === 0)
+      return;
 
     setLoading(true);
     setError(null);
     try {
-      let linesA, linesB;
-      
-      if (mode === "period") {
-        // Period comparison: different time periods, same customer filter
-        [linesA, linesB] = await Promise.all([
-          fetchLines(startA, endA),
-          fetchLines(startB, endB),
-        ]);
-      } else {
-        // Customer comparison: same time period, different customers
-        [linesA, linesB] = await Promise.all([
-          fetchLines(startA, endA, customerA),
-          fetchLines(startA, endA, customerB),
-        ]);
-      }
-      
+      const customerFilter = Array.from(selectedCustomers);
+      const [linesA, linesB] = await Promise.all([
+        fetchLines(startA, endA, customerFilter),
+        fetchLines(startB, endB, customerFilter),
+      ]);
+
       const kpiA = computeKPIs(linesA);
       const kpiB = computeKPIs(linesB);
       setDataA(kpiA);
@@ -461,98 +444,39 @@ export default function EnhancedComparativeAnalysis() {
         <h1 className="text-3xl font-bold text-gray-900 mb-6">Comparative Analysis</h1>
 
         <div className="flex flex-wrap items-end gap-4">
-          <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-2">Analysis Type</label>
-            <Select value={mode} onValueChange={(v) => setMode(v as any)}>
-              <SelectTrigger className="w-48 h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="period">Period vs Period</SelectItem>
-                <SelectItem value="customer">Customer vs Customer</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <CustomerMultiSelect
+            options={customers}
+            selected={selectedCustomers}
+            onChange={setSelectedCustomers}
+            accentColor={BRAND_COLORS.primary}
+            label="Customer"
+          />
 
           <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-2">
-              {mode === "period" ? "Period A Start" : "Date Range Start"}
-            </label>
-            <input
-              type="date"
-              value={startA}
-              onChange={(e) => setStartA(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          
-          <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-2">
-              {mode === "period" ? "Period A End" : "Date Range End"}
-            </label>
-            <input
-              type="date"
-              value={endA}
-              onChange={(e) => setEndA(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            <label className="text-sm font-medium text-gray-700 mb-2">Period A</label>
+            <DateRangePicker
+              startDate={startA}
+              endDate={endA}
+              onChange={(s, e) => {
+                setStartA(s);
+                setEndA(e);
+              }}
+              className="w-64"
             />
           </div>
 
-          {mode === "period" ? (
-            <>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Period B Start</label>
-                <input
-                  type="date"
-                  value={startB}
-                  onChange={(e) => setStartB(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Period B End</label>
-                <input
-                  type="date"
-                  value={endB}
-                  onChange={(e) => setEndB(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 h-11 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Customer A</label>
-                <Select value={customerA} onValueChange={(v) => setCustomerA(v)}>
-                  <SelectTrigger className="w-48 h-11">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Customer B</label>
-                <Select value={customerB} onValueChange={(v) => setCustomerB(v)}>
-                  <SelectTrigger className="w-48 h-11">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </>
-          )}
+          <div className="flex flex-col">
+            <label className="text-sm font-medium text-gray-700 mb-2">Period B</label>
+            <DateRangePicker
+              startDate={startB}
+              endDate={endB}
+              onChange={(s, e) => {
+                setStartB(s);
+                setEndB(e);
+              }}
+              className="w-64"
+            />
+          </div>
 
           <button
             onClick={fetchData}
@@ -683,9 +607,14 @@ export default function EnhancedComparativeAnalysis() {
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
-                    <XAxis 
-                      dataKey="week" 
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    <XAxis
+                      dataKey="week"
+                      tickFormatter={(value) =>
+                        parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric" },
+                        )
+                      }
                       stroke="#6B7280"
                       fontSize={12}
                     />
@@ -694,10 +623,16 @@ export default function EnhancedComparativeAnalysis() {
                       stroke="#6B7280"
                       fontSize={12}
                     />
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value) => formatCurrency(Number(value))}
-                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
-                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                      labelFormatter={(value) =>
+                        `Week of ${parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString()}`
+                      }
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: "8px",
+                      }}
                     />
                     <Line 
                       type="monotone" 
@@ -727,9 +662,14 @@ export default function EnhancedComparativeAnalysis() {
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={weeklyData} margin={{ left: 20, right: 20, top: 20, bottom: 20 }}>
-                    <XAxis 
-                      dataKey="week" 
-                      tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    <XAxis
+                      dataKey="week"
+                      tickFormatter={(value) =>
+                        parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString(
+                          "en-US",
+                          { month: "short", day: "numeric" },
+                        )
+                      }
                       stroke="#6B7280"
                       fontSize={12}
                     />
@@ -738,10 +678,16 @@ export default function EnhancedComparativeAnalysis() {
                       stroke="#6B7280"
                       fontSize={12}
                     />
-                    <Tooltip 
+                    <Tooltip
                       formatter={(value) => formatCurrency(Number(value))}
-                      labelFormatter={(value) => `Week of ${new Date(value).toLocaleDateString()}`}
-                      contentStyle={{ backgroundColor: 'white', border: '1px solid #E5E7EB', borderRadius: '8px' }}
+                      labelFormatter={(value) =>
+                        `Week of ${parse(value as string, "yyyy-MM-dd", new Date()).toLocaleDateString()}`
+                      }
+                      contentStyle={{
+                        backgroundColor: "white",
+                        border: "1px solid #E5E7EB",
+                        borderRadius: "8px",
+                      }}
                     />
                     <Line 
                       type="monotone" 

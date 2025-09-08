@@ -8,6 +8,7 @@ import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import { supabase } from "@/lib/supabaseClient"
 import CustomerMultiSelect from "@/components/CustomerMultiSelect"
+import DateRangePicker from "@/components/DateRangePicker"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -1743,23 +1744,15 @@ export default function CashFlowPage() {
 
             {/* Custom Date Range - Show for Custom */}
             {timePeriod === "Custom" && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  value={customStartDate}
-                  onChange={(e) => setCustomStartDate(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                  style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
-                />
-                <span className="text-gray-500">to</span>
-                <input
-                  type="date"
-                  value={customEndDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
-                  style={{ "--tw-ring-color": BRAND_COLORS.secondary + "33" } as React.CSSProperties}
-                />
-              </div>
+              <DateRangePicker
+                startDate={customStartDate}
+                endDate={customEndDate}
+                onChange={(start, end) => {
+                  setCustomStartDate(start);
+                  setCustomEndDate(end);
+                }}
+                className="w-[260px]"
+              />
             )}
 
             {/* Customer Filter */}
