@@ -10,13 +10,6 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import DateRangePicker from "@/components/DateRangePicker";
 import CustomerMultiSelect from "@/components/CustomerMultiSelect";
 import { 
@@ -64,13 +57,11 @@ type Insight = {
 };
 
 export default function EnhancedComparativeAnalysis() {
-  const [mode, setMode] = useState<"period" | "customer">("period");
   const [startA, setStartA] = useState("");
   const [endA, setEndA] = useState("");
   const [startB, setStartB] = useState("");
   const [endB, setEndB] = useState("");
-  const [customerA, setCustomerA] = useState<Set<string>>(new Set(["All Customers"]));
-  const [customerB, setCustomerB] = useState<Set<string>>(new Set(["All Customers"]));
+  const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(new Set(["All Customers"]));
   const [customers, setCustomers] = useState<string[]>([]);
   const [dataA, setDataA] = useState<KPIs | null>(null);
   const [dataB, setDataB] = useState<KPIs | null>(null);
@@ -97,32 +88,21 @@ export default function EnhancedComparativeAnalysis() {
     fetchCustomers();
   }, []);
 
-  // Update labels when mode or selections change
+  // Update labels when selections change
   useEffect(() => {
-    if (mode === "period") {
-      const formatPeriodLabel = (start: string, end: string) => {
-        if (!start || !end) return "";
-        const startDate = parse(start, "yyyy-MM-dd", new Date());
-        const endDate = parse(end, "yyyy-MM-dd", new Date());
-        if (start === end) {
-          return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        }
-        return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-      };
-      
-      setLabelA(formatPeriodLabel(startA, endA) || "Period A");
-      setLabelB(formatPeriodLabel(startB, endB) || "Period B");
-    } else {
-      const labelFromSet = (set: Set<string>) => {
-        if (set.has("All Customers") || set.size === 0) return "All Customers";
-        const arr = Array.from(set);
-        return arr.length > 1 ? `${arr[0]} +${arr.length - 1}` : arr[0];
-      };
+    const formatPeriodLabel = (start: string, end: string) => {
+      if (!start || !end) return "";
+      const startDate = parse(start, "yyyy-MM-dd", new Date());
+      const endDate = parse(end, "yyyy-MM-dd", new Date());
+      if (start === end) {
+        return startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+      return `${startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    };
 
-      setLabelA(labelFromSet(customerA) || "Customer A");
-      setLabelB(labelFromSet(customerB) || "Customer B");
-    }
-  }, [mode, startA, endA, startB, endB, customerA, customerB]);
+    setLabelA(formatPeriodLabel(startA, endA) || "Period A");
+    setLabelB(formatPeriodLabel(startB, endB) || "Period B");
+  }, [startA, endA, startB, endB]);
 
   const fetchCustomers = async () => {
     const { data } = await supabase.from("journal_entry_lines").select("customer");
@@ -351,32 +331,18 @@ export default function EnhancedComparativeAnalysis() {
   };
 
   const fetchData = async () => {
-    if (mode === "period" && (!startA || !endA || !startB || !endB)) return;
-    if (
-      mode === "customer" &&
-      (!startA || !endA || customerA.size === 0 || customerB.size === 0)
-    )
+    if (!startA || !endA || !startB || !endB || selectedCustomers.size === 0)
       return;
 
     setLoading(true);
     setError(null);
     try {
-      let linesA, linesB;
-      
-      if (mode === "period") {
-        // Period comparison: different time periods, same customer filter
-        [linesA, linesB] = await Promise.all([
-          fetchLines(startA, endA),
-          fetchLines(startB, endB),
-        ]);
-      } else {
-        // Customer comparison: same time period, different customers
-        [linesA, linesB] = await Promise.all([
-          fetchLines(startA, endA, Array.from(customerA)),
-          fetchLines(startA, endA, Array.from(customerB)),
-        ]);
-      }
-      
+      const customerFilter = Array.from(selectedCustomers);
+      const [linesA, linesB] = await Promise.all([
+        fetchLines(startA, endA, customerFilter),
+        fetchLines(startB, endB, customerFilter),
+      ]);
+
       const kpiA = computeKPIs(linesA);
       const kpiB = computeKPIs(linesB);
       setDataA(kpiA);
@@ -478,23 +444,16 @@ export default function EnhancedComparativeAnalysis() {
         <h1 className="text-3xl font-bold text-gray-900 mb-6">Comparative Analysis</h1>
 
         <div className="flex flex-wrap items-end gap-4">
-          <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-2">Analysis Type</label>
-            <Select value={mode} onValueChange={(v) => setMode(v as any)}>
-              <SelectTrigger className="w-48 h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="period">Period vs Period</SelectItem>
-                <SelectItem value="customer">Customer vs Customer</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <CustomerMultiSelect
+            options={customers}
+            selected={selectedCustomers}
+            onChange={setSelectedCustomers}
+            accentColor={BRAND_COLORS.primary}
+            label="Customer"
+          />
 
           <div className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-2">
-              {mode === "period" ? "Period A" : "Date Range"}
-            </label>
+            <label className="text-sm font-medium text-gray-700 mb-2">Period A</label>
             <DateRangePicker
               startDate={startA}
               endDate={endA}
@@ -506,39 +465,18 @@ export default function EnhancedComparativeAnalysis() {
             />
           </div>
 
-          {mode === "period" ? (
-            <>
-              <div className="flex flex-col">
-                <label className="text-sm font-medium text-gray-700 mb-2">Period B</label>
-                <DateRangePicker
-                  startDate={startB}
-                  endDate={endB}
-                  onChange={(s, e) => {
-                    setStartB(s);
-                    setEndB(e);
-                  }}
-                  className="w-64"
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <CustomerMultiSelect
-                options={customers}
-                selected={customerA}
-                onChange={setCustomerA}
-                accentColor={BRAND_COLORS.primary}
-                label="Customer A"
-              />
-              <CustomerMultiSelect
-                options={customers}
-                selected={customerB}
-                onChange={setCustomerB}
-                accentColor={BRAND_COLORS.primary}
-                label="Customer B"
-              />
-            </>
-          )}
+          <div className="flex flex-col">
+            <label className="text-sm font-medium text-gray-700 mb-2">Period B</label>
+            <DateRangePicker
+              startDate={startB}
+              endDate={endB}
+              onChange={(s, e) => {
+                setStartB(s);
+                setEndB(e);
+              }}
+              className="w-64"
+            />
+          </div>
 
           <button
             onClick={fetchData}
