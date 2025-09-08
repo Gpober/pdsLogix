@@ -400,6 +400,21 @@ export default function EnhancedComparativeAnalysis() {
         );
       });
     });
+    const inc = sectionTotals(varianceRows.income);
+    const cog = sectionTotals(varianceRows.cogs);
+    const gpA = inc.a + cog.a;
+    const gpB = inc.b + cog.b;
+    const gpVar = gpA - gpB;
+    const gpVarPct = gpB ? gpVar / Math.abs(gpB) : null;
+    lines.push(
+      [
+        "GROSS PROFIT",
+        gpA.toFixed(2),
+        gpB.toFixed(2),
+        gpVar.toFixed(2),
+        gpVarPct !== null ? (gpVarPct * 100).toFixed(2) + "%" : "",
+      ].join(","),
+    );
     const csv = header + lines.join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -859,6 +874,42 @@ export default function EnhancedComparativeAnalysis() {
                     ))}
                   </>
                 )}
+
+                {/* Gross Profit Summary */}
+                {(() => {
+                  if (
+                    varianceRows.income.length > 0 ||
+                    varianceRows.cogs.length > 0
+                  ) {
+                    const inc = sectionTotals(varianceRows.income);
+                    const cog = sectionTotals(varianceRows.cogs);
+                    const a = inc.a + cog.a;
+                    const b = inc.b + cog.b;
+                    const v = a - b;
+                    const vp = b ? v / Math.abs(b) : null;
+
+                    return (
+                      <tr className="bg-blue-50">
+                        <td className="px-6 py-4 text-sm font-bold text-blue-800">
+                          GROSS PROFIT
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-blue-800 text-right">
+                          {formatCurrency(a)}
+                        </td>
+                        <td className="px-6 py-4 text-sm font-bold text-blue-800 text-right">
+                          {formatCurrency(b)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm font-bold text-right ${getChangeColor(v)}`}>
+                          {formatCurrency(v)}
+                        </td>
+                        <td className={`px-6 py-4 text-sm font-bold text-right ${getChangeColor(v)}`}>
+                          {vp !== null ? formatPercentage(vp * 100) : ""}
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return null;
+                })()}
 
                 {/* Expenses Section */}
                 {varianceRows.expenses.length > 0 && (
