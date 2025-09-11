@@ -18,10 +18,10 @@ export default function DateRangePicker({
   onChange,
   className,
 }: DateRangePickerProps) {
-  // Parse incoming ISO strings to local dates to avoid timezone shifts
+  // Parse incoming ISO strings as UTC dates to avoid timezone shifts
   const parseIso = React.useCallback((iso: string): Date => {
     const [y, m, d] = iso.split("-").map(Number);
-    return new Date(y, m - 1, d);
+    return new Date(Date.UTC(y, m - 1, d));
   }, []);
 
   const parsed = React.useMemo<RangeValue>(
@@ -37,11 +37,11 @@ export default function DateRangePicker({
 
   React.useEffect(() => setRange(parsed), [parsed]);
 
-  // Format local dates as ISO yyyy-mm-dd without timezone conversion
+  // Format UTC dates as ISO yyyy-mm-dd without timezone conversion
   const formatIso = (d: Date) => {
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
   };
   const formatDisplay = (d: Date) =>
@@ -49,6 +49,7 @@ export default function DateRangePicker({
       month: "short",
       day: "numeric",
       year: "numeric",
+      timeZone: "UTC",
     });
 
   const handleChange = (next: RangeValue) => {

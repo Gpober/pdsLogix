@@ -21,27 +21,27 @@ export type RangeCalendarProps = {
 
 /** Returns a new date at the start of the month */
 function startOfMonth(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }
 
 /** Adds months to a date */
 function addMonths(date: Date, amount: number): Date {
-  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + amount, 1));
 }
 
 /** Adds days to a date */
 function addDays(date: Date, amount: number): Date {
   const next = new Date(date);
-  next.setDate(next.getDate() + amount);
+  next.setUTCDate(next.getUTCDate() + amount);
   return next;
 }
 
 /** Checks if two dates fall on the same day */
 function isSameDay(a: Date, b: Date): boolean {
   return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
   );
 }
 
@@ -54,7 +54,7 @@ function isBetween(date: Date, start: Date, end: Date): boolean {
 /** Builds a 6x7 matrix of dates for a given month */
 function getMonthMatrix(month: Date, weekStartsOn: 0 | 1): Date[][] {
   const firstOfMonth = startOfMonth(month);
-  const firstWeekday = (firstOfMonth.getDay() - weekStartsOn + 7) % 7;
+  const firstWeekday = (firstOfMonth.getUTCDay() - weekStartsOn + 7) % 7;
   const matrix: Date[][] = [];
   const current = addDays(firstOfMonth, -firstWeekday);
 
@@ -62,7 +62,7 @@ function getMonthMatrix(month: Date, weekStartsOn: 0 | 1): Date[][] {
     const week: Date[] = [];
     for (let d = 0; d < 7; d++) {
       week.push(new Date(current));
-      current.setDate(current.getDate() + 1);
+      current.setUTCDate(current.getUTCDate() + 1);
     }
     matrix.push(week);
   }
@@ -87,7 +87,7 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
   const [internal, setInternal] = React.useState<RangeValue>(defaultValue);
   const range = isControlled ? value! : internal;
 
-  const today = new Date();
+  const today = startOfDay(new Date());
   const initial = initialMonth
     ? startOfMonth(initialMonth)
     : range.start
@@ -101,6 +101,7 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
   const monthLabel = month.toLocaleDateString(undefined, {
     month: "long",
     year: "numeric",
+    timeZone: "UTC",
   });
 
   const matrix = React.useMemo(() => getMonthMatrix(month, weekStartsOn), [month, weekStartsOn]);
@@ -116,7 +117,7 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
 
   // normalizes date to midnight
   function startOfDay(d: Date): Date {
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   }
 
   const commit = (next: RangeValue) => {
@@ -171,7 +172,10 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
       default:
         return;
     }
-    if (newFocus.getMonth() !== month.getMonth() || newFocus.getFullYear() !== month.getFullYear()) {
+    if (
+      newFocus.getUTCMonth() !== month.getUTCMonth() ||
+      newFocus.getUTCFullYear() !== month.getUTCFullYear()
+    ) {
       setMonth(startOfMonth(newFocus));
     }
     if (!isDisabled(newFocus)) setFocusedDate(newFocus);
@@ -183,7 +187,8 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
 
   const effectiveEnd = React.useMemo(() => {
     if (range.end) return range.end;
-    if (range.start && hoverDate && hoverDate > range.start) return hoverDate;
+    if (range.start && hoverDate && hoverDate.getTime() > range.start.getTime())
+      return hoverDate;
     return null;
   }, [range.end, range.start, hoverDate]);
 
@@ -202,7 +207,7 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
           <ChevronLeft className="h-4 w-4" />
         </button>
         <div className="text-sm font-medium text-center flex-1">
-          {month.toLocaleDateString(undefined, { month: "long" })}
+          {month.toLocaleDateString(undefined, { month: "long", timeZone: "UTC" })}
         </div>
         <button
           type="button"
@@ -238,7 +243,9 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
       <div role="grid" className="grid grid-cols-7 grid-rows-6 text-sm">{/* Days */}
         {matrix.map((week) =>
           week.map((date) => {
-            const isCurrentMonth = date.getMonth() === month.getMonth();
+            const isCurrentMonth =
+              date.getUTCMonth() === month.getUTCMonth() &&
+              date.getUTCFullYear() === month.getUTCFullYear();
             const disabled = isDisabled(date);
             const isStart = !!(range.start && isSameDay(date, range.start));
             const isEnd = !!(effectiveEnd && isSameDay(date, effectiveEnd));
@@ -260,6 +267,7 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
               month: "long",
               day: "numeric",
               year: "numeric",
+              timeZone: "UTC",
             });
 
             return (
@@ -298,7 +306,7 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
                   />
                 )}
                 <span className={cn("relative z-10", (isStart || isEnd) && "text-white")}>{
-                  date.getDate()
+                  date.getUTCDate()
                 }</span>
               </button>
             );
@@ -313,16 +321,16 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
           aria-label="Previous year"
           onClick={() => setMonth(addMonths(month, -12))}
         >
-          {month.getFullYear() - 1}
+          {month.getUTCFullYear() - 1}
         </button>
-        <div className="flex-1 text-center font-medium">{month.getFullYear()}</div>
+        <div className="flex-1 text-center font-medium">{month.getUTCFullYear()}</div>
         <button
           type="button"
           className="flex-1 py-1 rounded hover:bg-gray-100"
           aria-label="Next year"
           onClick={() => setMonth(addMonths(month, 12))}
         >
-          {month.getFullYear() + 1}
+          {month.getUTCFullYear() + 1}
         </button>
       </div>
     </div>
@@ -336,6 +344,6 @@ export default RangeCalendar;
 // <RangeCalendar
 //   value={range}
 //   onChange={setRange}
-//   initialMonth={new Date(2025, 7, 1)} // August 2025
+//   initialMonth={new Date(Date.UTC(2025, 7, 1))} // August 2025
 // />
 
