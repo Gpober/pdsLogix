@@ -94,7 +94,7 @@ export default function ClientRootLayout({
           <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
           <meta name="mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+          <meta name="apple-mobile-web-app-title" content="ALLIANCE CFO AND ADVISORY" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
         <body className={inter.className}>
@@ -114,7 +114,7 @@ export default function ClientRootLayout({
           <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
           <meta name="mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+          <meta name="apple-mobile-web-app-title" content="ALLIANCE CFO AND ADVISORY" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
         <body className={inter.className}>{children}</body>
@@ -131,7 +131,7 @@ export default function ClientRootLayout({
           <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
           <meta name="mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-capable" content="yes" />
-          <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+          <meta name="apple-mobile-web-app-title" content="ALLIANCE CFO AND ADVISORY" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
         <body className={inter.className}>{children}</body>
@@ -147,7 +147,7 @@ export default function ClientRootLayout({
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-title" content="I AM CFO" />
+        <meta name="apple-mobile-web-app-title" content="ALLIANCE CFO AND ADVISORY" />
         <meta name="theme-color" content="#56B6E9" />
       </head>
       <body className={inter.className}>
