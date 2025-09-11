@@ -1051,62 +1051,30 @@ export default function FinancialsPage() {
 
     // Add parent accounts with their subs
     for (const [parentName, group] of parentMap.entries()) {
+      const subAmount = group.subs.reduce((sum, sub) => sum + sub.amount, 0);
+
       if (group.parent) {
-        // Calculate combined amount using all unique transactions to avoid double counting
-        const combinedTransactions = [
-          ...group.parent.transactions,
-          ...group.subs.flatMap((sub) => sub.transactions),
-        ];
-
-        const combinedAmount = combinedTransactions.reduce((sum, tx) => {
-          const debitValue = tx.debit
-            ? Number.parseFloat(tx.debit.toString())
-            : 0;
-          const creditValue = tx.credit
-            ? Number.parseFloat(tx.credit.toString())
-            : 0;
-          return group.parent!.category === "INCOME"
-            ? sum + (creditValue - debitValue)
-            : sum + (debitValue - creditValue);
-        }, 0);
-
-        // Calculate the parent's own amount excluding sub-account totals
-        const subAmount = group.subs.reduce((sum, sub) => sum + sub.amount, 0);
-        const parentOnlyAmount = group.parent.amount - subAmount;
+        // Parent exists - combined is parent + subs, parent amount is its own activity only
+        const combinedAmount = group.parent.amount + subAmount;
 
         result.push({
-          account: { ...group.parent, amount: parentOnlyAmount },
+          account: { ...group.parent, amount: group.parent.amount },
           subAccounts: group.subs.sort((a, b) =>
             a.account.localeCompare(b.account),
           ),
           combinedAmount,
         });
       } else {
-        // Orphaned sub-accounts (create virtual parent)
-        const combinedTransactions = group.subs.flatMap(
-          (sub) => sub.transactions,
-        );
-        const combinedAmount = combinedTransactions.reduce((sum, tx) => {
-          const debitValue = tx.debit
-            ? Number.parseFloat(tx.debit.toString())
-            : 0;
-          const creditValue = tx.credit
-            ? Number.parseFloat(tx.credit.toString())
-            : 0;
-          return group.subs[0].category === "INCOME"
-            ? sum + (creditValue - debitValue)
-            : sum + (debitValue - creditValue);
-        }, 0);
-
+        // No parent account record - create virtual parent for grouping
         const virtualParent: PLAccount = {
           account: parentName,
           parent_account: parentName,
           sub_account: null,
           is_sub_account: false,
-          amount: combinedAmount,
+          amount: 0,
           category: group.subs[0].category,
           account_type: group.subs[0].account_type,
-          transactions: combinedTransactions,
+          transactions: [],
         };
 
         result.push({
@@ -1114,7 +1082,7 @@ export default function FinancialsPage() {
           subAccounts: group.subs.sort((a, b) =>
             a.account.localeCompare(b.account),
           ),
-          combinedAmount,
+          combinedAmount: subAmount,
         });
       }
     }
