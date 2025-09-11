@@ -18,20 +18,32 @@ export default function DateRangePicker({
   onChange,
   className,
 }: DateRangePickerProps) {
+  // Parse incoming ISO strings to local dates to avoid timezone shifts
+  const parseIso = React.useCallback((iso: string): Date => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  }, []);
+
   const parsed = React.useMemo<RangeValue>(
     () => ({
-      start: startDate ? new Date(startDate) : null,
-      end: endDate ? new Date(endDate) : null,
+      start: startDate ? parseIso(startDate) : null,
+      end: endDate ? parseIso(endDate) : null,
     }),
-    [startDate, endDate]
+    [startDate, endDate, parseIso]
   );
 
   const [range, setRange] = React.useState<RangeValue>(parsed);
   const [open, setOpen] = React.useState(false);
 
-  React.useEffect(() => setRange(parsed), [parsed.start?.getTime(), parsed.end?.getTime()]);
+  React.useEffect(() => setRange(parsed), [parsed]);
 
-  const formatIso = (d: Date) => d.toISOString().slice(0, 10);
+  // Format local dates as ISO yyyy-mm-dd without timezone conversion
+  const formatIso = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
   const formatDisplay = (d: Date) =>
     d.toLocaleDateString(undefined, {
       month: "short",

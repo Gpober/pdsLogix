@@ -306,8 +306,24 @@ const RangeCalendar: React.FC<RangeCalendarProps> = ({
         )}
       </div>
 
-      <div className="mt-2 text-xs text-center text-gray-500">{/* Year */}
-        {month.getFullYear()}
+      <div className="mt-2 flex items-center text-xs text-gray-500">{/* Year selector */}
+        <button
+          type="button"
+          className="flex-1 py-1 rounded hover:bg-gray-100"
+          aria-label="Previous year"
+          onClick={() => setMonth(addMonths(month, -12))}
+        >
+          {month.getFullYear() - 1}
+        </button>
+        <div className="flex-1 text-center font-medium">{month.getFullYear()}</div>
+        <button
+          type="button"
+          className="flex-1 py-1 rounded hover:bg-gray-100"
+          aria-label="Next year"
+          onClick={() => setMonth(addMonths(month, 12))}
+        >
+          {month.getFullYear() + 1}
+        </button>
       </div>
     </div>
   );
