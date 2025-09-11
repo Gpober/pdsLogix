@@ -658,9 +658,6 @@ export default function FinancialsPage() {
     let currentRow = 1;
     sheetData.push(["Account", ...headers, "Total"]);
 
-    const sumByHeader = (accounts: PLAccount[], header: string) =>
-      accounts.reduce((sum, acc) => sum + getCellValue(acc, header), 0);
-
     const addSection = (accounts: PLAccount[], name: string) => {
       const startRow = currentRow + 1;
       accounts.forEach((acc) => {
@@ -700,22 +697,17 @@ export default function FinancialsPage() {
     currentRow++;
     const grossProfitRowIndex = currentRow;
 
-    const incomeTotals = headers.map((h) => sumByHeader(incomeAccounts, h));
-    const cogsTotals = headers.map((h) => sumByHeader(cogsAccounts, h));
-    const gross = incomeTotals.map((v, i) => v - cogsTotals[i]);
-    const grossTotal =
-      incomeAccounts.reduce((s, a) => s + a.amount, 0) -
-      cogsAccounts.reduce((s, a) => s + a.amount, 0);
-    const grossPct = gross.map((v, i) =>
-      incomeTotals[i] === 0 ? 0 : v / incomeTotals[i],
-    );
-    sheetData.push([
-      "Gross Profit %",
-      ...grossPct,
-      incomeAccounts.reduce((s, a) => s + a.amount, 0) === 0
-        ? 0
-        : grossTotal / incomeAccounts.reduce((s, a) => s + a.amount, 0),
-    ]);
+    const grossProfitPctRow: (string | XLSX.CellObject)[] = ["Gross Profit %"];
+    for (let i = 0; i < headers.length; i++) {
+      const col = XLSX.utils.encode_col(i + 1);
+      grossProfitPctRow.push({
+        f: `IF(${col}${incomeTotalRow}=0,0,${col}${grossProfitRowIndex}/${col}${incomeTotalRow})`,
+      });
+    }
+    grossProfitPctRow.push({
+      f: `IF(${totalCol}${incomeTotalRow}=0,0,${totalCol}${grossProfitRowIndex}/${totalCol}${incomeTotalRow})`,
+    });
+    sheetData.push(grossProfitPctRow);
     currentRow++;
 
     const expenseTotalRow = addSection(expenseAccounts, "Expenses");
@@ -728,20 +720,19 @@ export default function FinancialsPage() {
     netIncomeRow.push({ f: `${totalCol}${grossProfitRowIndex}-${totalCol}${expenseTotalRow}` });
     sheetData.push(netIncomeRow);
     currentRow++;
+    const netIncomeRowIndex = currentRow;
 
-    const expenseTotals = headers.map((h) => sumByHeader(expenseAccounts, h));
-    const net = gross.map((v, i) => v - expenseTotals[i]);
-    const netTotal = grossTotal - expenseAccounts.reduce((s, a) => s + a.amount, 0);
-    const netPct = net.map((v, i) =>
-      incomeTotals[i] === 0 ? 0 : v / incomeTotals[i],
-    );
-    sheetData.push([
-      "Net Income %",
-      ...netPct,
-      incomeAccounts.reduce((s, a) => s + a.amount, 0) === 0
-        ? 0
-        : netTotal / incomeAccounts.reduce((s, a) => s + a.amount, 0),
-    ]);
+    const netIncomePctRow: (string | XLSX.CellObject)[] = ["Net Income %"];
+    for (let i = 0; i < headers.length; i++) {
+      const col = XLSX.utils.encode_col(i + 1);
+      netIncomePctRow.push({
+        f: `IF(${col}${incomeTotalRow}=0,0,${col}${netIncomeRowIndex}/${col}${incomeTotalRow})`,
+      });
+    }
+    netIncomePctRow.push({
+      f: `IF(${totalCol}${incomeTotalRow}=0,0,${totalCol}${netIncomeRowIndex}/${totalCol}${incomeTotalRow})`,
+    });
+    sheetData.push(netIncomePctRow);
 
     const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
     const workbook = XLSX.utils.book_new();
