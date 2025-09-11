@@ -1,11 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { DateRange } from "react-day-picker";
-import { format, parse } from "date-fns";
-import { Calendar } from "@/components/ui/calendar";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
+import RangeCalendar, { RangeValue } from "./RangeCalendar";
 
 type DateRangePickerProps = {
   startDate: string;
@@ -20,62 +18,59 @@ export default function DateRangePicker({
   onChange,
   className,
 }: DateRangePickerProps) {
-  const [range, setRange] = React.useState<DateRange | undefined>(
-    startDate && endDate
-      ? {
-          from: parse(startDate, "yyyy-MM-dd", new Date()),
-          to: parse(endDate, "yyyy-MM-dd", new Date()),
-        }
-      : undefined
+  const parsed = React.useMemo<RangeValue>(
+    () => ({
+      start: startDate ? new Date(startDate) : null,
+      end: endDate ? new Date(endDate) : null,
+    }),
+    [startDate, endDate]
   );
 
-  const handleSelect = (selected: DateRange | undefined) => {
-    setRange(selected);
-    const start = selected?.from ? format(selected.from, "yyyy-MM-dd") : "";
-    const end = selected?.to ? format(selected.to, "yyyy-MM-dd") : "";
+  const [range, setRange] = React.useState<RangeValue>(parsed);
+  const [open, setOpen] = React.useState(false);
+
+  React.useEffect(() => setRange(parsed), [parsed.start?.getTime(), parsed.end?.getTime()]);
+
+  const formatIso = (d: Date) => d.toISOString().slice(0, 10);
+  const formatDisplay = (d: Date) =>
+    d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+  const handleChange = (next: RangeValue) => {
+    setRange(next);
+    const start = next.start ? formatIso(next.start) : "";
+    const end = next.end ? formatIso(next.end) : "";
     onChange(start, end);
+    if (next.start && next.end) setOpen(false);
   };
 
+  const label = range.start
+    ? range.end
+      ? `${formatDisplay(range.start)} - ${formatDisplay(range.end)}`
+      : formatDisplay(range.start)
+    : "Select date range";
+
   return (
-    <PopoverPrimitive.Root>
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
       <PopoverPrimitive.Trigger asChild>
         <button
           className={cn(
             "w-[260px] px-3 py-2 text-sm border border-gray-300 rounded-md bg-white text-left",
-            !range && "text-gray-400",
+            !range.start && "text-gray-400",
             className
           )}
         >
-          {range?.from
-            ? range.to
-              ? `${format(range.from, "MMM d, yyyy")} - ${format(
-                  range.to,
-                  "MMM d, yyyy"
-                )}`
-              : format(range.from, "MMM d, yyyy")
-            : "Select date range"}
+          {label}
         </button>
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Content
         align="start"
         className="p-2 bg-white rounded-md shadow-md border"
       >
-        <Calendar
-          mode="range"
-          selected={range}
-          onSelect={handleSelect}
-          numberOfMonths={1}
-          classNames={{
-            day_selected:
-              "bg-[#2CA01C] text-white hover:bg-[#2CA01C] hover:text-white",
-            day_range_start:
-              "day-range-start bg-[#2CA01C] text-white",
-            day_range_end:
-              "day-range-end bg-[#2CA01C] text-white",
-            day_range_middle: "aria-selected:bg-[#E3F7EC]",
-            day_today: "text-[#2CA01C] font-semibold",
-          }}
-        />
+        <RangeCalendar value={range} onChange={handleChange} />
       </PopoverPrimitive.Content>
     </PopoverPrimitive.Root>
   );
