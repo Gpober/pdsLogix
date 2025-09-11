@@ -2,24 +2,24 @@
 
 import * as React from "react";
 import { DateRange } from "react-day-picker";
-import { format, parse } from "date-fns";
+import { format, parse, isValid } from "date-fns";
 import { Calendar } from "@/components/ui/calendar";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
 
-type DateRangePickerProps = {
+type DatePickerProps = {
   startDate: string;
   endDate: string;
   onChange: (start: string, end: string) => void;
   className?: string;
 };
 
-export default function DateRangePicker({
+export default function DatePicker({
   startDate,
   endDate,
   onChange,
   className,
-}: DateRangePickerProps) {
+}: DatePickerProps) {
   const [range, setRange] = React.useState<DateRange | undefined>(
     startDate && endDate
       ? {
@@ -33,6 +33,16 @@ export default function DateRangePicker({
     setRange(selected);
     const start = selected?.from ? format(selected.from, "yyyy-MM-dd") : "";
     const end = selected?.to ? format(selected.to, "yyyy-MM-dd") : "";
+    onChange(start, end);
+  };
+
+  const handleInputChange = (value: string, type: "from" | "to") => {
+    const date = value ? parse(value, "yyyy-MM-dd", new Date()) : undefined;
+    const validDate = date && isValid(date) ? date : undefined;
+    const newRange: DateRange = { ...range, [type]: validDate };
+    setRange(newRange);
+    const start = newRange.from ? format(newRange.from, "yyyy-MM-dd") : "";
+    const end = newRange.to ? format(newRange.to, "yyyy-MM-dd") : "";
     onChange(start, end);
   };
 
@@ -60,11 +70,28 @@ export default function DateRangePicker({
         align="start"
         className="p-2 bg-white rounded-md shadow-md border"
       >
+        <div className="flex gap-2 mb-2">
+          <input
+            type="date"
+            className="border px-2 py-1 rounded text-sm flex-1"
+            value={range?.from ? format(range.from, "yyyy-MM-dd") : ""}
+            onChange={(e) => handleInputChange(e.target.value, "from")}
+          />
+          <input
+            type="date"
+            className="border px-2 py-1 rounded text-sm flex-1"
+            value={range?.to ? format(range.to, "yyyy-MM-dd") : ""}
+            onChange={(e) => handleInputChange(e.target.value, "to")}
+          />
+        </div>
         <Calendar
           mode="range"
           selected={range}
           onSelect={handleSelect}
           numberOfMonths={1}
+          captionLayout="dropdown"
+          fromYear={1900}
+          toYear={2100}
           classNames={{
             day_selected:
               "bg-[#2CA01C] text-white hover:bg-[#2CA01C] hover:text-white",

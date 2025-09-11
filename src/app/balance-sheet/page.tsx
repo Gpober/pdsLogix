@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react"
 import { RefreshCw, X } from "lucide-react"
 import { supabase } from "@/lib/supabaseClient"
-import DateRangePicker from "@/components/DateRangePicker"
+import DatePicker from "@/components/DatePicker"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -1107,7 +1107,7 @@ export default function BalanceSheetPage() {
             )}
 
             {timePeriod === "Custom" && (
-              <DateRangePicker
+              <DatePicker
                 startDate={customStartDate}
                 endDate={customEndDate}
                 onChange={(start, end) => {
