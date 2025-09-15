@@ -183,10 +183,14 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   const cogsTerms = /\bcogs\b|cost of goods\b|costs? of sales?\b/.test(m);
   const grossProfitTerms = /\bgross profit\b|\bgp\b(?!t)|\bgp%\b|\bgross margin\b/.test(m);
   const financialHealthTerms = /\bfinancial health|financial condition|overall financial\b/.test(m);
+  const pnlTerms = /p&l|p\s*and\s*l|pnl|profit and loss|income statement/.test(m);
+  const revenueTerms = /\brevenue\b|\bsales\b/.test(m);
   const profitabilityTerms =
     cogsTerms ||
     grossProfitTerms ||
     financialHealthTerms ||
+    pnlTerms ||
+    revenueTerms ||
     /\bprofit(ability)?\b|\bmargin(s)?\b|\bnet income\b|\brevenue\b.*\b(expenses?|cogs)\b|\bprofit per\b/.test(m);
 
   const payrollTerms = /\bpayroll|paychecks?|wages?|gross pay|net pay|pay run|direct deposit|pay stub|employees?\b/.test(
@@ -746,6 +750,9 @@ GROSS PROFIT LOGIC
 
         // Nudge for GP requests
         if (intent === "gross_profit" && !rawArgs.accountLike) {
+          rawArgs.accountLike = "Revenue";
+        }
+        if (intent === "generic_financial" && /\brevenue\b/i.test(message) && !rawArgs.accountLike) {
           rawArgs.accountLike = "Revenue";
         }
       }

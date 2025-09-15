@@ -102,7 +102,9 @@ function detectQueryType(message) {
     s.includes('financial data') || s.includes('all financial') || s.includes('financial health') ||
     s.includes('journal entry') || s.includes('journal entries') ||
     s.includes('expense') || s.includes('expenses') || s.includes('cost') ||
-    s.includes('spending') || s.includes('cogs') || s.includes('cost of goods sold')
+    s.includes('spending') || s.includes('cogs') || s.includes('cost of goods sold') ||
+    s.includes('p&l') || s.includes('p/l') || s.includes('p and l') ||
+    s.includes('pnl') || s.includes('profit and loss') || s.includes('income statement')
   ) return 'financial_analysis'
 
   // Performance
