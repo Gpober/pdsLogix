@@ -156,7 +156,7 @@ function currentWeekMonSun(tz = NY_TZ) {
 
 /* -------------------------- Intent classification ------------------------- */
 
-type Topic = "payroll" | "ar" | "financial";
+type Topic = "payroll" | "ar" | "ap" | "financial";
 type Intent =
   | "customer_profitability"
   | "incoming_cash"
@@ -164,7 +164,8 @@ type Intent =
   | "gross_profit"
   | "generic_financial"
   | "generic_payroll"
-  | "generic_ar";
+  | "generic_ar"
+  | "generic_ap";
 
 function classify(message: string): { topic: Topic; intent: Intent } {
   const m = (message || "").toLowerCase();
@@ -174,6 +175,7 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   const arTerms = /\b(ar|a\/r|accounts receivable|aging|aged|past due|overdue|collections?|invoices?|receivables?)\b/.test(
     m
   );
+  const apTerms = /\b(ap|a\/p|accounts payable|payables?|vendors?|bills?)\b/.test(m);
   const incomingTerms = /\b(this week|next week|today|tomorrow|in the next (?:\d+\s*)?day|coming in|expected cash|cash forecast|receipts?)\b/.test(
     m
   );
@@ -190,6 +192,7 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   );
 
   if (payrollTerms) return { topic: "payroll", intent: "generic_payroll" };
+  if (apTerms) return { topic: "ap", intent: "generic_ap" };
 
   if (mentionsCustomer && (grossProfitTerms || cogsTerms)) {
     return { topic: "financial", intent: "customer_profitability" };
@@ -424,6 +427,58 @@ function buildTools(topic: Topic, intent: Intent) {
     }
   }
 
+  // A/P
+  if (topic === "ap") {
+    const apSummary = pickFunctionName(["getAPAgingSummary", "getAPSummary", "getAPOpenBills"]);
+    if (apSummary) {
+      tools.push({
+        type: "function",
+        function: {
+          name: apSummary,
+          description: "A/P aging or open bills from ap_aging.",
+          parameters: {
+            type: "object",
+            properties: {
+              vendor: { type: "string", description: "Vendor name" },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+
+    const apRaw = pickFunctionName(["queryAPAgingTable", "queryAPTable", "queryPayables"]);
+    if (apRaw) {
+      tools.push({
+        type: "function",
+        function: {
+          name: apRaw,
+          description: "Direct query access to ap_aging with flexible column filters.",
+          parameters: {
+            type: "object",
+            properties: {
+              select: { type: "string", description: "Columns to return" },
+              filters: {
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
+                additionalProperties: true,
+              },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+  }
+
   // Financial / GL
   if (topic === "financial") {
     const custProfit = pickFunctionName(["getCustomerProfitability", "getCustomerNetIncome"]);
@@ -621,6 +676,18 @@ GROSS PROFIT LOGIC
           "limit",
           "offset",
           "timeframe",
+        ].forEach((k) => allow.add(k));
+      } else if (/ap|payable/i.test(fnName)) {
+        [
+          "vendor",
+          "startDate",
+          "endDate",
+          "limit",
+          "offset",
+          "select",
+          "filters",
+          "orderBy",
+          "ascending",
         ].forEach((k) => allow.add(k));
       } else {
         // financial

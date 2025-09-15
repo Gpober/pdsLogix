@@ -67,13 +67,22 @@ function detectQueryType(message) {
     s.includes('overdue') || s.includes('slow pay') || s.includes('unpaid')
   ) return 'ar_analysis'
 
+  // A/P specific
+  if (
+    s.includes('accounts payable') ||
+    s.includes('a/p') || s.includes('ap') ||
+    s.includes('payable') || s.includes('payables') ||
+    s.includes('bill') || s.includes('bills') ||
+    s.includes('vendor') || s.includes('vendors')
+  ) return 'ap_analysis'
+
   // Payroll / Workforce
   if (
     s.includes('labor') || s.includes('payroll') || s.includes('staff') ||
     s.includes('employee') || s.includes('wages') || s.includes('salary') ||
     s.includes('contractor') || s.includes('contractors') ||
     s.includes('subcontractor') || s.includes('freelancer') ||
-    s.includes('vendor') || s.includes('1099') ||
+    s.includes('1099') ||
     s.includes('payroll by customer') || s.includes('labor by client') ||
     s.includes('staff costs by customer') || s.includes('employee costs by project')
   ) return 'payroll'
