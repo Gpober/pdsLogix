@@ -175,16 +175,18 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   const arTerms = /\b(ar|a\/r|accounts receivable|aging|aged|past due|overdue|collections?|invoices?|receivables?)\b/.test(
     m
   );
-  const apTerms = /\b(ap|a\/p|accounts payable|payables?|vendors?|bills?)\b/.test(m);
+  const apTerms = /\b(ap|a\/p|accounts payable|payables?|vendors?|bills?|owe|owing|owed)\b/.test(m);
   const incomingTerms = /\b(this week|next week|today|tomorrow|in the next (?:\d+\s*)?day|coming in|expected cash|cash forecast|receipts?)\b/.test(
     m
   );
 
   const cogsTerms = /\bcogs\b|cost of goods\b|costs? of sales?\b/.test(m);
   const grossProfitTerms = /\bgross profit\b|\bgp\b(?!t)|\bgp%\b|\bgross margin\b/.test(m);
+  const financialHealthTerms = /\bfinancial health|financial condition|overall financial\b/.test(m);
   const profitabilityTerms =
     cogsTerms ||
     grossProfitTerms ||
+    financialHealthTerms ||
     /\bprofit(ability)?\b|\bmargin(s)?\b|\bnet income\b|\brevenue\b.*\b(expenses?|cogs)\b|\bprofit per\b/.test(m);
 
   const payrollTerms = /\bpayroll|paychecks?|wages?|gross pay|net pay|pay run|direct deposit|pay stub|employees?\b/.test(
@@ -615,9 +617,10 @@ Current date: ${today}.
 Keep responses concise (≈350 words). Use bullets and short sections. If content is long, summarize and offer drill-down.
 
 ROUTING
-- Payroll → payments
-- A/R → ar_aging_detail
-- Financials & customer profitability → journal_entry_lines
+  - Payroll → payments
+  - A/R → ar_aging_detail
+  - A/P → ap_aging
+  - Financials & customer profitability → journal_entry_lines
 - If the user says "what's coming in this week", interpret as expected receipts from open invoices due THIS calendar week.
 
 EXECUTION

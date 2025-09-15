@@ -73,7 +73,8 @@ function detectQueryType(message) {
     s.includes('a/p') || s.includes('ap') ||
     s.includes('payable') || s.includes('payables') ||
     s.includes('bill') || s.includes('bills') ||
-    s.includes('vendor') || s.includes('vendors')
+    s.includes('vendor') || s.includes('vendors') ||
+    s.includes('owe') || s.includes('owing') || s.includes('owed')
   ) return 'ap_analysis'
 
   // Payroll / Workforce
@@ -98,7 +99,7 @@ function detectQueryType(message) {
     s.includes('profitability') || s.includes('margin') || s.includes('gross profit') ||
     s.includes('company total') || s.includes('total profit') ||
     s.includes('overall profit') || s.includes('bottom line') ||
-    s.includes('financial data') || s.includes('all financial') ||
+    s.includes('financial data') || s.includes('all financial') || s.includes('financial health') ||
     s.includes('journal entry') || s.includes('journal entries') ||
     s.includes('expense') || s.includes('expenses') || s.includes('cost') ||
     s.includes('spending') || s.includes('cogs') || s.includes('cost of goods sold')
