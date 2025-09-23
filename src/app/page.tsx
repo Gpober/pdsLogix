@@ -19,6 +19,10 @@ import {
   Target,
   Activity,
   PieChart,
+  CreditCard,
+  FileText,
+  Users,
+  Clock,
 } from "lucide-react";
 import {
   LineChart,
@@ -37,6 +41,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/lib/supabaseClient";
 import DateRangePicker from "@/components/DateRangePicker";
 import CustomerMultiSelect from "@/components/CustomerMultiSelect";
@@ -270,9 +275,43 @@ export default function FinancialOverviewPage() {
     benefits: number;
     contractorPayments: number;
   };
+
+  type ReceivablesSummary = {
+    total: number;
+    current: number;
+    days30: number;
+    days60: number;
+    days90: number;
+    pastDue: number;
+    averageDSO: number;
+    customerCount: number;
+    invoiceCount: number;
+  };
+
+  type PayablesSummary = {
+    total: number;
+    current: number;
+    days30: number;
+    days60: number;
+    days90: number;
+    pastDue: number;
+    averageDaysOutstanding: number;
+    vendorCount: number;
+    billCount: number;
+  };
+
+  type SummaryView = "payroll" | "ar" | "ap";
   const [payrollSummary, setPayrollSummary] = useState<PayrollSummary | null>(null);
   const [payrollLoading, setPayrollLoading] = useState(false);
   const [payrollError, setPayrollError] = useState<string | null>(null);
+  const [receivablesSummary, setReceivablesSummary] =
+    useState<ReceivablesSummary | null>(null);
+  const [receivablesLoading, setReceivablesLoading] = useState(false);
+  const [receivablesError, setReceivablesError] = useState<string | null>(null);
+  const [payablesSummary, setPayablesSummary] = useState<PayablesSummary | null>(null);
+  const [payablesLoading, setPayablesLoading] = useState(false);
+  const [payablesError, setPayablesError] = useState<string | null>(null);
+  const [summaryView, setSummaryView] = useState<SummaryView>("payroll");
   const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
     new Set(["All Customers"]),
   );
@@ -1242,6 +1281,194 @@ export default function FinancialOverviewPage() {
     }
   };
 
+  const calculateDaysOutstanding = (dueDate: string | null | undefined) => {
+    if (!dueDate) return 0;
+    const normalized = dueDate.includes("T") ? dueDate.split("T")[0] : dueDate;
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) return 0;
+    const diff = Date.now() - parsed.getTime();
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  };
+
+  const getAgingBucket = (daysOutstanding: number) => {
+    if (daysOutstanding <= 0) return "current";
+    if (daysOutstanding <= 30) return "current";
+    if (daysOutstanding <= 60) return "31-60";
+    if (daysOutstanding <= 90) return "61-90";
+    return "90+";
+  };
+
+  const toPercent = (value: number, total: number) =>
+    total > 0 ? Math.round((value / total) * 100) : 0;
+
+  const fetchReceivablesSummary = async () => {
+    try {
+      setReceivablesLoading(true);
+      setReceivablesError(null);
+      const { data, error } = await supabase
+        .from("ar_aging_detail")
+        .select("customer, open_balance, due_date")
+        .gt("open_balance", 0);
+      if (error) throw error;
+      const rows = (data || []) as {
+        customer: string | null;
+        open_balance: number | null;
+        due_date: string | null;
+      }[];
+
+      if (!rows.length) {
+        setReceivablesSummary(null);
+        return;
+      }
+
+      const customers = new Set<string>();
+      let total = 0;
+      let current = 0;
+      let days30 = 0;
+      let days60 = 0;
+      let days90 = 0;
+      let weightedDays = 0;
+      let invoiceCount = 0;
+
+      for (const row of rows) {
+        const openBalance = Number(row.open_balance) || 0;
+        if (openBalance <= 0) continue;
+        invoiceCount += 1;
+        total += openBalance;
+        if (row.customer) customers.add(row.customer);
+        const daysOutstanding = calculateDaysOutstanding(row.due_date);
+        const bucket = getAgingBucket(daysOutstanding);
+        switch (bucket) {
+          case "31-60":
+            days30 += openBalance;
+            break;
+          case "61-90":
+            days60 += openBalance;
+            break;
+          case "90+":
+            days90 += openBalance;
+            break;
+          default:
+            current += openBalance;
+        }
+        weightedDays += Math.max(daysOutstanding, 0) * openBalance;
+      }
+
+      if (!invoiceCount || total <= 0) {
+        setReceivablesSummary(null);
+        return;
+      }
+
+      setReceivablesSummary({
+        total,
+        current,
+        days30,
+        days60,
+        days90,
+        pastDue: days30 + days60 + days90,
+        averageDSO: Math.round(weightedDays / total),
+        customerCount: customers.size,
+        invoiceCount,
+      });
+    } catch (e) {
+      const err = e as Error;
+      setReceivablesError(err.message);
+      setReceivablesSummary(null);
+    } finally {
+      setReceivablesLoading(false);
+    }
+  };
+
+  const fetchPayablesSummary = async () => {
+    try {
+      setPayablesLoading(true);
+      setPayablesError(null);
+      const { data, error } = await supabase
+        .from("ap_aging")
+        .select("vendor, open_balance, due_date")
+        .gt("open_balance", 0);
+      if (error) throw error;
+      const rows = (data || []) as {
+        vendor: string | null;
+        open_balance: number | null;
+        due_date: string | null;
+      }[];
+
+      if (!rows.length) {
+        setPayablesSummary(null);
+        return;
+      }
+
+      const vendors = new Set<string>();
+      let total = 0;
+      let current = 0;
+      let days30 = 0;
+      let days60 = 0;
+      let days90 = 0;
+      let weightedDays = 0;
+      let billCount = 0;
+
+      for (const row of rows) {
+        const openBalance = Number(row.open_balance) || 0;
+        if (openBalance <= 0) continue;
+        billCount += 1;
+        total += openBalance;
+        if (row.vendor) vendors.add(row.vendor);
+        const daysOutstanding = calculateDaysOutstanding(row.due_date);
+        const bucket = getAgingBucket(daysOutstanding);
+        switch (bucket) {
+          case "31-60":
+            days30 += openBalance;
+            break;
+          case "61-90":
+            days60 += openBalance;
+            break;
+          case "90+":
+            days90 += openBalance;
+            break;
+          default:
+            current += openBalance;
+        }
+        weightedDays += Math.max(daysOutstanding, 0) * openBalance;
+      }
+
+      if (!billCount || total <= 0) {
+        setPayablesSummary(null);
+        return;
+      }
+
+      setPayablesSummary({
+        total,
+        current,
+        days30,
+        days60,
+        days90,
+        pastDue: days30 + days60 + days90,
+        averageDaysOutstanding: Math.round(weightedDays / total),
+        vendorCount: vendors.size,
+        billCount,
+      });
+    } catch (e) {
+      const err = e as Error;
+      setPayablesError(err.message);
+      setPayablesSummary(null);
+    } finally {
+      setPayablesLoading(false);
+    }
+  };
+
+  const summaryTitles: Record<SummaryView, string> = {
+    payroll: "Payroll",
+    ar: "Accounts Receivable",
+    ap: "Accounts Payable",
+  };
+
+  const summaryDescriptions: Record<SummaryView, string> = {
+    payroll: "Overview of payroll activity",
+    ar: "Snapshot of outstanding receivables and aging",
+    ap: "Visibility into vendor obligations and payment cadence",
+  };
+
   const handleSync = async () => {
     try {
       await fetch("/api/sync", { method: "POST" });
@@ -1251,6 +1478,8 @@ export default function FinancialOverviewPage() {
       loadTrendData();
       loadPropertyData();
       fetchPayrollSummary();
+      fetchReceivablesSummary();
+      fetchPayablesSummary();
     }
   };
 
@@ -1269,6 +1498,10 @@ export default function FinancialOverviewPage() {
     customStartDate,
     customEndDate,
   ]);
+  useEffect(() => {
+    fetchReceivablesSummary();
+    fetchPayablesSummary();
+  }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   // Helper functions
@@ -1278,6 +1511,289 @@ export default function FinancialOverviewPage() {
       currency: "USD",
       maximumFractionDigits: 0,
     }).format(value || 0);
+  };
+
+  const MetricTile = ({
+    label,
+    value,
+    subtext,
+    accent = "text-slate-400",
+    icon: Icon,
+  }: {
+    label: string;
+    value: React.ReactNode;
+    subtext?: React.ReactNode;
+    accent?: string;
+    icon?: React.ComponentType<{ className?: string }>;
+  }) => (
+    <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {label}
+        </span>
+        {Icon ? <Icon className={`h-5 w-5 ${accent}`} /> : null}
+      </div>
+      <div className="mt-3 text-2xl font-semibold text-slate-900">{value}</div>
+      {subtext ? (
+        <div className="mt-2 text-xs text-slate-500">{subtext}</div>
+      ) : null}
+    </div>
+  );
+
+  const renderSummaryContent = () => {
+    if (summaryView === "payroll") {
+      if (payrollLoading) {
+        return (
+          <div className="text-sm text-gray-500">Loading payroll summary...</div>
+        );
+      }
+      if (payrollError) {
+        return <div className="text-sm text-red-500">{payrollError}</div>;
+      }
+      if (!payrollSummary) {
+        return (
+          <div className="text-sm text-gray-500">No payroll data available</div>
+        );
+      }
+      const summary = payrollSummary;
+      const metrics = [
+        {
+          label: "Employees Paid",
+          value: summary.employees.toLocaleString(),
+          subtext: "Including W-2 and contractors",
+          icon: Users,
+          accent: "text-sky-500",
+        },
+        {
+          label: "W-2 Headcount",
+          value: summary.w2.toLocaleString(),
+          subtext: "Full-time employees",
+          icon: FileText,
+          accent: "text-indigo-500",
+        },
+        {
+          label: "Contractor Headcount",
+          value: summary.contractors.toLocaleString(),
+          subtext: "Active contractors",
+          icon: FileText,
+          accent: "text-amber-500",
+        },
+        {
+          label: "Net Pay",
+          value: formatCurrency(summary.netPay),
+          subtext: "After taxes & deductions",
+          icon: DollarSign,
+          accent: "text-emerald-500",
+        },
+        {
+          label: "Gross Payroll",
+          value: formatCurrency(summary.grossPayroll),
+          subtext: "Before deductions",
+          icon: BarChart3,
+          accent: "text-sky-600",
+        },
+        {
+          label: "Employer Taxes",
+          value: formatCurrency(summary.employerTaxes),
+          subtext: "Company-paid payroll taxes",
+          icon: PieChart,
+          accent: "text-purple-500",
+        },
+        {
+          label: "Benefits",
+          value: formatCurrency(summary.benefits),
+          subtext: "Employer benefit costs",
+          icon: Target,
+          accent: "text-teal-500",
+        },
+        {
+          label: "Contractor Payments",
+          value: formatCurrency(summary.contractorPayments),
+          subtext: "1099 compensation",
+          icon: TrendingUp,
+          accent: "text-orange-500",
+        },
+      ];
+      return (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {metrics.map((metric) => (
+            <MetricTile key={metric.label} {...metric} />
+          ))}
+        </div>
+      );
+    }
+
+    if (summaryView === "ar") {
+      if (receivablesLoading) {
+        return (
+          <div className="text-sm text-gray-500">
+            Loading accounts receivable summary...
+          </div>
+        );
+      }
+      if (receivablesError) {
+        return <div className="text-sm text-red-500">{receivablesError}</div>;
+      }
+      if (!receivablesSummary) {
+        return (
+          <div className="text-sm text-gray-500">
+            No accounts receivable data available
+          </div>
+        );
+      }
+      const summary = receivablesSummary;
+      const metrics = [
+        {
+          label: "Total Outstanding",
+          value: formatCurrency(summary.total),
+          subtext: `Past due ${formatCurrency(summary.pastDue)}`,
+          icon: BarChart3,
+          accent: "text-sky-600",
+        },
+        {
+          label: "Current (0-30)",
+          value: formatCurrency(summary.current),
+          subtext: `${toPercent(summary.current, summary.total)}% of total`,
+          icon: PieChart,
+          accent: "text-emerald-500",
+        },
+        {
+          label: "Past Due 31-60",
+          value: formatCurrency(summary.days30),
+          subtext: `${toPercent(summary.days30, summary.total)}% of total`,
+          icon: Clock,
+          accent: "text-amber-500",
+        },
+        {
+          label: "Past Due 61-90",
+          value: formatCurrency(summary.days60),
+          subtext: `${toPercent(summary.days60, summary.total)}% of total`,
+          icon: Clock,
+          accent: "text-orange-500",
+        },
+        {
+          label: "Past Due 90+",
+          value: formatCurrency(summary.days90),
+          subtext: `${toPercent(summary.days90, summary.total)}% of total`,
+          icon: ArrowUpRight,
+          accent: "text-rose-500",
+        },
+        {
+          label: "Past Due Total",
+          value: formatCurrency(summary.pastDue),
+          subtext: `${toPercent(summary.pastDue, summary.total)}% of receivables`,
+          icon: AlertTriangle,
+          accent: "text-red-500",
+        },
+        {
+          label: "Average DSO",
+          value: `${summary.averageDSO} days`,
+          subtext: "Weighted by open balances",
+          icon: Activity,
+          accent: "text-indigo-500",
+        },
+        {
+          label: "Active Customers",
+          value: summary.customerCount.toLocaleString(),
+          subtext: `Open invoices: ${summary.invoiceCount.toLocaleString()}`,
+          icon: Users,
+          accent: "text-slate-500",
+        },
+      ];
+      return (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {metrics.map((metric) => (
+            <MetricTile key={metric.label} {...metric} />
+          ))}
+        </div>
+      );
+    }
+
+    if (payablesLoading) {
+      return (
+        <div className="text-sm text-gray-500">
+          Loading accounts payable summary...
+        </div>
+      );
+    }
+    if (payablesError) {
+      return <div className="text-sm text-red-500">{payablesError}</div>;
+    }
+    if (!payablesSummary) {
+      return (
+        <div className="text-sm text-gray-500">
+          No accounts payable data available
+        </div>
+      );
+    }
+
+    const summary = payablesSummary;
+    const metrics = [
+      {
+        label: "Total Outstanding",
+        value: formatCurrency(summary.total),
+        subtext: `Past due ${formatCurrency(summary.pastDue)}`,
+        icon: CreditCard,
+        accent: "text-sky-600",
+      },
+      {
+        label: "Current (0-30)",
+        value: formatCurrency(summary.current),
+        subtext: `${toPercent(summary.current, summary.total)}% of total`,
+        icon: PieChart,
+        accent: "text-emerald-500",
+      },
+      {
+        label: "Due 31-60",
+        value: formatCurrency(summary.days30),
+        subtext: `${toPercent(summary.days30, summary.total)}% of total`,
+        icon: Clock,
+        accent: "text-amber-500",
+      },
+      {
+        label: "Due 61-90",
+        value: formatCurrency(summary.days60),
+        subtext: `${toPercent(summary.days60, summary.total)}% of total`,
+        icon: Clock,
+        accent: "text-orange-500",
+      },
+      {
+        label: "Due 90+",
+        value: formatCurrency(summary.days90),
+        subtext: `${toPercent(summary.days90, summary.total)}% of total`,
+        icon: AlertTriangle,
+        accent: "text-rose-500",
+      },
+      {
+        label: "Past Due Total",
+        value: formatCurrency(summary.pastDue),
+        subtext: `${toPercent(summary.pastDue, summary.total)}% of payables`,
+        icon: ArrowUpRight,
+        accent: "text-red-500",
+      },
+      {
+        label: "Average Days Outstanding",
+        value: `${summary.averageDaysOutstanding} days`,
+        subtext: "Weighted by open balances",
+        icon: Activity,
+        accent: "text-indigo-500",
+      },
+      {
+        label: "Active Vendors",
+        value: summary.vendorCount.toLocaleString(),
+        subtext: `Open bills: ${summary.billCount.toLocaleString()}`,
+        icon: FileText,
+        accent: "text-slate-500",
+      },
+    ];
+
+    return (
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {metrics.map((metric) => (
+          <MetricTile key={metric.label} {...metric} />
+        ))}
+      </div>
+    );
   };
 
   const formatCompactCurrency = (value) => {
@@ -2021,81 +2537,48 @@ export default function FinancialOverviewPage() {
 
             {/* Financial Health Summary */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Payroll Summary */}
-              <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-gray-200">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Payroll Summary
-                  </h3>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Overview of payroll activity
+              <Card className="shadow-sm">
+                <CardHeader className="space-y-4 sm:space-y-0 sm:flex sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-xl font-semibold text-gray-900">
+                      {summaryTitles[summaryView]} Overview
+                    </CardTitle>
+                    <p className="text-sm text-gray-600 mt-2">
+                      {summaryDescriptions[summaryView]}
+                    </p>
                   </div>
-                </div>
-                <div className="p-6">
-                  {payrollLoading ? (
-                    <div className="text-sm text-gray-500">Loading...</div>
-                  ) : payrollError ? (
-                    <div className="text-sm text-red-500">{payrollError}</div>
-                  ) : payrollSummary ? (
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <div className="text-gray-500">Employees Paid</div>
-                        <div className="text-lg font-semibold">
-                          {payrollSummary.employees}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">W-2 Headcount</div>
-                        <div className="text-lg font-semibold">
-                          {payrollSummary.w2}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">
-                          Contractor Headcount
-                        </div>
-                        <div className="text-lg font-semibold">
-                          {payrollSummary.contractors}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Net Pay</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.netPay)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Gross Payroll</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.grossPayroll)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Employer Taxes</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.employerTaxes)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Benefits</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.benefits)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Contractors</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.contractorPayments)}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-500">
-                      No payroll data
-                    </div>
-                  )}
-                </div>
-              </div>
+                  <Tabs
+                    value={summaryView}
+                    onValueChange={(value) => setSummaryView(value as SummaryView)}
+                    className="w-full sm:w-auto"
+                  >
+                    <TabsList className="w-full sm:w-auto gap-1 rounded-lg bg-gray-100 p-1">
+                      <TabsTrigger
+                        value="payroll"
+                        className="w-full sm:w-auto gap-2 px-3 py-2 text-sm font-medium text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900"
+                      >
+                        <Users className="h-4 w-4" />
+                        <span>Payroll</span>
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="ar"
+                        className="w-full sm:w-auto gap-2 px-3 py-2 text-sm font-medium text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900"
+                      >
+                        <FileText className="h-4 w-4" />
+                        <span>A/R</span>
+                      </TabsTrigger>
+                      <TabsTrigger
+                        value="ap"
+                        className="w-full sm:w-auto gap-2 px-3 py-2 text-sm font-medium text-gray-600 data-[state=active]:bg-white data-[state=active]:text-gray-900"
+                      >
+                        <CreditCard className="h-4 w-4" />
+                        <span>A/P</span>
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </CardHeader>
+                <CardContent>{renderSummaryContent()}</CardContent>
+              </Card>
 
               {/* Alerts & Notifications */}
               <div className="bg-white rounded-lg shadow-sm overflow-hidden">
