@@ -345,82 +345,39 @@ export default function CashFlowPage() {
   }
 
   const handleExportCashFlowExcel = () => {
-    const months = Array.from(
-      new Set(
-        offsetTransactions.map((tx) => monthsList[getMonthFromDate(tx.date) - 1]),
-      ),
-    ).sort((a, b) => monthsList.indexOf(a) - monthsList.indexOf(b))
+    const exportPeriods: PeriodData[] =
+      periods.length > 0
+        ? periods
+        : (() => {
+            const keys = new Set<string>()
+            offsetAccountData.forEach((account) => {
+              Object.keys(account.periods || {}).forEach((key) => keys.add(key))
+            })
+            const derived = Array.from(keys)
+              .sort()
+              .map((key) => ({ key, label: key } as PeriodData))
+            return derived.length > 0 ? derived : [{ key: "total", label: "Total" }]
+          })()
 
-    type ActivityMap = Record<string, number>
-    const breakdown: Record<
-      string,
-      { operating: ActivityMap; financing: ActivityMap; investing: ActivityMap; transfer: ActivityMap }
-    > = {}
-    const accounts = {
-      operating: new Set<string>(),
-      financing: new Set<string>(),
-      investing: new Set<string>(),
-      transfer: new Set<string>(),
-    }
-    const accountTypes: Record<string, Record<string, string>> = {
-      operating: {},
-      financing: {},
-      investing: {},
-      transfer: {},
-    }
+    const showTotalColumn = periodType !== "total"
+    const sheetData: Array<
+      Array<string | number | { t: string; v?: number; f?: string; z?: string }>
+    > = []
 
-    months.forEach((m) => {
-      breakdown[m] = { operating: {}, financing: {}, investing: {}, transfer: {} }
-    })
+    const header = ["Account", ...exportPeriods.map((period) => period.label)]
+    if (showTotalColumn) header.push("Total")
+    sheetData.push(header)
 
-    offsetTransactions.forEach((tx) => {
-      const monthName = monthsList[getMonthFromDate(tx.date) - 1]
-      if (!breakdown[monthName]) return
+    const currencyFormat = '"$"#,##0.00_);("$"#,##0.00)'
 
-      const account = tx.account || ""
-      const klass = classifyTransaction(
-        tx.account_type,
-        tx.report_category,
-      )
-      const impact = tx.cashFlowImpact || 0
-      if (klass === "transfer" && !includeTransfers) return
-
-      if (
-        klass === "operating" ||
-        klass === "financing" ||
-        klass === "investing" ||
-        klass === "transfer"
-      ) {
-        const activity = breakdown[monthName][klass]
-        activity[account] = (activity[account] || 0) + impact
-        accounts[klass].add(account)
-        accountTypes[klass][account] = tx.account_type || ""
+    const formatValue = (value: number | string | { f: string }) => {
+      if (typeof value === "number") {
+        return { v: value, t: "n", z: currencyFormat }
       }
-    })
-
-    const sheetData: (string | number | { f: string })[][] = []
-    sheetData.push(["Account", ...months, "Total"])
-
-    const formatCell = (value: number | { f: string }) =>
-      typeof value === "number"
-        ? { v: value, t: "n", z: '"$"#,##0.00_);("$"#,##0.00)' }
-        : { t: "n", f: value.f, z: '"$"#,##0.00_);("$"#,##0.00)' }
-
-    const pushRow = (
-      label: string,
-      values: (number | string | { f: string })[] = [],
-      computeTotal = true,
-    ) => {
-      const row = [label, ...values.map((v) => (typeof v === "number" || (typeof v === "object" && "f" in v) ? formatCell(v as any) : v))]
-      if (computeTotal) {
-        const rowIdx = sheetData.length + 1
-        const start = columnLetter(2)
-        const end = columnLetter(months.length + 1)
-        row.push({ t: "n", f: `SUM(${start}${rowIdx}:${end}${rowIdx})`, z: '"$"#,##0.00_);("$"#,##0.00)' })
-      } else {
-        row.push("")
+      if (typeof value === "object" && value !== null && "f" in value) {
+        return { t: "n", f: value.f, z: currencyFormat }
       }
-      sheetData.push(row)
+      return value
     }
 
     const columnLetter = (col: number) => {
@@ -433,115 +390,150 @@ export default function CashFlowPage() {
       return temp
     }
 
-    const emptyRow = Array(months.length).fill("")
+    const blankRow = Array(exportPeriods.length).fill("")
 
-    // Operating Activities
-    pushRow("Operating Activities", [...emptyRow], false)
-    const opStart = sheetData.length + 1
-    const opAccounts = Array.from(accounts.operating)
-    const incomeOps = opAccounts
-      .filter((a) => accountTypes.operating[a]?.toLowerCase().includes("income"))
-      .sort()
-    const otherOps = opAccounts
-      .filter((a) => !accountTypes.operating[a]?.toLowerCase().includes("income"))
-      .sort()
-    ;[...incomeOps, ...otherOps].forEach((acc) => {
-      pushRow(
-        `  ${acc}`,
-        months.map((m) => breakdown[m].operating[acc] || 0),
-      )
-    })
-    const opEnd = sheetData.length
-    const opTotals = months.map((_, idx) =>
-      opEnd >= opStart
-        ? {
-            f: `SUM(${columnLetter(idx + 2)}${opStart}:${columnLetter(idx + 2)}${opEnd})`,
-          }
-        : 0,
-    )
-    pushRow("Total Operating Activities", opTotals)
-    const opTotalRow = sheetData.length
-    pushRow("", [...emptyRow], false)
+    const pushRow = (
+      label: string,
+      values: (number | string | { f: string })[] = [],
+      options: { totalValue?: number | { f: string } | null; computeTotal?: boolean } = {},
+    ) => {
+      const { totalValue, computeTotal = true } = options
+      const row: Array<string | number | { t: string; v?: number; f?: string; z?: string }> = [label]
 
-    // Financing Activities
-    pushRow("Financing Activities", [...emptyRow], false)
-    const finStart = sheetData.length + 1
-    Array.from(accounts.financing)
-      .sort()
-      .forEach((acc) => {
-        pushRow(
-          `  ${acc}`,
-          months.map((m) => breakdown[m].financing[acc] || 0),
-        )
+      values.forEach((value) => {
+        row.push(formatValue(value))
       })
-    const finEnd = sheetData.length
-    const finTotals = months.map((_, idx) =>
-      finEnd >= finStart
-        ? {
-            f: `SUM(${columnLetter(idx + 2)}${finStart}:${columnLetter(idx + 2)}${finEnd})`,
-          }
-        : 0,
-    )
-    pushRow("Total Financing Activities", finTotals)
-    const finTotalRow = sheetData.length
-    pushRow("", [...emptyRow], false)
 
-    // Investing Activities
-    pushRow("Investing Activities", [...emptyRow], false)
-    const invStart = sheetData.length + 1
-    Array.from(accounts.investing)
-      .sort()
-      .forEach((acc) => {
-        pushRow(
-          `  ${acc}`,
-          months.map((m) => breakdown[m].investing[acc] || 0),
-        )
-      })
-    const invEnd = sheetData.length
-    const invTotals = months.map((_, idx) =>
-      invEnd >= invStart
-        ? {
-            f: `SUM(${columnLetter(idx + 2)}${invStart}:${columnLetter(idx + 2)}${invEnd})`,
-          }
-        : 0,
-    )
-    pushRow("Total Investing Activities", invTotals)
-    const invTotalRow = sheetData.length
-    pushRow("", [...emptyRow], false)
+      if (showTotalColumn) {
+        if (totalValue === null) {
+          row.push("")
+        } else if (totalValue !== undefined) {
+          row.push(formatValue(totalValue))
+        } else if (computeTotal) {
+          const rowIdx = sheetData.length + 1
+          const start = columnLetter(2)
+          const end = columnLetter(exportPeriods.length + 1)
+          row.push(formatValue({ f: `SUM(${start}${rowIdx}:${end}${rowIdx})` }))
+        } else {
+          row.push("")
+        }
+      }
 
-    if (includeTransfers) {
-      // Transfer Activities
-      pushRow("Transfer Activities", [...emptyRow], false)
-      const trStart = sheetData.length + 1
-      Array.from(accounts.transfer)
-        .sort()
-        .forEach((acc) => {
-          pushRow(
-            `  ${acc}`,
-            months.map((m) => breakdown[m].transfer[acc] || 0),
-          )
-        })
-      const trEnd = sheetData.length
-      const trTotals = months.map((_, idx) =>
-        trEnd >= trStart
-          ? {
-              f: `SUM(${columnLetter(idx + 2)}${trStart}:${columnLetter(idx + 2)}${trEnd})`,
-            }
-          : 0,
-      )
-      pushRow("Total Transfer Activities", trTotals)
-      pushRow("", [...emptyRow], false)
+      sheetData.push(row)
     }
 
-    // Net Change in Cash
-    pushRow(
-      "Net Change in Cash",
-      months.map((_, idx) => ({
-        f: `SUM(${columnLetter(idx + 2)}${opTotalRow},${columnLetter(
-          idx + 2,
-        )}${finTotalRow},${columnLetter(idx + 2)}${invTotalRow})`,
-      })),
-    )
+    const addBlankRow = () => {
+      const row: (string | number)[] = [""]
+      row.push(...blankRow)
+      if (showTotalColumn) row.push("")
+      sheetData.push(row)
+    }
+
+    const indentLabel = (label: string, depth = 1) => `${"  ".repeat(Math.max(depth, 0))}${label}`
+
+    const accountTotals = (accounts: OffsetAccountData[]) => {
+      const periodTotals = exportPeriods.map((period) =>
+        accounts.reduce((sum, account) => sum + (account.periods?.[period.key] || 0), 0),
+      )
+      const totalValue = accounts.reduce((sum, account) => sum + (account.total || 0), 0)
+      return { periodTotals, totalValue }
+    }
+
+    const addAccountRows = (accounts: OffsetAccountData[], depth: number) => {
+      accounts.forEach((account) => {
+        const values = exportPeriods.map((period) => account.periods?.[period.key] || 0)
+        pushRow(indentLabel(account.offsetAccount, depth), values, { totalValue: account.total })
+
+        const breakdown = accountBreakdowns[account.offsetAccount]
+        if (breakdown && breakdown.entities.length > 0) {
+          breakdown.entities.forEach((entity) => {
+            const entityValues = exportPeriods.map((period) => entity.periods[period.key] || 0)
+            const entityLabel = `${breakdown.type === "customer" ? "Customer" : "Vendor"}: ${entity.name}`
+            pushRow(indentLabel(entityLabel, depth + 1), entityValues, {
+              totalValue: entity.total,
+            })
+          })
+        }
+      })
+    }
+
+    const addSection = (
+      sectionLabel: string,
+      groups: Array<{ label?: string; accounts: OffsetAccountData[]; totalLabel?: string }>,
+    ) => {
+      const sectionAccounts = groups.flatMap((group) => group.accounts)
+      if (sectionAccounts.length === 0) return
+
+      pushRow(sectionLabel, [...blankRow], { totalValue: null, computeTotal: false })
+
+      groups.forEach((group, index) => {
+        if (group.accounts.length === 0) return
+
+        const hasLabel = Boolean(group.label)
+        if (hasLabel && group.label) {
+          pushRow(indentLabel(group.label, 1), [...blankRow], { totalValue: null, computeTotal: false })
+        }
+
+        addAccountRows(group.accounts, hasLabel ? 2 : 1)
+
+        const totals = accountTotals(group.accounts)
+        const totalLabel = group.totalLabel || `Total ${group.label || sectionLabel}`
+        pushRow(indentLabel(totalLabel, hasLabel ? 2 : 1), totals.periodTotals, {
+          totalValue: totals.totalValue,
+        })
+
+        const hasNextGroup = groups.slice(index + 1).some((g) => g.accounts.length > 0)
+        if (hasNextGroup) addBlankRow()
+      })
+
+      addBlankRow()
+
+      const totals = accountTotals(sectionAccounts)
+      pushRow(indentLabel(`Total ${sectionLabel}`, 1), totals.periodTotals, {
+        totalValue: totals.totalValue,
+      })
+
+      addBlankRow()
+    }
+
+    const accountsByClass = getAccountsByClass()
+
+    addSection("Operating Activities", [
+      { label: "Cash Inflows", accounts: accountsByClass.operatingInflows, totalLabel: "Total Cash Inflows" },
+      { label: "Cash Outflows", accounts: accountsByClass.operatingOutflows, totalLabel: "Total Cash Outflows" },
+    ])
+
+    addSection("Financing Activities", [
+      { accounts: accountsByClass.financing, totalLabel: "Total Financing Activities" },
+    ])
+
+    addSection("Investing Activities", [
+      { accounts: accountsByClass.investing, totalLabel: "Total Investing Activities" },
+    ])
+
+    if (includeTransfers) {
+      addSection("Transfer Activities", [
+        { accounts: accountsByClass.transfer, totalLabel: "Total Transfer Activities" },
+      ])
+    }
+
+    addSection("Other Activities", [
+      { accounts: accountsByClass.other, totalLabel: "Total Other Activities" },
+    ])
+
+    const allAccounts = [
+      ...accountsByClass.operatingInflows,
+      ...accountsByClass.operatingOutflows,
+      ...accountsByClass.financing,
+      ...accountsByClass.investing,
+      ...accountsByClass.transfer,
+      ...accountsByClass.other,
+    ]
+
+    if (allAccounts.length > 0) {
+      const totals = accountTotals(allAccounts)
+      pushRow("Net Change in Cash", totals.periodTotals, { totalValue: totals.totalValue })
+    }
 
     const worksheet = XLSX.utils.aoa_to_sheet(sheetData)
     const workbook = XLSX.utils.book_new()
