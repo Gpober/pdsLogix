@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   Download,
   RefreshCw,
@@ -208,6 +208,244 @@ const formatDateDisplay = (dateString: string) => {
   return `${monthNames[month - 1]} ${day}, ${year}`;
 };
 
+type GroupedAccount = {
+  account: PLAccount;
+  subAccounts?: PLAccount[];
+  combinedAmount: number;
+};
+
+const classifyPLAccount = (
+  accountType: string,
+  accountName: string,
+  reportCategory: string,
+) => {
+  const typeLower = accountType?.toLowerCase() || "";
+  const nameLower = accountName?.toLowerCase() || "";
+  const categoryLower = reportCategory?.toLowerCase() || "";
+
+  const isTransfer =
+    categoryLower === "transfer" || nameLower.includes("transfer");
+  const isCashAccount =
+    typeLower.includes("bank") ||
+    typeLower.includes("cash") ||
+    nameLower.includes("checking") ||
+    nameLower.includes("savings") ||
+    nameLower.includes("cash");
+
+  if (isCashAccount || isTransfer) return null;
+
+  const isIncomeAccount =
+    typeLower === "income" ||
+    typeLower === "other income" ||
+    typeLower.includes("income") ||
+    typeLower.includes("revenue");
+
+  const isExpenseAccount =
+    typeLower === "expenses" ||
+    typeLower === "other expense" ||
+    typeLower === "cost of goods sold" ||
+    typeLower.includes("expense");
+
+  if (isIncomeAccount) return "INCOME";
+  if (isExpenseAccount) return "EXPENSES";
+
+  return null;
+};
+
+const groupParentSubAccounts = (accounts: PLAccount[]): GroupedAccount[] => {
+  if (!accounts.length) {
+    return [];
+  }
+
+  const subAccountsByParent = new Map<string, PLAccount[]>();
+
+  for (const account of accounts) {
+    if (account.is_sub_account && account.parent_account) {
+      const key = account.parent_account;
+      const existing = subAccountsByParent.get(key);
+      if (existing) {
+        existing.push(account);
+      } else {
+        subAccountsByParent.set(key, [account]);
+      }
+    }
+  }
+
+  const result: GroupedAccount[] = [];
+  const handledParents = new Set<string>();
+
+  for (const account of accounts) {
+    if (account.is_sub_account) continue;
+
+    const subs = subAccountsByParent.get(account.account);
+    if (subs && subs.length) {
+      const sortedSubs = [...subs].sort((a, b) =>
+        a.account.localeCompare(b.account),
+      );
+      const combinedAmount = sortedSubs.reduce(
+        (sum, sub) => sum + sub.amount,
+        account.amount,
+      );
+      result.push({
+        account: { ...account },
+        subAccounts: sortedSubs,
+        combinedAmount,
+      });
+      handledParents.add(account.account);
+    } else {
+      result.push({
+        account,
+        combinedAmount: account.amount,
+      });
+    }
+  }
+
+  for (const [parentName, subs] of subAccountsByParent.entries()) {
+    if (handledParents.has(parentName) || !subs.length) continue;
+
+    const sortedSubs = [...subs].sort((a, b) =>
+      a.account.localeCompare(b.account),
+    );
+    const combinedAmount = sortedSubs.reduce(
+      (sum, sub) => sum + sub.amount,
+      0,
+    );
+    const base = sortedSubs[0];
+    const virtualParent: PLAccount = {
+      account: parentName,
+      parent_account: parentName,
+      sub_account: null,
+      is_sub_account: false,
+      amount: 0,
+      category: base.category,
+      account_type: base.account_type,
+      transactions: [],
+    };
+
+    result.push({
+      account: virtualParent,
+      subAccounts: sortedSubs,
+      combinedAmount,
+    });
+  }
+
+  return result.sort((a, b) =>
+    a.account.account.localeCompare(b.account.account),
+  );
+};
+
+const processPLTransactionsEnhanced = async (
+  transactions: any[],
+): Promise<PLAccount[]> => {
+  const accountMap = new Map<string, PLAccount>();
+
+  smartLog(
+    `🔄 Processing ${transactions.length} P&L transactions with timezone-independent strategy`,
+  );
+
+  const accountGroups = new Map<string, any[]>();
+
+  transactions.forEach((tx) => {
+    const account = tx.account;
+    if (!accountGroups.has(account)) {
+      accountGroups.set(account, []);
+    }
+    accountGroups.get(account)!.push(tx);
+  });
+
+  smartLog(`📊 Grouped into ${accountGroups.size} unique accounts`);
+
+  for (const [account, txList] of accountGroups.entries()) {
+    const sampleTx = txList[0];
+    const accountType = sampleTx.account_type;
+    const reportCategory = sampleTx.report_category;
+
+    let totalCredits = 0;
+    let totalDebits = 0;
+
+    txList.forEach((tx) => {
+      const debitValue = tx.debit ? Number.parseFloat(tx.debit.toString()) : 0;
+      const creditValue = tx.credit
+        ? Number.parseFloat(tx.credit.toString())
+        : 0;
+
+      if (!isNaN(debitValue) && debitValue > 0) {
+        totalDebits += debitValue;
+      }
+      if (!isNaN(creditValue) && creditValue > 0) {
+        totalCredits += creditValue;
+      }
+    });
+
+    const classification = classifyPLAccount(
+      accountType,
+      account,
+      reportCategory,
+    );
+    if (!classification) continue;
+
+    let amount: number;
+    if (classification === "INCOME") {
+      amount = totalCredits - totalDebits;
+    } else {
+      amount = totalDebits - totalCredits;
+    }
+
+    if (Math.abs(amount) <= 0.01) continue;
+
+    let parentAccount: string;
+    let subAccount: string | null;
+    let isSubAccount: boolean;
+
+    if (account.includes(":")) {
+      const parts = account.split(":");
+      parentAccount = parts[0].trim();
+      subAccount = parts[1]?.trim() || null;
+      isSubAccount = true;
+    } else {
+      parentAccount = account;
+      subAccount = null;
+      isSubAccount = false;
+    }
+
+    smartLog(
+      `💰 Account: ${account}, Classification: ${classification}, Amount: ${amount}, Credits: ${totalCredits}, Debits: ${totalDebits}`,
+    );
+
+    accountMap.set(account, {
+      account,
+      parent_account: parentAccount,
+      sub_account: subAccount,
+      is_sub_account: isSubAccount,
+      amount,
+      category: classification,
+      account_type: accountType,
+      transactions: txList,
+    });
+  }
+
+  const accounts = Array.from(accountMap.values());
+
+  accounts.sort((a, b) => {
+    if (a.category !== b.category) {
+      return a.category === "INCOME" ? -1 : 1;
+    }
+    return a.account.localeCompare(b.account);
+  });
+
+  smartLog(
+    `✅ Final result: ${accounts.length} P&L accounts processed with timezone-independent strategy`,
+  );
+  smartLog(
+    `📊 Income accounts: ${accounts.filter((a) => a.category === "INCOME").length}`,
+  );
+  smartLog(
+    `📊 Expense accounts: ${accounts.filter((a) => a.category === "EXPENSES").length}`,
+  );
+
+  return accounts;
+};
+
 export default function FinancialsPage() {
   const [selectedMonth, setSelectedMonth] = useState<string>(
     () => new Date().toLocaleString("en-US", { month: "long" }),
@@ -259,23 +497,30 @@ export default function FinancialsPage() {
   const exportDropdownRef = useRef<HTMLDivElement>(null);
 
   // Generate months and years lists
-  const monthsList = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
+  const monthsList = useMemo(
+    () => [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ],
+    [],
+  );
 
-  const yearsList = Array.from({ length: 10 }, (_, i) =>
-    (new Date().getFullYear() - 5 + i).toString(),
+  const yearsList = useMemo(
+    () =>
+      Array.from({ length: 10 }, (_, i) =>
+        (new Date().getFullYear() - 5 + i).toString(),
+      ),
+    [],
   );
 
   const calculateMonthlyValue = (acc: PLAccount, monthYear: string) => {
@@ -329,7 +574,7 @@ export default function FinancialsPage() {
   }, []);
 
   // Calculate date range based on selected period - COMPLETELY TIMEZONE INDEPENDENT
-  const calculateDateRange = () => {
+  const dateRange = useMemo(() => {
     let startDate: string;
     let endDate: string;
 
@@ -342,11 +587,9 @@ export default function FinancialsPage() {
       const year = Number.parseInt(selectedYear);
       startDate = `${year}-01-01`;
 
-      // Calculate last day of selected month without Date object
       const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
       let lastDay = daysInMonth[monthIndex];
 
-      // Handle leap year for February
       if (
         monthIndex === 1 &&
         ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0)
@@ -360,11 +603,9 @@ export default function FinancialsPage() {
       const year = Number.parseInt(selectedYear);
       startDate = `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
 
-      // Calculate last day of month without Date object to avoid timezone issues
       const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
       let lastDay = daysInMonth[monthIndex];
 
-      // Handle leap year for February
       if (
         monthIndex === 1 &&
         ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0)
@@ -384,7 +625,6 @@ export default function FinancialsPage() {
       const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
       let lastDay = daysInMonth[quarterEndMonth];
 
-      // Handle leap year for February
       if (
         quarterEndMonth === 1 &&
         ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0)
@@ -397,7 +637,6 @@ export default function FinancialsPage() {
       const monthIndex = monthsList.indexOf(selectedMonth);
       const year = Number.parseInt(selectedYear);
 
-      // Start date is 11 months before the selected month
       let startYear = year;
       let startMonth = monthIndex + 1 - 11;
       if (startMonth <= 0) {
@@ -406,7 +645,6 @@ export default function FinancialsPage() {
       }
       startDate = `${startYear}-${String(startMonth).padStart(2, "0")}-01`;
 
-      // End date is the last day of the selected month
       const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
       let lastDay = daysInMonth[monthIndex];
       if (
@@ -417,7 +655,6 @@ export default function FinancialsPage() {
       }
       endDate = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
     } else {
-      // Fallback: use current date for trailing 12
       const now = new Date();
       const currentYear = now.getFullYear();
       const currentMonth = now.getMonth() + 1;
@@ -441,49 +678,14 @@ export default function FinancialsPage() {
     }
 
     return { startDate, endDate };
-  };
-
-  // CORRECTED: P&L Classification using account_type field
-  const classifyPLAccount = (
-    accountType: string,
-    accountName: string,
-    reportCategory: string,
-  ) => {
-    const typeLower = accountType?.toLowerCase() || "";
-    const nameLower = accountName?.toLowerCase() || "";
-    const categoryLower = reportCategory?.toLowerCase() || "";
-
-    // Exclude transfers and cash accounts first
-    const isTransfer =
-      categoryLower === "transfer" || nameLower.includes("transfer");
-    const isCashAccount =
-      typeLower.includes("bank") ||
-      typeLower.includes("cash") ||
-      nameLower.includes("checking") ||
-      nameLower.includes("savings") ||
-      nameLower.includes("cash");
-
-    if (isCashAccount || isTransfer) return null;
-
-    // INCOME ACCOUNTS - Based on account_type
-    const isIncomeAccount =
-      typeLower === "income" ||
-      typeLower === "other income" ||
-      typeLower.includes("income") ||
-      typeLower.includes("revenue");
-
-    // EXPENSE ACCOUNTS - Based on account_type
-    const isExpenseAccount =
-      typeLower === "expenses" ||
-      typeLower === "other expense" ||
-      typeLower === "cost of goods sold" ||
-      typeLower.includes("expense");
-
-    if (isIncomeAccount) return "INCOME";
-    if (isExpenseAccount) return "EXPENSES";
-
-    return null; // Not a P&L account (likely Balance Sheet account)
-  };
+  }, [
+    timePeriod,
+    selectedMonth,
+    selectedYear,
+    customStartDate,
+    customEndDate,
+    monthsList,
+  ]);
 
   // Load available customers for dropdown (similar to Cash Flow page)
   const fetchCustomers = async () => {
@@ -515,12 +717,12 @@ export default function FinancialsPage() {
   }, []);
 
   // Fetch P&L data using ENHANCED database strategy with TIMEZONE-INDEPENDENT dates
-  const fetchPLData = async () => {
+  const fetchPLData = useCallback(async () => {
     setIsLoadingData(true);
     setDataError(null);
 
     try {
-      const { startDate, endDate } = calculateDateRange();
+      const { startDate, endDate } = dateRange;
       const selectedList = Array.from(selectedCustomers);
 
       smartLog(`🔍 TIMEZONE-INDEPENDENT P&L DATA FETCH`);
@@ -635,24 +837,10 @@ export default function FinancialsPage() {
     } finally {
       setIsLoadingData(false);
     }
-  };
+  }, [dateRange, selectedCustomers]);
 
   const handleExportExcel = () => {
-    const headers = getColumnHeaders();
-
-    const incomeAccounts = plAccounts.filter(
-      (acc) => acc.category === "INCOME",
-    );
-    const cogsAccounts = plAccounts.filter(
-      (acc) =>
-        acc.category === "EXPENSES" &&
-        acc.account_type?.toLowerCase().includes("cost of goods sold"),
-    );
-    const expenseAccounts = plAccounts.filter(
-      (acc) =>
-        acc.category === "EXPENSES" &&
-        !acc.account_type?.toLowerCase().includes("cost of goods sold"),
-    );
+    const headers = columnHeaders;
 
     const sheetData: (string | number | XLSX.CellObject)[][] = [];
     let currentRow = 1;
@@ -741,21 +929,7 @@ export default function FinancialsPage() {
   };
 
   const handleExportPdf = () => {
-    const headers = getColumnHeaders();
-
-    const incomeAccounts = plAccounts.filter(
-      (acc) => acc.category === "INCOME",
-    );
-    const cogsAccounts = plAccounts.filter(
-      (acc) =>
-        acc.category === "EXPENSES" &&
-        acc.account_type?.toLowerCase().includes("cost of goods sold"),
-    );
-    const expenseAccounts = plAccounts.filter(
-      (acc) =>
-        acc.category === "EXPENSES" &&
-        !acc.account_type?.toLowerCase().includes("cost of goods sold"),
-    );
+    const headers = columnHeaders;
 
     const tableColumn = ["Account", ...headers, "Total"];
     const tableRows: (string | number)[][] = [];
@@ -828,293 +1002,79 @@ export default function FinancialsPage() {
     doc.save("pl_accounts.pdf");
   };
 
-  // ENHANCED: Process transactions with improved calculation logic
-  const processPLTransactionsEnhanced = async (
-    transactions: any[],
-  ): Promise<PLAccount[]> => {
-    const accountMap = new Map<string, PLAccount>();
-
-    smartLog(
-      `🔄 Processing ${transactions.length} P&L transactions with timezone-independent strategy`,
-    );
-
-    // Group transactions by account (EXACTLY like SQL GROUP BY)
-    const accountGroups = new Map<string, any[]>();
-
-    transactions.forEach((tx) => {
-      const account = tx.account;
-      if (!accountGroups.has(account)) {
-        accountGroups.set(account, []);
-      }
-      accountGroups.get(account)!.push(tx);
-    });
-
-    smartLog(`📊 Grouped into ${accountGroups.size} unique accounts`);
-
-    // Process each account group using ENHANCED calculation
-    for (const [account, txList] of accountGroups.entries()) {
-      const sampleTx = txList[0];
-      const accountType = sampleTx.account_type;
-      const reportCategory = sampleTx.report_category;
-
-      // Calculate totals using ENHANCED logic with proper null handling
-      let totalCredits = 0;
-      let totalDebits = 0;
-
-      txList.forEach((tx) => {
-        // Parse debit and credit values more carefully
-        const debitValue = tx.debit
-          ? Number.parseFloat(tx.debit.toString())
-          : 0;
-        const creditValue = tx.credit
-          ? Number.parseFloat(tx.credit.toString())
-          : 0;
-
-        // Only add if values are valid numbers
-        if (!isNaN(debitValue) && debitValue > 0) {
-          totalDebits += debitValue;
-        }
-        if (!isNaN(creditValue) && creditValue > 0) {
-          totalCredits += creditValue;
-        }
-      });
-
-      // Determine category and amount using ENHANCED classification
-      const classification = classifyPLAccount(
-        accountType,
-        account,
-        reportCategory,
-      );
-      if (!classification) continue; // Skip non-P&L accounts
-
-      let amount: number;
-      if (classification === "INCOME") {
-        // For income accounts: Credits increase income, debits decrease income
-        amount = totalCredits - totalDebits;
-      } else {
-        // For expense accounts: Debits increase expenses, credits decrease expenses
-        amount = totalDebits - totalCredits;
-      }
-
-      // Skip if no activity (HAVING clause equivalent) - but allow small negative adjustments
-      if (Math.abs(amount) <= 0.01) continue;
-
-      // Parse parent/sub structure EXACTLY like before
-      let parentAccount: string;
-      let subAccount: string | null;
-      let isSubAccount: boolean;
-
-      if (account.includes(":")) {
-        const parts = account.split(":");
-        parentAccount = parts[0].trim();
-        subAccount = parts[1]?.trim() || null;
-        isSubAccount = true;
-      } else {
-        parentAccount = account;
-        subAccount = null;
-        isSubAccount = false;
-      }
-
-      smartLog(
-        `💰 Account: ${account}, Classification: ${classification}, Amount: ${amount}, Credits: ${totalCredits}, Debits: ${totalDebits}`,
-      );
-
-      accountMap.set(account, {
-        account,
-        parent_account: parentAccount,
-        sub_account: subAccount,
-        is_sub_account: isSubAccount,
-        amount,
-        category: classification,
-        account_type: accountType,
-        transactions: txList,
-      });
-    }
-
-    // Convert to array and sort by alphabetical order instead of amount
-    const accounts = Array.from(accountMap.values());
-
-    // Sort: INCOME first (alphabetically), then EXPENSES (alphabetically)
-    accounts.sort((a, b) => {
-      if (a.category !== b.category) {
-        return a.category === "INCOME" ? -1 : 1;
-      }
-      // Sort alphabetically by account name within each category
-      return a.account.localeCompare(b.account);
-    });
-
-    smartLog(
-      `✅ Final result: ${accounts.length} P&L accounts processed with timezone-independent strategy`,
-    );
-    smartLog(
-      `📊 Income accounts: ${accounts.filter((a) => a.category === "INCOME").length}`,
-    );
-    smartLog(
-      `📊 Expense accounts: ${accounts.filter((a) => a.category === "EXPENSES").length}`,
-    );
-
-    return accounts;
-  };
-
   // Load data when filters change
   useEffect(() => {
     fetchPLData();
-  }, [
-    timePeriod,
-    selectedMonth,
-    selectedYear,
-    customStartDate,
-    customEndDate,
-    selectedCustomers,
-  ]);
+  }, [fetchPLData]);
+
+  const currencyFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }),
+    [],
+  );
 
   // Format currency
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
+  const formatCurrency = useCallback(
+    (amount: number) => currencyFormatter.format(amount),
+    [currencyFormatter],
+  );
 
   // Format percentage
-  const formatPercentage = (value: number) => {
-    return `${(value * 100).toFixed(2)}%`;
-  };
+  const formatPercentage = useCallback(
+    (value: number) => `${(value * 100).toFixed(2)}%`,
+    [],
+  );
 
-  // Group accounts for display
-  const getGroupedAccounts = () => {
-    const income = plAccounts.filter((acc) => acc.category === "INCOME");
-    const cogs = plAccounts.filter(
-      (acc) =>
-        acc.category === "EXPENSES" &&
-        acc.account_type?.toLowerCase().includes("cost of goods sold"),
-    );
-    const expenses = plAccounts.filter(
-      (acc) =>
-        acc.category === "EXPENSES" &&
-        !acc.account_type?.toLowerCase().includes("cost of goods sold"),
-    );
+  const categorizedAccounts = useMemo(() => {
+    const income: PLAccount[] = [];
+    const cogs: PLAccount[] = [];
+    const expenses: PLAccount[] = [];
 
-    // Group parent/sub accounts
-    const groupedIncome = groupParentSubAccounts(income);
-    const groupedCogs = groupParentSubAccounts(cogs);
-    const groupedExpenses = groupParentSubAccounts(expenses);
-
-    return {
-      income: groupedIncome,
-      cogs: groupedCogs,
-      expenses: groupedExpenses,
-    };
-  };
-
-  // Group parent and sub accounts together - MODIFIED to show combined totals when collapsed
-  const groupParentSubAccounts = (accounts: PLAccount[]) => {
-    const parentMap = new Map<
-      string,
-      { parent: PLAccount | null; subs: PLAccount[] }
-    >();
-    const regularAccounts: PLAccount[] = [];
-
-    // First pass: identify parents and subs
-    accounts.forEach((acc) => {
-      if (acc.is_sub_account) {
-        if (!parentMap.has(acc.parent_account)) {
-          parentMap.set(acc.parent_account, { parent: null, subs: [] });
-        }
-        parentMap.get(acc.parent_account)!.subs.push(acc);
-      } else {
-        // Check if this account has sub-accounts
-        const hasSubs = accounts.some(
-          (other) =>
-            other.is_sub_account && other.parent_account === acc.account,
-        );
-
-        if (hasSubs) {
-          if (!parentMap.has(acc.account)) {
-            parentMap.set(acc.account, { parent: null, subs: [] });
-          }
-          parentMap.get(acc.account)!.parent = acc;
+    plAccounts.forEach((acc) => {
+      if (acc.category === "INCOME") {
+        income.push(acc);
+      } else if (acc.category === "EXPENSES") {
+        const accountType = acc.account_type?.toLowerCase() || "";
+        if (accountType.includes("cost of goods sold")) {
+          cogs.push(acc);
         } else {
-          regularAccounts.push(acc);
+          expenses.push(acc);
         }
       }
     });
 
-    // Create final grouped structure
-    const result: Array<{
-      account: PLAccount;
-      subAccounts?: PLAccount[];
-      combinedAmount: number;
-    }> = [];
+    return { income, cogs, expenses };
+  }, [plAccounts]);
 
-    // Add parent accounts with their subs
-    for (const [parentName, group] of parentMap.entries()) {
-      const subAmount = group.subs.reduce((sum, sub) => sum + sub.amount, 0);
+  const incomeAccounts = categorizedAccounts.income;
+  const cogsAccounts = categorizedAccounts.cogs;
+  const expenseAccounts = categorizedAccounts.expenses;
 
-      if (group.parent) {
-        // Parent exists - combined is parent + subs, parent amount is its own activity only
-        const combinedAmount = group.parent.amount + subAmount;
+  const groupedAccounts = useMemo(
+    () => ({
+      income: groupParentSubAccounts(incomeAccounts),
+      cogs: groupParentSubAccounts(cogsAccounts),
+      expenses: groupParentSubAccounts(expenseAccounts),
+    }),
+    [incomeAccounts, cogsAccounts, expenseAccounts],
+  );
 
-        result.push({
-          account: { ...group.parent, amount: group.parent.amount },
-          subAccounts: group.subs.sort((a, b) =>
-            a.account.localeCompare(b.account),
-          ),
-          combinedAmount,
-        });
-      } else {
-        // No parent account record - create virtual parent for grouping
-        const virtualParent: PLAccount = {
-          account: parentName,
-          parent_account: parentName,
-          sub_account: null,
-          is_sub_account: false,
-          amount: 0,
-          category: group.subs[0].category,
-          account_type: group.subs[0].account_type,
-          transactions: [],
-        };
-
-        result.push({
-          account: virtualParent,
-          subAccounts: group.subs.sort((a, b) =>
-            a.account.localeCompare(b.account),
-          ),
-          combinedAmount: subAmount,
-        });
-      }
-    }
-
-    // Add regular accounts
-    regularAccounts.forEach((acc) => {
-      result.push({
-        account: acc,
-        combinedAmount: acc.amount,
-      });
-    });
-
-    // Sort by alphabetical order instead of amount (descending by absolute value)
-    return result.sort((a, b) =>
-      a.account.account.localeCompare(b.account.account),
-    );
-  };
-
-  // Get column headers based on view mode - TIMEZONE INDEPENDENT
-  const getColumnHeaders = () => {
+  const columnHeaders = useMemo(() => {
     if (viewMode === "Total") {
-      return [];
-    } else if (viewMode === "Customer") {
+      return [] as string[];
+    }
+    if (viewMode === "Customer") {
       return availableCustomers.filter((p) => p !== "All Customers");
-    } else if (viewMode === "Detail") {
-      // For Detail view, show months in the date range using timezone-independent method
-      const { startDate, endDate } = calculateDateRange();
-      const months = [];
-
-      // Parse start and end dates
-      const startParts = getDateParts(startDate);
-      const endParts = getDateParts(endDate);
+    }
+    if (viewMode === "Detail") {
+      const months: string[] = [];
+      const startParts = getDateParts(dateRange.startDate);
+      const endParts = getDateParts(dateRange.endDate);
 
       let currentYear = startParts.year;
       let currentMonth = startParts.month;
@@ -1135,8 +1095,15 @@ export default function FinancialsPage() {
 
       return months;
     }
-    return [];
-  };
+
+    return [] as string[];
+  }, [
+    viewMode,
+    availableCustomers,
+    dateRange.startDate,
+    dateRange.endDate,
+    monthsList,
+  ]);
 
   // Get cell value based on view mode - TIMEZONE INDEPENDENT
   const getCellValue = (
@@ -1293,30 +1260,47 @@ export default function FinancialsPage() {
     setShowJournalEntryModal(true);
   };
 
-  const columnHeaders = getColumnHeaders();
-  const groupedAccounts = getGroupedAccounts();
+  const {
+    totalIncome,
+    totalCogs,
+    grossProfit,
+    totalExpenses,
+    netIncome,
+    grossProfitPercent,
+    netIncomePercent,
+  } = useMemo(() => {
+    const totalIncomeValue = groupedAccounts.income.reduce(
+      (sum, group) => sum + group.combinedAmount,
+      0,
+    );
+    const totalCogsValue = groupedAccounts.cogs.reduce(
+      (sum, group) => sum + group.combinedAmount,
+      0,
+    );
+    const grossProfitValue = totalIncomeValue - totalCogsValue;
+    const totalExpensesValue = groupedAccounts.expenses.reduce(
+      (sum, group) => sum + group.combinedAmount,
+      0,
+    );
+    const netIncomeValue = grossProfitValue - totalExpensesValue;
+    const grossPercent =
+      totalIncomeValue !== 0 ? grossProfitValue / totalIncomeValue : 0;
+    const netPercent =
+      totalIncomeValue !== 0 ? netIncomeValue / totalIncomeValue : 0;
 
-  // Calculate totals using combined amounts
-  const totalIncome = groupedAccounts.income.reduce(
-    (sum, group) => sum + group.combinedAmount,
-    0,
-  );
-  const totalCogs = groupedAccounts.cogs.reduce(
-    (sum, group) => sum + group.combinedAmount,
-    0,
-  );
-  const grossProfit = totalIncome - totalCogs;
-  const totalExpenses = groupedAccounts.expenses.reduce(
-    (sum, group) => sum + group.combinedAmount,
-    0,
-  );
-  const netIncome = grossProfit - totalExpenses;
-  const grossProfitPercent = totalIncome !== 0 ? grossProfit / totalIncome : 0;
-  const netIncomePercent = totalIncome !== 0 ? netIncome / totalIncome : 0;
+    return {
+      totalIncome: totalIncomeValue,
+      totalCogs: totalCogsValue,
+      grossProfit: grossProfitValue,
+      totalExpenses: totalExpensesValue,
+      netIncome: netIncomeValue,
+      grossProfitPercent: grossPercent,
+      netIncomePercent: netPercent,
+    };
+  }, [groupedAccounts]);
 
   // Get current date range for header display
-  const { startDate: currentStartDate, endDate: currentEndDate } =
-    calculateDateRange();
+  const { startDate: currentStartDate, endDate: currentEndDate } = dateRange;
 
   return (
     <div className="min-h-screen bg-gray-50">
