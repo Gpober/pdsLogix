@@ -391,6 +391,13 @@ export default function CashFlowPage() {
     }
 
     const blankRow = Array(exportPeriods.length).fill("")
+    const totalColumnIndex = showTotalColumn ? exportPeriods.length + 2 : null
+
+    const sumFormulaForRows = (columnIndex: number, rowIndices: [number, ...number[]]) => {
+      const column = columnLetter(columnIndex)
+      const cells = rowIndices.map((row) => `${column}${row}`)
+      return { f: `SUM(${cells.join(",")})` }
+    }
 
     const pushRow = (
       label: string,
@@ -419,30 +426,30 @@ export default function CashFlowPage() {
         }
       }
 
+      const rowIndex = sheetData.length + 1
       sheetData.push(row)
+      return rowIndex
     }
 
     const addBlankRow = () => {
       const row: (string | number)[] = [""]
       row.push(...blankRow)
       if (showTotalColumn) row.push("")
+      const rowIndex = sheetData.length + 1
       sheetData.push(row)
+      return rowIndex
     }
 
     const indentLabel = (label: string, depth = 1) => `${"  ".repeat(Math.max(depth, 0))}${label}`
 
-    const accountTotals = (accounts: OffsetAccountData[]) => {
-      const periodTotals = exportPeriods.map((period) =>
-        accounts.reduce((sum, account) => sum + (account.periods?.[period.key] || 0), 0),
-      )
-      const totalValue = accounts.reduce((sum, account) => sum + (account.total || 0), 0)
-      return { periodTotals, totalValue }
-    }
-
     const addAccountRows = (accounts: OffsetAccountData[], depth: number) => {
+      const rowIndices: number[] = []
       accounts.forEach((account) => {
         const values = exportPeriods.map((period) => account.periods?.[period.key] || 0)
-        pushRow(indentLabel(account.offsetAccount, depth), values, { totalValue: account.total })
+        const accountRowIndex = pushRow(indentLabel(account.offsetAccount, depth), values, {
+          totalValue: account.total,
+        })
+        rowIndices.push(accountRowIndex)
 
         const breakdown = accountBreakdowns[account.offsetAccount]
         if (breakdown && breakdown.entities.length > 0) {
@@ -455,6 +462,7 @@ export default function CashFlowPage() {
           })
         }
       })
+      return rowIndices
     }
 
     const addSection = (
@@ -462,9 +470,11 @@ export default function CashFlowPage() {
       groups: Array<{ label?: string; accounts: OffsetAccountData[]; totalLabel?: string }>,
     ) => {
       const sectionAccounts = groups.flatMap((group) => group.accounts)
-      if (sectionAccounts.length === 0) return
+      if (sectionAccounts.length === 0) return null
 
       pushRow(sectionLabel, [...blankRow], { totalValue: null, computeTotal: false })
+
+      const groupTotalRows: number[] = []
 
       groups.forEach((group, index) => {
         if (group.accounts.length === 0) return
@@ -474,13 +484,22 @@ export default function CashFlowPage() {
           pushRow(indentLabel(group.label, 1), [...blankRow], { totalValue: null, computeTotal: false })
         }
 
-        addAccountRows(group.accounts, hasLabel ? 2 : 1)
-
-        const totals = accountTotals(group.accounts)
-        const totalLabel = group.totalLabel || `Total ${group.label || sectionLabel}`
-        pushRow(indentLabel(totalLabel, hasLabel ? 2 : 1), totals.periodTotals, {
-          totalValue: totals.totalValue,
-        })
+        const accountRowIndices = addAccountRows(group.accounts, hasLabel ? 2 : 1)
+        if (accountRowIndices.length > 0) {
+          const totalLabel = group.totalLabel || `Total ${group.label || sectionLabel}`
+          const totals = exportPeriods.map((_, periodIndex) =>
+            sumFormulaForRows(2 + periodIndex, accountRowIndices as [number, ...number[]]),
+          )
+          const totalValueFormula =
+            showTotalColumn && totalColumnIndex
+              ? sumFormulaForRows(totalColumnIndex as number, accountRowIndices as [number, ...number[]])
+              : undefined
+          const totalRowIndex = pushRow(indentLabel(totalLabel, hasLabel ? 2 : 1), totals, {
+            totalValue: totalValueFormula || undefined,
+            computeTotal: false,
+          })
+          groupTotalRows.push(totalRowIndex)
+        }
 
         const hasNextGroup = groups.slice(index + 1).some((g) => g.accounts.length > 0)
         if (hasNextGroup) addBlankRow()
@@ -488,26 +507,37 @@ export default function CashFlowPage() {
 
       addBlankRow()
 
-      const totals = accountTotals(sectionAccounts)
-      pushRow(indentLabel(`Total ${sectionLabel}`, 1), totals.periodTotals, {
-        totalValue: totals.totalValue,
+      if (groupTotalRows.length === 0) return null
+
+      const sectionTotals = exportPeriods.map((_, periodIndex) =>
+        sumFormulaForRows(2 + periodIndex, groupTotalRows as [number, ...number[]]),
+      )
+      const sectionTotalValue =
+        showTotalColumn && totalColumnIndex
+          ? sumFormulaForRows(totalColumnIndex as number, groupTotalRows as [number, ...number[]])
+          : undefined
+      const sectionTotalRowIndex = pushRow(indentLabel(`Total ${sectionLabel}`, 1), sectionTotals, {
+        totalValue: sectionTotalValue || undefined,
+        computeTotal: false,
       })
 
       addBlankRow()
+
+      return sectionTotalRowIndex
     }
 
     const accountsByClass = getAccountsByClass()
 
-    addSection("Operating Activities", [
+    const operatingTotalRow = addSection("Operating Activities", [
       { label: "Cash Inflows", accounts: accountsByClass.operatingInflows, totalLabel: "Total Cash Inflows" },
       { label: "Cash Outflows", accounts: accountsByClass.operatingOutflows, totalLabel: "Total Cash Outflows" },
     ])
 
-    addSection("Financing Activities", [
+    const financingTotalRow = addSection("Financing Activities", [
       { accounts: accountsByClass.financing, totalLabel: "Total Financing Activities" },
     ])
 
-    addSection("Investing Activities", [
+    const investingTotalRow = addSection("Investing Activities", [
       { accounts: accountsByClass.investing, totalLabel: "Total Investing Activities" },
     ])
 
@@ -521,18 +551,22 @@ export default function CashFlowPage() {
       { accounts: accountsByClass.other, totalLabel: "Total Other Activities" },
     ])
 
-    const allAccounts = [
-      ...accountsByClass.operatingInflows,
-      ...accountsByClass.operatingOutflows,
-      ...accountsByClass.financing,
-      ...accountsByClass.investing,
-      ...accountsByClass.transfer,
-      ...accountsByClass.other,
-    ]
+    const netSourceRows = [operatingTotalRow, financingTotalRow, investingTotalRow].filter(
+      (row): row is number => typeof row === "number",
+    )
 
-    if (allAccounts.length > 0) {
-      const totals = accountTotals(allAccounts)
-      pushRow("Net Change in Cash", totals.periodTotals, { totalValue: totals.totalValue })
+    if (netSourceRows.length > 0) {
+      const netValues = exportPeriods.map((_, periodIndex) =>
+        sumFormulaForRows(2 + periodIndex, netSourceRows as [number, ...number[]]),
+      )
+      const netTotalValue =
+        showTotalColumn && totalColumnIndex
+          ? sumFormulaForRows(totalColumnIndex as number, netSourceRows as [number, ...number[]])
+          : undefined
+      pushRow("Net Change in Cash", netValues, {
+        totalValue: netTotalValue || undefined,
+        computeTotal: false,
+      })
     }
 
     const worksheet = XLSX.utils.aoa_to_sheet(sheetData)
