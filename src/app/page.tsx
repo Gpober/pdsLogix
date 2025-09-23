@@ -931,14 +931,15 @@ export default function FinancialOverviewPage() {
     let totalCredits = 0;
 
     transactions.forEach((tx) => {
-      if (!tx.entry_bank_account) return; // Only evaluate bank account activity
+      const hasBankAccount = Boolean(tx.entry_bank_account);
+      const isCashAccountLine = Boolean(tx.is_cash_account);
 
-      const debitValue = tx.debit
-        ? Number.parseFloat(tx.debit.toString())
-        : 0;
-      const creditValue = tx.credit
-        ? Number.parseFloat(tx.credit.toString())
-        : 0;
+      if (!hasBankAccount || !isCashAccountLine) {
+        return;
+      }
+
+      const debitValue = Number(tx.debit ?? 0);
+      const creditValue = Number(tx.credit ?? 0);
 
       if (!Number.isNaN(debitValue)) {
         totalDebits += debitValue;

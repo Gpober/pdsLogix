@@ -1149,7 +1149,6 @@ export default function EnhancedMobileDashboard() {
       .gte("date", start)
       .lte("date", end)
       .not("entry_bank_account", "is", null)  // Must have bank account source
-      .eq("is_cash_account", false)           // Only non-cash transactions
       .neq("report_category", "transfer");    // Exclude transfers
 
     if (propertyName) {
@@ -1167,24 +1166,29 @@ export default function EnhancedMobileDashboard() {
     const inv: Record<string, number> = {};
     
     ((data as JournalRow[]) || []).forEach((row) => {
-      const debit = Number(row.debit) || 0;
-      const credit = Number(row.credit) || 0;
+      const debitRaw = Number(row.debit ?? 0);
+      const creditRaw = Number(row.credit ?? 0);
+      const debit = Number.isNaN(debitRaw) ? 0 : debitRaw;
+      const credit = Number.isNaN(creditRaw) ? 0 : creditRaw;
 
-      if (!Number.isNaN(debit)) {
+      if (row.entry_bank_account && row.is_cash_account) {
         totalDebits += debit;
-      }
-      if (!Number.isNaN(credit)) {
         totalCredits += credit;
       }
 
+      if (row.is_cash_account) {
+        return;
+      }
+
       // Enhanced cash impact calculation mirroring cash flow component
-      const classification = classifyTransaction(row.account_type, row.report_category);
-      
+      const classification = classifyTransaction(
+        row.account_type,
+        row.report_category,
+      );
+
       if (classification !== "other" && classification !== "transfer") {
-        const cashImpact = row.report_category === "transfer" 
-          ? debit - credit  // Reverse for transfers
-          : row.normal_balance || credit - debit;  // Normal for others
-          
+        const cashImpact = debit - credit;
+
         if (classification === "operating") {
           op[row.account] = (op[row.account] || 0) + cashImpact;
         } else if (classification === "financing") {
