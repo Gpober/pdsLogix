@@ -19,6 +19,9 @@ import {
   Target,
   Activity,
   PieChart,
+  Users,
+  FileText,
+  HandCoins,
 } from "lucide-react";
 import {
   LineChart,
@@ -207,6 +210,30 @@ const matchesSelectedCustomers = (
   return best >= threshold;
 };
 
+const toNumber = (value: unknown) => {
+  if (value === null || value === undefined) return 0;
+  const num = Number.parseFloat(value.toString());
+  return Number.isNaN(num) ? 0 : num;
+};
+
+const calculateDaysOutstanding = (dueDate: string | null) => {
+  if (!dueDate) return 0;
+  const today = new Date();
+  const due = new Date(dueDate);
+  const diff = Math.floor(
+    (today.setHours(0, 0, 0, 0) - due.setHours(0, 0, 0, 0)) /
+      (1000 * 60 * 60 * 24),
+  );
+  return diff > 0 ? diff : 0;
+};
+
+const getAgingBucket = (daysOutstanding: number) => {
+  if (daysOutstanding <= 30) return "current";
+  if (daysOutstanding <= 60) return "31-60";
+  if (daysOutstanding <= 90) return "61-90";
+  return "90+";
+};
+
 export default function FinancialOverviewPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(
@@ -256,6 +283,32 @@ export default function FinancialOverviewPage() {
   const [customerChartType, setCustomerChartType] = useState<"pie" | "bar">(
     "pie",
   );
+  const operationalViewConfig = {
+    payroll: {
+      title: "Payroll Summary",
+      subtitle: "Overview of payroll activity",
+    },
+    ar: {
+      title: "Accounts Receivable",
+      subtitle: "Outstanding invoices and aging",
+    },
+    ap: {
+      title: "Accounts Payable",
+      subtitle: "Vendor obligations and aging",
+    },
+  } as const;
+  const operationalIcons = {
+    payroll: Users,
+    ar: FileText,
+    ap: HandCoins,
+  } as const;
+  const ActiveOperationalIcon = operationalIcons[operationalView];
+  const operationalMeta = operationalViewConfig[operationalView];
+  const operationalToggleOptions = [
+    { key: "payroll", label: "Payroll" },
+    { key: "ar", label: "A/R" },
+    { key: "ap", label: "A/P" },
+  ] as const;
   const [loadingTrend, setLoadingTrend] = useState(false);
   const [loadingProperty, setLoadingProperty] = useState(false);
   const [trendError, setTrendError] = useState<string | null>(null);
@@ -270,9 +323,32 @@ export default function FinancialOverviewPage() {
     benefits: number;
     contractorPayments: number;
   };
-  const [payrollSummary, setPayrollSummary] = useState<PayrollSummary | null>(null);
+
+  type AgingSummary = {
+    total: number;
+    current: number;
+    days30: number;
+    days60: number;
+    days90: number;
+    pastDue: number;
+    averageDaysOutstanding: number;
+    entityCount: number;
+  };
+  const [payrollSummary, setPayrollSummary] =
+    useState<PayrollSummary | null>(null);
   const [payrollLoading, setPayrollLoading] = useState(false);
   const [payrollError, setPayrollError] = useState<string | null>(null);
+  const [receivablesSummary, setReceivablesSummary] =
+    useState<AgingSummary | null>(null);
+  const [payablesSummary, setPayablesSummary] =
+    useState<AgingSummary | null>(null);
+  const [receivablesLoading, setReceivablesLoading] = useState(false);
+  const [payablesLoading, setPayablesLoading] = useState(false);
+  const [receivablesError, setReceivablesError] = useState<string | null>(null);
+  const [payablesError, setPayablesError] = useState<string | null>(null);
+  const [operationalView, setOperationalView] = useState<
+    "payroll" | "ar" | "ap"
+  >("payroll");
   const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
     new Set(["All Customers"]),
   );
@@ -925,20 +1001,30 @@ export default function FinancialOverviewPage() {
     let operatingCashFlow = 0;
     let financingCashFlow = 0;
     let investingCashFlow = 0;
+    let netCashMovement = 0;
 
     transactions.forEach((tx) => {
-      if (!tx.entry_bank_account) return; // Must have bank account source
+      const accountType = tx.account_type?.toLowerCase() || "";
+      const accountName = tx.account?.toLowerCase() || "";
+      const isCashLine =
+        tx.is_cash_account === true ||
+        (typeof tx.entry_bank_account === "string" &&
+          tx.entry_bank_account.trim() !== "") ||
+        accountType.includes("bank") ||
+        accountType.includes("cash") ||
+        accountName.includes("bank") ||
+        accountName.includes("checking") ||
+        accountName.includes("savings");
 
-      const classification = classifyCashFlowTransaction(
-        tx.account_type,
-        tx.report_category,
-      );
-      const cashImpact =
-        tx.report_category === "transfer"
-          ? Number.parseFloat(tx.debit) - Number.parseFloat(tx.credit) // Reverse for transfers
-          : tx.normal_balance ||
-            Number.parseFloat(tx.credit) - Number.parseFloat(tx.debit); // Normal for others
+      if (!isCashLine) return;
 
+      const debitValue = toNumber(tx.debit);
+      const creditValue = toNumber(tx.credit);
+      const cashImpact = debitValue - creditValue;
+
+      netCashMovement += cashImpact;
+
+      const classification = classifyCashFlowTransaction(tx.account_type);
       if (classification === "operating") {
         operatingCashFlow += cashImpact;
       } else if (classification === "financing") {
@@ -948,8 +1034,7 @@ export default function FinancialOverviewPage() {
       }
     });
 
-    const netCashFlow =
-      operatingCashFlow + financingCashFlow + investingCashFlow;
+    const netCashFlow = netCashMovement;
 
     return {
       operatingCashFlow,
@@ -1242,6 +1327,130 @@ export default function FinancialOverviewPage() {
     }
   };
 
+  const fetchReceivablesSummary = async () => {
+    try {
+      setReceivablesLoading(true);
+      setReceivablesError(null);
+      const { startDate, endDate } = calculateDateRange();
+      const selectedCustomerList = Array.from(selectedCustomers).filter(
+        (c) => c !== "All Customers",
+      );
+
+      let query = supabase
+        .from("ar_aging_detail")
+        .select("customer, open_balance, due_date, date")
+        .gt("open_balance", 0);
+
+      if (startDate) query = query.gte("date", startDate);
+      if (endDate) query = query.lte("date", endDate);
+      if (selectedCustomerList.length > 0) {
+        query = query.in("customer", selectedCustomerList);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const customers = new Set<string>();
+      let total = 0;
+      let current = 0;
+      let days30 = 0;
+      let days60 = 0;
+      let days90 = 0;
+      let weightedDays = 0;
+
+      (data || []).forEach((row: any) => {
+        const balance = toNumber(row.open_balance);
+        if (balance <= 0) return;
+        total += balance;
+        const days = calculateDaysOutstanding(row.due_date || row.date || null);
+        const bucket = getAgingBucket(days);
+        if (bucket === "current") current += balance;
+        else if (bucket === "31-60") days30 += balance;
+        else if (bucket === "61-90") days60 += balance;
+        else days90 += balance;
+        weightedDays += days * balance;
+        if (row.customer) customers.add(row.customer);
+      });
+
+      setReceivablesSummary({
+        total,
+        current,
+        days30,
+        days60,
+        days90,
+        pastDue: days30 + days60 + days90,
+        averageDaysOutstanding:
+          total > 0 ? Math.round(weightedDays / total) : 0,
+        entityCount: customers.size,
+      });
+    } catch (e) {
+      const err = e as Error;
+      setReceivablesError(err.message);
+      setReceivablesSummary(null);
+    } finally {
+      setReceivablesLoading(false);
+    }
+  };
+
+  const fetchPayablesSummary = async () => {
+    try {
+      setPayablesLoading(true);
+      setPayablesError(null);
+      const { startDate, endDate } = calculateDateRange();
+
+      let query = supabase
+        .from("ap_aging")
+        .select("vendor, open_balance, due_date, date")
+        .gt("open_balance", 0);
+
+      if (startDate) query = query.gte("date", startDate);
+      if (endDate) query = query.lte("date", endDate);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const vendors = new Set<string>();
+      let total = 0;
+      let current = 0;
+      let days30 = 0;
+      let days60 = 0;
+      let days90 = 0;
+      let weightedDays = 0;
+
+      (data || []).forEach((row: any) => {
+        const balance = toNumber(row.open_balance);
+        if (balance <= 0) return;
+        total += balance;
+        const days = calculateDaysOutstanding(row.due_date || row.date || null);
+        const bucket = getAgingBucket(days);
+        if (bucket === "current") current += balance;
+        else if (bucket === "31-60") days30 += balance;
+        else if (bucket === "61-90") days60 += balance;
+        else days90 += balance;
+        weightedDays += days * balance;
+        if (row.vendor) vendors.add(row.vendor);
+      });
+
+      setPayablesSummary({
+        total,
+        current,
+        days30,
+        days60,
+        days90,
+        pastDue: days30 + days60 + days90,
+        averageDaysOutstanding:
+          total > 0 ? Math.round(weightedDays / total) : 0,
+        entityCount: vendors.size,
+      });
+    } catch (e) {
+      const err = e as Error;
+      setPayablesError(err.message);
+      setPayablesSummary(null);
+    } finally {
+      setPayablesLoading(false);
+    }
+  };
+
   const handleSync = async () => {
     try {
       await fetch("/api/sync", { method: "POST" });
@@ -1251,6 +1460,8 @@ export default function FinancialOverviewPage() {
       loadTrendData();
       loadPropertyData();
       fetchPayrollSummary();
+      fetchReceivablesSummary();
+      fetchPayablesSummary();
     }
   };
 
@@ -1261,6 +1472,8 @@ export default function FinancialOverviewPage() {
     loadTrendData();
     loadPropertyData();
     fetchPayrollSummary();
+    fetchReceivablesSummary();
+    fetchPayablesSummary();
   }, [
     timePeriod,
     selectedMonth,
@@ -1293,6 +1506,11 @@ export default function FinancialOverviewPage() {
     return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
   };
 
+  const formatShare = (value: number, total: number) => {
+    if (!total) return "0%";
+    return `${Math.round((value / total) * 100)}%`;
+  };
+
   const formatDate = (dateString: string) => {
     const { year, month, day } = getDateParts(dateString);
     const date = new Date(year, month - 1, day);
@@ -1321,6 +1539,58 @@ export default function FinancialOverviewPage() {
     () => propertyChartData.reduce((sum, p) => sum + p.value, 0),
     [propertyChartData],
   );
+
+  const receivableBuckets = useMemo(() => {
+    if (!receivablesSummary) return [];
+    return [
+      {
+        label: "Current",
+        value: receivablesSummary.current,
+        color: BRAND_COLORS.primary,
+      },
+      {
+        label: "31-60",
+        value: receivablesSummary.days30,
+        color: BRAND_COLORS.tertiary,
+      },
+      {
+        label: "61-90",
+        value: receivablesSummary.days60,
+        color: BRAND_COLORS.warning,
+      },
+      {
+        label: "90+",
+        value: receivablesSummary.days90,
+        color: BRAND_COLORS.danger,
+      },
+    ];
+  }, [receivablesSummary]);
+
+  const payableBuckets = useMemo(() => {
+    if (!payablesSummary) return [];
+    return [
+      {
+        label: "Current",
+        value: payablesSummary.current,
+        color: BRAND_COLORS.secondary,
+      },
+      {
+        label: "31-60",
+        value: payablesSummary.days30,
+        color: BRAND_COLORS.tertiary,
+      },
+      {
+        label: "61-90",
+        value: payablesSummary.days60,
+        color: BRAND_COLORS.warning,
+      },
+      {
+        label: "90+",
+        value: payablesSummary.days90,
+        color: BRAND_COLORS.danger,
+      },
+    ];
+  }, [payablesSummary]);
 
   const metricLabels = {
     income: "Revenue",
@@ -2021,78 +2291,366 @@ export default function FinancialOverviewPage() {
 
             {/* Financial Health Summary */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Payroll Summary */}
-              <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-gray-200">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Payroll Summary
-                  </h3>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Overview of payroll activity
+              {/* Operational Snapshot */}
+              <div className="bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+                <div className="bg-gradient-to-r from-blue-600 via-sky-500 to-cyan-500 px-6 py-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between text-white">
+                  <div className="flex items-center gap-4">
+                    <div className="h-12 w-12 rounded-full bg-white/20 flex items-center justify-center shadow-inner">
+                      <ActiveOperationalIcon className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold">
+                        {operationalMeta.title}
+                      </h3>
+                      <p className="text-sm text-white/80">
+                        {operationalMeta.subtitle}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white/20 rounded-full p-1 self-start sm:self-auto">
+                    {operationalToggleOptions.map((option) => (
+                      <button
+                        key={option.key}
+                        type="button"
+                        onClick={() => setOperationalView(option.key)}
+                        className={`px-3 py-1.5 text-sm font-semibold rounded-full transition ${
+                          operationalView === option.key
+                            ? "bg-white text-blue-700 shadow-sm"
+                            : "text-white/80 hover:text-white"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <div className="p-6">
-                  {payrollLoading ? (
-                    <div className="text-sm text-gray-500">Loading...</div>
-                  ) : payrollError ? (
-                    <div className="text-sm text-red-500">{payrollError}</div>
-                  ) : payrollSummary ? (
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <div className="text-gray-500">Employees Paid</div>
-                        <div className="text-lg font-semibold">
-                          {payrollSummary.employees}
+                <div className="p-6 bg-gradient-to-br from-blue-50 via-white to-blue-100">
+                  {operationalView === "payroll" && (
+                    <>
+                      {payrollLoading ? (
+                        <div className="text-sm text-slate-600">
+                          Loading payroll insights...
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">W-2 Headcount</div>
-                        <div className="text-lg font-semibold">
-                          {payrollSummary.w2}
+                      ) : payrollError ? (
+                        <div className="text-sm text-red-500">
+                          {payrollError}
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">
-                          Contractor Headcount
+                      ) : payrollSummary ? (
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="rounded-xl bg-white/80 border border-white/60 shadow-sm p-4">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                                Employees Paid
+                              </p>
+                              <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                {payrollSummary.employees}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">This period</p>
+                            </div>
+                            <div className="rounded-xl bg-white/80 border border-white/60 shadow-sm p-4">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-sky-600">
+                                W-2 Headcount
+                              </p>
+                              <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                {payrollSummary.w2}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">Full-time employees</p>
+                            </div>
+                            <div className="rounded-xl bg-white/80 border border-white/60 shadow-sm p-4">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">
+                                Contractors
+                              </p>
+                              <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                {payrollSummary.contractors}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">Active this period</p>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-t-4 p-4"
+                              style={{ borderTopColor: BRAND_COLORS.success }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Net Pay
+                              </p>
+                              <p className="mt-3 text-xl font-semibold text-slate-900">
+                                {formatCurrency(payrollSummary.netPay)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                Cash leaving bank accounts
+                              </p>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-t-4 p-4"
+                              style={{ borderTopColor: BRAND_COLORS.primary }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Gross Payroll
+                              </p>
+                              <p className="mt-3 text-xl font-semibold text-slate-900">
+                                {formatCurrency(payrollSummary.grossPayroll)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                Before taxes &amp; benefits
+                              </p>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-t-4 p-4"
+                              style={{ borderTopColor: BRAND_COLORS.warning }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Employer Taxes
+                              </p>
+                              <p className="mt-3 text-xl font-semibold text-slate-900">
+                                {formatCurrency(payrollSummary.employerTaxes)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                Payroll tax obligations
+                              </p>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-t-4 p-4"
+                              style={{ borderTopColor: BRAND_COLORS.secondary }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Benefits
+                              </p>
+                              <p className="mt-3 text-xl font-semibold text-slate-900">
+                                {formatCurrency(payrollSummary.benefits)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                Employer funded programs
+                              </p>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-t-4 p-4"
+                              style={{ borderTopColor: BRAND_COLORS.accent }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Contractor Spend
+                              </p>
+                              <p className="mt-3 text-xl font-semibold text-slate-900">
+                                {formatCurrency(payrollSummary.contractorPayments)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1">
+                                Vendor &amp; gig workforce
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-lg font-semibold">
-                          {payrollSummary.contractors}
+                      ) : (
+                        <div className="text-sm text-slate-600">No payroll data</div>
+                      )}
+                    </>
+                  )}
+                  {operationalView === "ar" && (
+                    <>
+                      {receivablesLoading ? (
+                        <div className="text-sm text-slate-600">
+                          Loading receivables...
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Net Pay</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.netPay)}
+                      ) : receivablesError ? (
+                        <div className="text-sm text-red-500">
+                          {receivablesError}
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Gross Payroll</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.grossPayroll)}
+                      ) : receivablesSummary ? (
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-l-4 p-5"
+                              style={{ borderLeftColor: BRAND_COLORS.primary }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Total Outstanding
+                              </p>
+                              <p className="mt-3 text-2xl font-semibold text-slate-900">
+                                {formatCurrency(receivablesSummary.total)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-2">
+                                {receivablesSummary.entityCount} customer
+                                {receivablesSummary.entityCount === 1 ? "" : "s"} with balances
+                              </p>
+                              <span className="mt-3 inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                                Current: {formatCurrency(receivablesSummary.current)}
+                              </span>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-l-4 p-5"
+                              style={{ borderLeftColor: BRAND_COLORS.warning }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Past Due
+                              </p>
+                              <p className="mt-3 text-2xl font-semibold text-slate-900">
+                                {formatCurrency(receivablesSummary.pastDue)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-2">
+                                {formatShare(
+                                  receivablesSummary.pastDue,
+                                  receivablesSummary.total,
+                                )} of total receivables
+                              </p>
+                              <span className="mt-3 inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                                Reduce ageing beyond 60 days
+                              </span>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-l-4 p-5"
+                              style={{ borderLeftColor: BRAND_COLORS.success }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Average Days Outstanding
+                              </p>
+                              <p className="mt-3 text-2xl font-semibold text-slate-900">
+                                {receivablesSummary.averageDaysOutstanding} days
+                              </p>
+                              <p className="text-xs text-slate-500 mt-2">
+                                Target &lt; 35 days for healthy cash flow
+                              </p>
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-3">
+                              Aging Breakdown
+                            </h4>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              {receivableBuckets.map((bucket) => {
+                                const percent = receivablesSummary.total
+                                  ? Math.round((bucket.value / receivablesSummary.total) * 100)
+                                  : 0;
+                                return (
+                                  <div
+                                    key={bucket.label}
+                                    className="rounded-xl bg-white shadow-sm border border-white/60 p-4"
+                                  >
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                      {bucket.label}
+                                    </p>
+                                    <p className="mt-2 text-lg font-semibold text-slate-900">
+                                      {formatCurrency(bucket.value)}
+                                    </p>
+                                    <div className="mt-3 h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                                      <div
+                                        className="h-full rounded-full"
+                                        style={{ width: `${percent}%`, backgroundColor: bucket.color }}
+                                      ></div>
+                                    </div>
+                                    <p className="mt-2 text-xs text-slate-500">{percent}% of total</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Employer Taxes</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.employerTaxes)}
+                      ) : (
+                        <div className="text-sm text-slate-600">No receivables data</div>
+                      )}
+                    </>
+                  )}
+                  {operationalView === "ap" && (
+                    <>
+                      {payablesLoading ? (
+                        <div className="text-sm text-slate-600">
+                          Loading payables...
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Benefits</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.benefits)}
+                      ) : payablesError ? (
+                        <div className="text-sm text-red-500">
+                          {payablesError}
                         </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-500">Contractors</div>
-                        <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.contractorPayments)}
+                      ) : payablesSummary ? (
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-l-4 p-5"
+                              style={{ borderLeftColor: BRAND_COLORS.secondary }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Total Payables
+                              </p>
+                              <p className="mt-3 text-2xl font-semibold text-slate-900">
+                                {formatCurrency(payablesSummary.total)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-2">
+                                {payablesSummary.entityCount} vendor
+                                {payablesSummary.entityCount === 1 ? "" : "s"} awaiting payment
+                              </p>
+                              <span className="mt-3 inline-flex items-center rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                                Current: {formatCurrency(payablesSummary.current)}
+                              </span>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-l-4 p-5"
+                              style={{ borderLeftColor: BRAND_COLORS.danger }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Past Due
+                              </p>
+                              <p className="mt-3 text-2xl font-semibold text-slate-900">
+                                {formatCurrency(payablesSummary.pastDue)}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-2">
+                                {formatShare(
+                                  payablesSummary.pastDue,
+                                  payablesSummary.total,
+                                )} of total obligations
+                              </p>
+                              <span className="mt-3 inline-flex items-center rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">
+                                Prioritize critical vendors
+                              </span>
+                            </div>
+                            <div
+                              className="rounded-xl bg-white shadow-sm border-l-4 p-5"
+                              style={{ borderLeftColor: BRAND_COLORS.success }}
+                            >
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Average Days to Pay
+                              </p>
+                              <p className="mt-3 text-2xl font-semibold text-slate-900">
+                                {payablesSummary.averageDaysOutstanding} days
+                              </p>
+                              <p className="text-xs text-slate-500 mt-2">
+                                Monitor trends to optimize cash
+                              </p>
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-600 mb-3">
+                              Aging Breakdown
+                            </h4>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                              {payableBuckets.map((bucket) => {
+                                const percent = payablesSummary.total
+                                  ? Math.round((bucket.value / payablesSummary.total) * 100)
+                                  : 0;
+                                return (
+                                  <div
+                                    key={bucket.label}
+                                    className="rounded-xl bg-white shadow-sm border border-white/60 p-4"
+                                  >
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                      {bucket.label}
+                                    </p>
+                                    <p className="mt-2 text-lg font-semibold text-slate-900">
+                                      {formatCurrency(bucket.value)}
+                                    </p>
+                                    <div className="mt-3 h-2 w-full rounded-full bg-slate-200 overflow-hidden">
+                                      <div
+                                        className="h-full rounded-full"
+                                        style={{ width: `${percent}%`, backgroundColor: bucket.color }}
+                                      ></div>
+                                    </div>
+                                    <p className="mt-2 text-xs text-slate-500">{percent}% of total</p>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-500">
-                      No payroll data
-                    </div>
+                      ) : (
+                        <div className="text-sm text-slate-600">No payables data</div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
