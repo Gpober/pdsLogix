@@ -1,7 +1,7 @@
 "use client"
 
 import React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { RefreshCw, ChevronDown, ChevronRight, X, Download } from "lucide-react"
 import * as XLSX from "xlsx"
 import jsPDF from "jspdf"
@@ -101,6 +101,17 @@ interface OffsetAccountData {
   periods: Record<string, number>
   total: number
   bankAccounts?: Record<string, number>
+}
+
+interface OffsetAccountEntityBreakdownEntry {
+  name: string
+  periods: Record<string, number>
+  total: number
+}
+
+interface OffsetAccountEntityBreakdown {
+  type: "customer" | "vendor"
+  entities: OffsetAccountEntityBreakdownEntry[]
 }
 
 interface PeriodData {
@@ -211,6 +222,7 @@ export default function CashFlowPage() {
   // Offset view state
   const [offsetAccountData, setOffsetAccountData] = useState<OffsetAccountData[]>([])
   const [periods, setPeriods] = useState<PeriodData[]>([])
+  const [expandedAccounts, setExpandedAccounts] = useState<Record<string, boolean>>({})
 
   // Bank account view state
   const [bankAccountData, setBankAccountData] = useState<BankAccountData[]>([])
@@ -1470,6 +1482,91 @@ export default function CashFlowPage() {
     }
   }
 
+  const toggleAccountExpansion = (account: string) => {
+    setExpandedAccounts((prev) => ({
+      ...prev,
+      [account]: !prev[account],
+    }))
+  }
+
+  const accountBreakdowns = useMemo<Record<string, OffsetAccountEntityBreakdown>>(() => {
+    const breakdownMap: Record<string, OffsetAccountEntityBreakdown> = {}
+
+    if (offsetAccountData.length === 0 || offsetTransactions.length === 0) {
+      return breakdownMap
+    }
+
+    const validAccounts = new Set(offsetAccountData.map((acc) => acc.offsetAccount))
+    const transactionsByAccount = new Map<string, any[]>()
+
+    offsetTransactions.forEach((tx: any) => {
+      const accountName = tx.account
+      if (!accountName || !validAccounts.has(accountName)) return
+      if (!transactionsByAccount.has(accountName)) {
+        transactionsByAccount.set(accountName, [])
+      }
+      transactionsByAccount.get(accountName)!.push(tx)
+    })
+
+    transactionsByAccount.forEach((transactions, accountName) => {
+      if (transactions.length === 0) return
+
+      const sample = transactions[0] || {}
+      const accountType = sample.account_type || sample.accountType || ""
+      const accountLabel = sample.account || accountName
+      const receivable = isReceivable({ accountType, account: accountLabel })
+      const payable = isPayable({ accountType, account: accountLabel })
+
+      if (!receivable && !payable) {
+        return
+      }
+
+      const groupingField = receivable ? "customer" : "vendor"
+      const fallbackLabel = receivable ? "Unspecified Customer" : "Unspecified Vendor"
+      const entityTotals = new Map<string, { periods: Record<string, number>; total: number }>()
+
+      transactions.forEach((tx: any) => {
+        const primaryName = (groupingField === "customer" ? tx.customer : tx.vendor) as string | null | undefined
+        const altName = tx.name as string | null | undefined
+        const trimmedPrimary = typeof primaryName === "string" ? primaryName.trim() : ""
+        const trimmedAlt = typeof altName === "string" ? altName.trim() : ""
+        const entityName = trimmedPrimary || trimmedAlt || fallbackLabel
+        const periodKey =
+          typeof tx.periodKey === "string" && tx.periodKey.length > 0
+            ? tx.periodKey
+            : tx.date
+              ? getPeriodKey(tx.date)
+              : "total"
+        const impactValue =
+          typeof tx.cashFlowImpact === "number"
+            ? tx.cashFlowImpact
+            : toNum(tx.credit) - toNum(tx.debit)
+
+        const existing = entityTotals.get(entityName) || { periods: {}, total: 0 }
+        existing.periods[periodKey] = toNum(existing.periods[periodKey]) + impactValue
+        existing.total += impactValue
+        entityTotals.set(entityName, existing)
+      })
+
+      const entities = Array.from(entityTotals.entries())
+        .map(([name, data]) => ({
+          name,
+          periods: data.periods,
+          total: data.total,
+        }))
+        .sort((a, b) => Math.abs(b.total) - Math.abs(a.total))
+
+      if (entities.length === 0) return
+
+      breakdownMap[accountName] = {
+        type: receivable ? "customer" : "vendor",
+        entities,
+      }
+    })
+
+    return breakdownMap
+  }, [offsetAccountData, offsetTransactions, periodType])
+
   // Helper function to group accounts by classification including transfers
   const getAccountsByClass = () => {
     const operatingInflows: OffsetAccountData[] = []
@@ -1524,6 +1621,10 @@ export default function CashFlowPage() {
   useEffect(() => {
     fetchFilters()
   }, [])
+
+  useEffect(() => {
+    setExpandedAccounts({})
+  }, [offsetAccountData])
 
   // ENHANCED: Add includeTransfers to dependency array
   useEffect(() => {
@@ -2152,39 +2253,109 @@ export default function CashFlowPage() {
                                   </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                  {accounts.map((account) => (
-                                    <tr key={account.offsetAccount} className="hover:bg-gray-50">
-                                      <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
-                                        <div className="truncate" title={account.offsetAccount}>
-                                          {account.offsetAccount}
-                                        </div>
-                                      </td>
-                                      {periods.map((period) => {
-                                        const amount = account.periods[period.key] || 0
-                                        return (
-                                          <td key={period.key} className="px-4 py-4 text-center">
-                                            {amount !== 0 ? (
-                                              <button
-                                                onClick={() => openTransactionDrillDown(account.offsetAccount, period.key)}
-                                                className={`font-medium hover:underline ${amount >= 0 ? "text-green-600" : "text-red-600"}`}
-                                              >
-                                                {formatCurrency(amount)}
-                                              </button>
-                                            ) : (
-                                              <span className="text-gray-300">-</span>
+                                  {accounts.map((account) => {
+                                    const breakdown = accountBreakdowns[account.offsetAccount]
+                                    const hasBreakdown = Boolean(breakdown && breakdown.entities.length > 0)
+                                    const isExpanded = Boolean(hasBreakdown && expandedAccounts[account.offsetAccount])
+                                    const breakdownLabel = breakdown?.type === "customer" ? "customers" : "vendors"
+
+                                    return (
+                                      <React.Fragment key={account.offsetAccount}>
+                                        <tr className="hover:bg-gray-50">
+                                          <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
+                                            <div className="flex items-center gap-2">
+                                              {hasBreakdown && (
+                                                <button
+                                                  type="button"
+                                                  onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    toggleAccountExpansion(account.offsetAccount)
+                                                  }}
+                                                  className="text-green-600 hover:text-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-1 rounded"
+                                                  aria-expanded={isExpanded}
+                                                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${account.offsetAccount} ${breakdownLabel}`}
+                                                >
+                                                  {isExpanded ? (
+                                                    <ChevronDown className="w-4 h-4" />
+                                                  ) : (
+                                                    <ChevronRight className="w-4 h-4" />
+                                                  )}
+                                                </button>
+                                              )}
+                                              <div className="truncate" title={account.offsetAccount}>
+                                                {account.offsetAccount}
+                                              </div>
+                                            </div>
+                                            {hasBreakdown && (
+                                              <div className="mt-1 text-xs text-gray-500">
+                                                {isExpanded ? "Hide" : "View"} {breakdownLabel}
+                                              </div>
                                             )}
                                           </td>
-                                        )
-                                      })}
-                                      {periodType !== "total" && (
-                                        <td className="px-6 py-4 text-right">
-                                          <span className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}>
-                                            {formatCurrency(account.total)}
-                                          </span>
-                                        </td>
-                                      )}
-                                    </tr>
-                                  ))}
+                                          {periods.map((period) => {
+                                            const amount = account.periods[period.key] || 0
+                                            return (
+                                              <td key={period.key} className="px-4 py-4 text-center">
+                                                {amount !== 0 ? (
+                                                  <button
+                                                    onClick={() => openTransactionDrillDown(account.offsetAccount, period.key)}
+                                                    className={`font-medium hover:underline ${amount >= 0 ? "text-green-600" : "text-red-600"}`}
+                                                  >
+                                                    {formatCurrency(amount)}
+                                                  </button>
+                                                ) : (
+                                                  <span className="text-gray-300">-</span>
+                                                )}
+                                              </td>
+                                            )
+                                          })}
+                                          {periodType !== "total" && (
+                                            <td className="px-6 py-4 text-right">
+                                              <span className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                                {formatCurrency(account.total)}
+                                              </span>
+                                            </td>
+                                          )}
+                                        </tr>
+                                        {isExpanded && breakdown &&
+                                          breakdown.entities.map((entity) => (
+                                            <tr key={`${account.offsetAccount}-${entity.name}`} className="bg-gray-50 hover:bg-gray-100">
+                                              <td className="sticky left-0 bg-gray-50 px-6 py-3 text-sm text-gray-700 border-r border-gray-200">
+                                                <div className="pl-8">
+                                                  <div className="text-xs uppercase tracking-wide text-gray-400">
+                                                    {breakdown.type === "customer" ? "Customer" : "Vendor"}
+                                                  </div>
+                                                  <div className="font-medium text-gray-700 truncate" title={entity.name}>
+                                                    {entity.name}
+                                                  </div>
+                                                </div>
+                                              </td>
+                                              {periods.map((period) => {
+                                                const amount = entity.periods[period.key] || 0
+                                                return (
+                                                  <td key={period.key} className="px-4 py-3 text-center text-sm">
+                                                    {amount !== 0 ? (
+                                                      <span className={amount >= 0 ? "text-green-600" : "text-red-600"}>
+                                                        {formatCurrency(amount)}
+                                                      </span>
+                                                    ) : (
+                                                      <span className="text-gray-300">-</span>
+                                                    )}
+                                                  </td>
+                                                )
+                                              })}
+                                              {periodType !== "total" && (
+                                                <td className="px-6 py-3 text-right text-sm">
+                                                  <span className={`font-semibold ${entity.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                                    {formatCurrency(entity.total)}
+                                                  </span>
+                                                </td>
+                                              )}
+                                            </tr>
+                                          ))}
+                                      </React.Fragment>
+                                    )
+                                  })}
                                   <tr className="bg-green-100 font-bold border-t-2 border-green-300">
                                     <td className="sticky left-0 bg-green-100 px-6 py-4 text-sm font-bold text-green-900 border-r border-green-200">
                                       {totalLabel}
@@ -2281,45 +2452,115 @@ export default function CashFlowPage() {
                                 </tr>
                               </thead>
                               <tbody className="bg-white divide-y divide-gray-200">
-                                {financingAccounts.map((account) => (
-                                  <tr key={account.offsetAccount} className="hover:bg-gray-50">
-                                    <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
-                                      <div className="truncate" title={account.offsetAccount}>
-                                        {account.offsetAccount}
-                                      </div>
-                                    </td>
-                                    {periods.map((period) => {
-                                      const amount = account.periods[period.key] || 0
-                                      return (
-                                        <td key={period.key} className="px-4 py-4 text-center">
-                                          {amount !== 0 ? (
-                                            <button
-                                              onClick={() =>
-                                                openTransactionDrillDown(account.offsetAccount, period.key)
-                                              }
-                                              className={`font-medium hover:underline ${
-                                                amount >= 0 ? "text-green-600" : "text-red-600"
-                                              }`}
-                                            >
-                                              {formatCurrency(amount)}
-                                            </button>
-                                          ) : (
-                                            <span className="text-gray-300">-</span>
+                                {financingAccounts.map((account) => {
+                                  const breakdown = accountBreakdowns[account.offsetAccount]
+                                  const hasBreakdown = Boolean(breakdown && breakdown.entities.length > 0)
+                                  const isExpanded = Boolean(hasBreakdown && expandedAccounts[account.offsetAccount])
+                                  const breakdownLabel = breakdown?.type === "customer" ? "customers" : "vendors"
+
+                                  return (
+                                    <React.Fragment key={account.offsetAccount}>
+                                      <tr className="hover:bg-gray-50">
+                                        <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
+                                          <div className="flex items-center gap-2">
+                                            {hasBreakdown && (
+                                              <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                  event.stopPropagation()
+                                                  toggleAccountExpansion(account.offsetAccount)
+                                                }}
+                                                className="text-blue-600 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 rounded"
+                                                aria-expanded={isExpanded}
+                                                aria-label={`${isExpanded ? "Collapse" : "Expand"} ${account.offsetAccount} ${breakdownLabel}`}
+                                              >
+                                                {isExpanded ? (
+                                                  <ChevronDown className="w-4 h-4" />
+                                                ) : (
+                                                  <ChevronRight className="w-4 h-4" />
+                                                )}
+                                              </button>
+                                            )}
+                                            <div className="truncate" title={account.offsetAccount}>
+                                              {account.offsetAccount}
+                                            </div>
+                                          </div>
+                                          {hasBreakdown && (
+                                            <div className="mt-1 text-xs text-gray-500">
+                                              {isExpanded ? "Hide" : "View"} {breakdownLabel}
+                                            </div>
                                           )}
                                         </td>
-                                      )
-                                    })}
-                                    {periodType !== "total" && (
-                                      <td className="px-6 py-4 text-right">
-                                        <span
-                                          className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
-                                        >
-                                          {formatCurrency(account.total)}
-                                        </span>
-                                      </td>
-                                    )}
-                                  </tr>
-                                ))}
+                                        {periods.map((period) => {
+                                          const amount = account.periods[period.key] || 0
+                                          return (
+                                            <td key={period.key} className="px-4 py-4 text-center">
+                                              {amount !== 0 ? (
+                                                <button
+                                                  onClick={() =>
+                                                    openTransactionDrillDown(account.offsetAccount, period.key)
+                                                  }
+                                                  className={`font-medium hover:underline ${
+                                                    amount >= 0 ? "text-green-600" : "text-red-600"
+                                                  }`}
+                                                >
+                                                  {formatCurrency(amount)}
+                                                </button>
+                                              ) : (
+                                                <span className="text-gray-300">-</span>
+                                              )}
+                                            </td>
+                                          )
+                                        })}
+                                        {periodType !== "total" && (
+                                          <td className="px-6 py-4 text-right">
+                                            <span
+                                              className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
+                                            >
+                                              {formatCurrency(account.total)}
+                                            </span>
+                                          </td>
+                                        )}
+                                      </tr>
+                                      {isExpanded && breakdown &&
+                                        breakdown.entities.map((entity) => (
+                                          <tr key={`${account.offsetAccount}-${entity.name}`} className="bg-gray-50 hover:bg-gray-100">
+                                            <td className="sticky left-0 bg-gray-50 px-6 py-3 text-sm text-gray-700 border-r border-gray-200">
+                                              <div className="pl-8">
+                                                <div className="text-xs uppercase tracking-wide text-gray-400">
+                                                  {breakdown.type === "customer" ? "Customer" : "Vendor"}
+                                                </div>
+                                                <div className="font-medium text-gray-700 truncate" title={entity.name}>
+                                                  {entity.name}
+                                                </div>
+                                              </div>
+                                            </td>
+                                            {periods.map((period) => {
+                                              const amount = entity.periods[period.key] || 0
+                                              return (
+                                                <td key={period.key} className="px-4 py-3 text-center text-sm">
+                                                  {amount !== 0 ? (
+                                                    <span className={amount >= 0 ? "text-green-600" : "text-red-600"}>
+                                                      {formatCurrency(amount)}
+                                                    </span>
+                                                  ) : (
+                                                    <span className="text-gray-300">-</span>
+                                                  )}
+                                                </td>
+                                              )
+                                            })}
+                                            {periodType !== "total" && (
+                                              <td className="px-6 py-3 text-right text-sm">
+                                                <span className={`font-semibold ${entity.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                                  {formatCurrency(entity.total)}
+                                                </span>
+                                              </td>
+                                            )}
+                                          </tr>
+                                        ))}
+                                    </React.Fragment>
+                                  )
+                                })}
 
                                 {/* Total Row for Financing Activities */}
                                 <tr className="bg-blue-100 font-bold border-t-2 border-blue-300">
@@ -2415,45 +2656,115 @@ export default function CashFlowPage() {
                                 </tr>
                               </thead>
                               <tbody className="bg-white divide-y divide-gray-200">
-                                {investingAccounts.map((account) => (
-                                  <tr key={account.offsetAccount} className="hover:bg-gray-50">
-                                    <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
-                                      <div className="truncate" title={account.offsetAccount}>
-                                        {account.offsetAccount}
-                                      </div>
-                                    </td>
-                                    {periods.map((period) => {
-                                      const amount = account.periods[period.key] || 0
-                                      return (
-                                        <td key={period.key} className="px-4 py-4 text-center">
-                                          {amount !== 0 ? (
-                                            <button
-                                              onClick={() =>
-                                                openTransactionDrillDown(account.offsetAccount, period.key)
-                                              }
-                                              className={`font-medium hover:underline ${
-                                                amount >= 0 ? "text-green-600" : "text-red-600"
-                                              }`}
-                                            >
-                                              {formatCurrency(amount)}
-                                            </button>
-                                          ) : (
-                                            <span className="text-gray-300">-</span>
+                                {investingAccounts.map((account) => {
+                                  const breakdown = accountBreakdowns[account.offsetAccount]
+                                  const hasBreakdown = Boolean(breakdown && breakdown.entities.length > 0)
+                                  const isExpanded = Boolean(hasBreakdown && expandedAccounts[account.offsetAccount])
+                                  const breakdownLabel = breakdown?.type === "customer" ? "customers" : "vendors"
+
+                                  return (
+                                    <React.Fragment key={account.offsetAccount}>
+                                      <tr className="hover:bg-gray-50">
+                                        <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
+                                          <div className="flex items-center gap-2">
+                                            {hasBreakdown && (
+                                              <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                  event.stopPropagation()
+                                                  toggleAccountExpansion(account.offsetAccount)
+                                                }}
+                                                className="text-orange-600 hover:text-orange-700 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-1 rounded"
+                                                aria-expanded={isExpanded}
+                                                aria-label={`${isExpanded ? "Collapse" : "Expand"} ${account.offsetAccount} ${breakdownLabel}`}
+                                              >
+                                                {isExpanded ? (
+                                                  <ChevronDown className="w-4 h-4" />
+                                                ) : (
+                                                  <ChevronRight className="w-4 h-4" />
+                                                )}
+                                              </button>
+                                            )}
+                                            <div className="truncate" title={account.offsetAccount}>
+                                              {account.offsetAccount}
+                                            </div>
+                                          </div>
+                                          {hasBreakdown && (
+                                            <div className="mt-1 text-xs text-gray-500">
+                                              {isExpanded ? "Hide" : "View"} {breakdownLabel}
+                                            </div>
                                           )}
                                         </td>
-                                      )
-                                    })}
-                                    {periodType !== "total" && (
-                                      <td className="px-6 py-4 text-right">
-                                        <span
-                                          className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
-                                        >
-                                          {formatCurrency(account.total)}
-                                        </span>
-                                      </td>
-                                    )}
-                                  </tr>
-                                ))}
+                                        {periods.map((period) => {
+                                          const amount = account.periods[period.key] || 0
+                                          return (
+                                            <td key={period.key} className="px-4 py-4 text-center">
+                                              {amount !== 0 ? (
+                                                <button
+                                                  onClick={() =>
+                                                    openTransactionDrillDown(account.offsetAccount, period.key)
+                                                  }
+                                                  className={`font-medium hover:underline ${
+                                                    amount >= 0 ? "text-green-600" : "text-red-600"
+                                                  }`}
+                                                >
+                                                  {formatCurrency(amount)}
+                                                </button>
+                                              ) : (
+                                                <span className="text-gray-300">-</span>
+                                              )}
+                                            </td>
+                                          )
+                                        })}
+                                        {periodType !== "total" && (
+                                          <td className="px-6 py-4 text-right">
+                                            <span
+                                              className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
+                                            >
+                                              {formatCurrency(account.total)}
+                                            </span>
+                                          </td>
+                                        )}
+                                      </tr>
+                                      {isExpanded && breakdown &&
+                                        breakdown.entities.map((entity) => (
+                                          <tr key={`${account.offsetAccount}-${entity.name}`} className="bg-gray-50 hover:bg-gray-100">
+                                            <td className="sticky left-0 bg-gray-50 px-6 py-3 text-sm text-gray-700 border-r border-gray-200">
+                                              <div className="pl-8">
+                                                <div className="text-xs uppercase tracking-wide text-gray-400">
+                                                  {breakdown.type === "customer" ? "Customer" : "Vendor"}
+                                                </div>
+                                                <div className="font-medium text-gray-700 truncate" title={entity.name}>
+                                                  {entity.name}
+                                                </div>
+                                              </div>
+                                            </td>
+                                            {periods.map((period) => {
+                                              const amount = entity.periods[period.key] || 0
+                                              return (
+                                                <td key={period.key} className="px-4 py-3 text-center text-sm">
+                                                  {amount !== 0 ? (
+                                                    <span className={amount >= 0 ? "text-green-600" : "text-red-600"}>
+                                                      {formatCurrency(amount)}
+                                                    </span>
+                                                  ) : (
+                                                    <span className="text-gray-300">-</span>
+                                                  )}
+                                                </td>
+                                              )
+                                            })}
+                                            {periodType !== "total" && (
+                                              <td className="px-6 py-3 text-right text-sm">
+                                                <span className={`font-semibold ${entity.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                                  {formatCurrency(entity.total)}
+                                                </span>
+                                              </td>
+                                            )}
+                                          </tr>
+                                        ))}
+                                    </React.Fragment>
+                                  )
+                                })}
 
                                 {/* Total Row for Investing Activities */}
                                 <tr className="bg-orange-100 font-bold border-t-2 border-orange-300">
@@ -2550,48 +2861,118 @@ export default function CashFlowPage() {
                                   </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                  {transferAccounts.map((account) => (
-                                    <tr key={account.offsetAccount} className="hover:bg-gray-50">
-                                      <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
-                                        <div className="truncate flex items-center" title={account.offsetAccount}>
-                                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-2">
-                                            Transfer
-                                          </span>
-                                          {account.offsetAccount}
-                                        </div>
-                                      </td>
-                                      {periods.map((period) => {
-                                        const amount = account.periods[period.key] || 0
-                                        return (
-                                          <td key={period.key} className="px-4 py-4 text-center">
-                                            {amount !== 0 ? (
-                                              <button
-                                                onClick={() =>
-                                                  openTransactionDrillDown(account.offsetAccount, period.key)
-                                                }
-                                                className={`font-medium hover:underline ${
-                                                  amount >= 0 ? "text-green-600" : "text-red-600"
-                                                }`}
-                                              >
-                                                {formatCurrency(amount)}
-                                              </button>
-                                            ) : (
-                                              <span className="text-gray-300">-</span>
+                                  {transferAccounts.map((account) => {
+                                    const breakdown = accountBreakdowns[account.offsetAccount]
+                                    const hasBreakdown = Boolean(breakdown && breakdown.entities.length > 0)
+                                    const isExpanded = Boolean(hasBreakdown && expandedAccounts[account.offsetAccount])
+                                    const breakdownLabel = breakdown?.type === "customer" ? "customers" : "vendors"
+
+                                    return (
+                                      <React.Fragment key={account.offsetAccount}>
+                                        <tr className="hover:bg-gray-50">
+                                          <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
+                                            <div className="flex items-center gap-2">
+                                              {hasBreakdown && (
+                                                <button
+                                                  type="button"
+                                                  onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    toggleAccountExpansion(account.offsetAccount)
+                                                  }}
+                                                  className="text-purple-600 hover:text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1 rounded"
+                                                  aria-expanded={isExpanded}
+                                                  aria-label={`${isExpanded ? "Collapse" : "Expand"} ${account.offsetAccount} ${breakdownLabel}`}
+                                                >
+                                                  {isExpanded ? (
+                                                    <ChevronDown className="w-4 h-4" />
+                                                  ) : (
+                                                    <ChevronRight className="w-4 h-4" />
+                                                  )}
+                                                </button>
+                                              )}
+                                              <div className="truncate flex items-center" title={account.offsetAccount}>
+                                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-2">
+                                                  Transfer
+                                                </span>
+                                                {account.offsetAccount}
+                                              </div>
+                                            </div>
+                                            {hasBreakdown && (
+                                              <div className="mt-1 text-xs text-gray-500">
+                                                {isExpanded ? "Hide" : "View"} {breakdownLabel}
+                                              </div>
                                             )}
                                           </td>
-                                        )
-                                      })}
-                                      {periodType !== "total" && (
-                                        <td className="px-6 py-4 text-right">
-                                          <span
-                                            className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
-                                          >
-                                            {formatCurrency(account.total)}
-                                          </span>
-                                        </td>
-                                      )}
-                                    </tr>
-                                  ))}
+                                          {periods.map((period) => {
+                                            const amount = account.periods[period.key] || 0
+                                            return (
+                                              <td key={period.key} className="px-4 py-4 text-center">
+                                                {amount !== 0 ? (
+                                                  <button
+                                                    onClick={() =>
+                                                      openTransactionDrillDown(account.offsetAccount, period.key)
+                                                    }
+                                                    className={`font-medium hover:underline ${
+                                                      amount >= 0 ? "text-green-600" : "text-red-600"
+                                                    }`}
+                                                  >
+                                                    {formatCurrency(amount)}
+                                                  </button>
+                                                ) : (
+                                                  <span className="text-gray-300">-</span>
+                                                )}
+                                              </td>
+                                            )
+                                          })}
+                                          {periodType !== "total" && (
+                                            <td className="px-6 py-4 text-right">
+                                              <span
+                                                className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
+                                              >
+                                                {formatCurrency(account.total)}
+                                              </span>
+                                            </td>
+                                          )}
+                                        </tr>
+                                        {isExpanded && breakdown &&
+                                          breakdown.entities.map((entity) => (
+                                            <tr key={`${account.offsetAccount}-${entity.name}`} className="bg-gray-50 hover:bg-gray-100">
+                                              <td className="sticky left-0 bg-gray-50 px-6 py-3 text-sm text-gray-700 border-r border-gray-200">
+                                                <div className="pl-8">
+                                                  <div className="text-xs uppercase tracking-wide text-gray-400">
+                                                    {breakdown.type === "customer" ? "Customer" : "Vendor"}
+                                                  </div>
+                                                  <div className="font-medium text-gray-700 truncate" title={entity.name}>
+                                                    {entity.name}
+                                                  </div>
+                                                </div>
+                                              </td>
+                                              {periods.map((period) => {
+                                                const amount = entity.periods[period.key] || 0
+                                                return (
+                                                  <td key={period.key} className="px-4 py-3 text-center text-sm">
+                                                    {amount !== 0 ? (
+                                                      <span className={amount >= 0 ? "text-green-600" : "text-red-600"}>
+                                                        {formatCurrency(amount)}
+                                                      </span>
+                                                    ) : (
+                                                      <span className="text-gray-300">-</span>
+                                                    )}
+                                                  </td>
+                                                )
+                                              })}
+                                              {periodType !== "total" && (
+                                                <td className="px-6 py-3 text-right text-sm">
+                                                  <span className={`font-semibold ${entity.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                                    {formatCurrency(entity.total)}
+                                                  </span>
+                                                </td>
+                                              )}
+                                            </tr>
+                                          ))}
+                                      </React.Fragment>
+                                    )
+                                  })}
 
                                   {/* Total Row for Transfer Activities */}
                                   <tr className="bg-purple-100 font-bold border-t-2 border-purple-300">
@@ -2685,45 +3066,115 @@ export default function CashFlowPage() {
                                 </tr>
                               </thead>
                               <tbody className="bg-white divide-y divide-gray-200">
-                                {otherAccounts.map((account) => (
-                                  <tr key={account.offsetAccount} className="hover:bg-gray-50">
-                                    <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
-                                      <div className="truncate" title={account.offsetAccount}>
-                                        {account.offsetAccount}
-                                      </div>
-                                    </td>
-                                    {periods.map((period) => {
-                                      const amount = account.periods[period.key] || 0
-                                      return (
-                                        <td key={period.key} className="px-4 py-4 text-center">
-                                          {amount !== 0 ? (
-                                            <button
-                                              onClick={() =>
-                                                openTransactionDrillDown(account.offsetAccount, period.key)
-                                              }
-                                              className={`font-medium hover:underline ${
-                                                amount >= 0 ? "text-green-600" : "text-red-600"
-                                              }`}
-                                            >
-                                              {formatCurrency(amount)}
-                                            </button>
-                                          ) : (
-                                            <span className="text-gray-300">-</span>
+                                {otherAccounts.map((account) => {
+                                  const breakdown = accountBreakdowns[account.offsetAccount]
+                                  const hasBreakdown = Boolean(breakdown && breakdown.entities.length > 0)
+                                  const isExpanded = Boolean(hasBreakdown && expandedAccounts[account.offsetAccount])
+                                  const breakdownLabel = breakdown?.type === "customer" ? "customers" : "vendors"
+
+                                  return (
+                                    <React.Fragment key={account.offsetAccount}>
+                                      <tr className="hover:bg-gray-50">
+                                        <td className="sticky left-0 bg-white px-6 py-4 text-sm font-medium text-gray-900 border-r border-gray-200 max-w-[250px]">
+                                          <div className="flex items-center gap-2">
+                                            {hasBreakdown && (
+                                              <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                  event.stopPropagation()
+                                                  toggleAccountExpansion(account.offsetAccount)
+                                                }}
+                                                className="text-gray-600 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-1 rounded"
+                                                aria-expanded={isExpanded}
+                                                aria-label={`${isExpanded ? "Collapse" : "Expand"} ${account.offsetAccount} ${breakdownLabel}`}
+                                              >
+                                                {isExpanded ? (
+                                                  <ChevronDown className="w-4 h-4" />
+                                                ) : (
+                                                  <ChevronRight className="w-4 h-4" />
+                                                )}
+                                              </button>
+                                            )}
+                                            <div className="truncate" title={account.offsetAccount}>
+                                              {account.offsetAccount}
+                                            </div>
+                                          </div>
+                                          {hasBreakdown && (
+                                            <div className="mt-1 text-xs text-gray-500">
+                                              {isExpanded ? "Hide" : "View"} {breakdownLabel}
+                                            </div>
                                           )}
                                         </td>
-                                      )
-                                    })}
-                                    {periodType !== "total" && (
-                                      <td className="px-6 py-4 text-right">
-                                        <span
-                                          className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
-                                        >
-                                          {formatCurrency(account.total)}
-                                        </span>
-                                      </td>
-                                    )}
-                                  </tr>
-                                ))}
+                                        {periods.map((period) => {
+                                          const amount = account.periods[period.key] || 0
+                                          return (
+                                            <td key={period.key} className="px-4 py-4 text-center">
+                                              {amount !== 0 ? (
+                                                <button
+                                                  onClick={() =>
+                                                    openTransactionDrillDown(account.offsetAccount, period.key)
+                                                  }
+                                                  className={`font-medium hover:underline ${
+                                                    amount >= 0 ? "text-green-600" : "text-red-600"
+                                                  }`}
+                                                >
+                                                  {formatCurrency(amount)}
+                                                </button>
+                                              ) : (
+                                                <span className="text-gray-300">-</span>
+                                              )}
+                                            </td>
+                                          )
+                                        })}
+                                        {periodType !== "total" && (
+                                          <td className="px-6 py-4 text-right">
+                                            <span
+                                              className={`font-bold ${account.total >= 0 ? "text-green-600" : "text-red-600"}`}
+                                            >
+                                              {formatCurrency(account.total)}
+                                            </span>
+                                          </td>
+                                        )}
+                                      </tr>
+                                      {isExpanded && breakdown &&
+                                        breakdown.entities.map((entity) => (
+                                          <tr key={`${account.offsetAccount}-${entity.name}`} className="bg-gray-50 hover:bg-gray-100">
+                                            <td className="sticky left-0 bg-gray-50 px-6 py-3 text-sm text-gray-700 border-r border-gray-200">
+                                              <div className="pl-8">
+                                                <div className="text-xs uppercase tracking-wide text-gray-400">
+                                                  {breakdown.type === "customer" ? "Customer" : "Vendor"}
+                                                </div>
+                                                <div className="font-medium text-gray-700 truncate" title={entity.name}>
+                                                  {entity.name}
+                                                </div>
+                                              </div>
+                                            </td>
+                                            {periods.map((period) => {
+                                              const amount = entity.periods[period.key] || 0
+                                              return (
+                                                <td key={period.key} className="px-4 py-3 text-center text-sm">
+                                                  {amount !== 0 ? (
+                                                    <span className={amount >= 0 ? "text-green-600" : "text-red-600"}>
+                                                      {formatCurrency(amount)}
+                                                    </span>
+                                                  ) : (
+                                                    <span className="text-gray-300">-</span>
+                                                  )}
+                                                </td>
+                                              )
+                                            })}
+                                            {periodType !== "total" && (
+                                              <td className="px-6 py-3 text-right text-sm">
+                                                <span className={`font-semibold ${entity.total >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                                  {formatCurrency(entity.total)}
+                                                </span>
+                                              </td>
+                                            )}
+                                          </tr>
+                                        ))}
+                                    </React.Fragment>
+                                  )
+                                })}
 
                                 {/* Total Row for Other Activities */}
                                 <tr className="bg-gray-100 font-bold border-t-2 border-gray-300">
