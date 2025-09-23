@@ -1,7 +1,6 @@
 "use client";
 
-import React from "react";
-import { useState, useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   RefreshCw,
@@ -278,20 +277,53 @@ export default function FinancialsPage() {
     (new Date().getFullYear() - 5 + i).toString(),
   );
 
-  const calculateMonthlyValue = (acc: PLAccount, monthYear: string) => {
-    const txs = acc.transactions.filter(
-      (tx) => getMonthYear(tx.date) === monthYear,
-    );
-    const credits = txs.reduce((sum, tx) => {
-      const val = tx.credit ? Number.parseFloat(tx.credit.toString()) : 0;
-      return sum + (isNaN(val) ? 0 : val);
-    }, 0);
-    const debits = txs.reduce((sum, tx) => {
-      const val = tx.debit ? Number.parseFloat(tx.debit.toString()) : 0;
-      return sum + (isNaN(val) ? 0 : val);
-    }, 0);
-    return acc.category === "INCOME" ? credits - debits : debits - credits;
-  };
+  const { accountMonthlyTotals, accountCustomerTotals } = useMemo(() => {
+    const monthlyTotals = new Map<string, Map<string, number>>();
+    const customerTotals = new Map<string, Map<string, number>>();
+
+    const parseNumericField = (
+      value: string | number | null | undefined,
+    ): number => {
+      if (value === null || value === undefined) return 0;
+      const numeric =
+        typeof value === "number"
+          ? value
+          : Number.parseFloat(value.toString());
+      return Number.isFinite(numeric) ? numeric : 0;
+    };
+
+    plAccounts.forEach((acc) => {
+      const monthlyMap = new Map<string, number>();
+      const customerMap = new Map<string, number>();
+
+      acc.transactions.forEach((tx) => {
+        const debitValue = parseNumericField(tx.debit);
+        const creditValue = parseNumericField(tx.credit);
+        const amount =
+          acc.category === "INCOME"
+            ? creditValue - debitValue
+            : debitValue - creditValue;
+
+        const monthKey = getMonthYear(tx.date);
+        monthlyMap.set(monthKey, (monthlyMap.get(monthKey) ?? 0) + amount);
+
+        if (tx.customer) {
+          customerMap.set(
+            tx.customer,
+            (customerMap.get(tx.customer) ?? 0) + amount,
+          );
+        }
+      });
+
+      monthlyTotals.set(acc.account, monthlyMap);
+      customerTotals.set(acc.account, customerMap);
+    });
+
+    return {
+      accountMonthlyTotals: monthlyTotals,
+      accountCustomerTotals: customerTotals,
+    };
+  }, [plAccounts]);
 
   // Click outside handler
   useEffect(() => {
@@ -1145,65 +1177,29 @@ export default function FinancialsPage() {
     isParentCombined = false,
     subAccounts?: PLAccount[],
   ) => {
-    let transactions = account.transactions;
-
-    // If this is a combined parent view, include sub-account transactions
-    if (isParentCombined && subAccounts) {
-      transactions = [
-        ...account.transactions,
-        ...subAccounts.flatMap((sub) => sub.transactions),
-      ];
+    if (viewMode !== "Customer" && viewMode !== "Detail") {
+      return 0;
     }
 
-    if (viewMode === "Customer") {
-      // Filter transactions by property and calculate total
-      const filteredTransactions = transactions.filter(
-        (tx) => tx.customer === header,
-      );
-      const credits = filteredTransactions.reduce((sum, tx) => {
-        const creditValue = tx.credit
-          ? Number.parseFloat(tx.credit.toString())
-          : 0;
-        return sum + (isNaN(creditValue) ? 0 : creditValue);
-      }, 0);
-      const debits = filteredTransactions.reduce((sum, tx) => {
-        const debitValue = tx.debit
-          ? Number.parseFloat(tx.debit.toString())
-          : 0;
-        return sum + (isNaN(debitValue) ? 0 : debitValue);
-      }, 0);
-
-      if (account.category === "INCOME") {
-        return credits - debits; // Income: Credit minus Debit
-      } else {
-        return debits - credits; // Expenses: Debit minus Credit
+    const getValueForAccount = (target: PLAccount) => {
+      if (viewMode === "Customer") {
+        return (
+          accountCustomerTotals.get(target.account)?.get(header) ?? 0
+        );
       }
-    } else if (viewMode === "Detail") {
-      // Filter transactions by month using timezone-independent method
-      const filteredTransactions = transactions.filter((tx) => {
-        return getMonthYear(tx.date) === header;
+
+      return accountMonthlyTotals.get(target.account)?.get(header) ?? 0;
+    };
+
+    if (isParentCombined && subAccounts?.length) {
+      let total = getValueForAccount(account);
+      subAccounts.forEach((subAccount) => {
+        total += getValueForAccount(subAccount);
       });
-
-      const credits = filteredTransactions.reduce((sum, tx) => {
-        const creditValue = tx.credit
-          ? Number.parseFloat(tx.credit.toString())
-          : 0;
-        return sum + (isNaN(creditValue) ? 0 : creditValue);
-      }, 0);
-      const debits = filteredTransactions.reduce((sum, tx) => {
-        const debitValue = tx.debit
-          ? Number.parseFloat(tx.debit.toString())
-          : 0;
-        return sum + (isNaN(debitValue) ? 0 : debitValue);
-      }, 0);
-
-      if (account.category === "INCOME") {
-        return credits - debits; // Income: Credit minus Debit
-      } else {
-        return debits - credits; // Expenses: Debit minus Credit
-      }
+      return total;
     }
-    return 0;
+
+    return getValueForAccount(account);
   };
 
   // Handle account expansion
