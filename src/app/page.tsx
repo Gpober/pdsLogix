@@ -101,46 +101,6 @@ const classifyPLAccount = (accountType, reportCategory, accountName) => {
   return null; // Not a P&L account (likely Balance Sheet account)
 };
 
-// Cash Flow Classification using the same logic as cash-flow page
-const classifyCashFlowTransaction = (accountType) => {
-  const typeLower = accountType?.toLowerCase() || "";
-
-  // Operating activities - Income and Expenses
-  if (
-    typeLower === "income" ||
-    typeLower === "other income" ||
-    typeLower === "expenses" ||
-    typeLower === "expense" ||
-    typeLower === "cost of goods sold" ||
-    typeLower === "accounts receivable" ||
-    typeLower === "accounts payable"
-  ) {
-    return "operating";
-  }
-
-  // Investing activities - Fixed Assets and Other Assets
-  if (
-    typeLower === "fixed assets" ||
-    typeLower === "other assets" ||
-    typeLower === "property, plant & equipment"
-  ) {
-    return "investing";
-  }
-
-  // Financing activities - Liabilities, Equity, Credit Cards
-  if (
-    typeLower === "long term liabilities" ||
-    typeLower === "equity" ||
-    typeLower === "credit card" ||
-    typeLower === "other current liabilities" ||
-    typeLower === "line of credit"
-  ) {
-    return "financing";
-  }
-
-  return "other";
-};
-
 // ---------- String normalization + fuzzy match ----------
 const norm = (s: string) =>
   (s || "")
@@ -967,39 +927,35 @@ export default function FinancialOverviewPage() {
 
   // Process cash flow transactions (same logic as cash-flow page)
   const processCashFlowTransactions = (transactions) => {
-    let operatingCashFlow = 0;
-    let financingCashFlow = 0;
-    let investingCashFlow = 0;
+    let totalDebits = 0;
+    let totalCredits = 0;
 
     transactions.forEach((tx) => {
-      if (!tx.entry_bank_account) return; // Must have bank account source
+      if (!tx.entry_bank_account) return; // Only evaluate bank account activity
 
-      const classification = classifyCashFlowTransaction(
-        tx.account_type,
-        tx.report_category,
-      );
-      const cashImpact =
-        tx.report_category === "transfer"
-          ? Number.parseFloat(tx.debit) - Number.parseFloat(tx.credit) // Reverse for transfers
-          : tx.normal_balance ||
-            Number.parseFloat(tx.credit) - Number.parseFloat(tx.debit); // Normal for others
+      const debitValue = tx.debit
+        ? Number.parseFloat(tx.debit.toString())
+        : 0;
+      const creditValue = tx.credit
+        ? Number.parseFloat(tx.credit.toString())
+        : 0;
 
-      if (classification === "operating") {
-        operatingCashFlow += cashImpact;
-      } else if (classification === "financing") {
-        financingCashFlow += cashImpact;
-      } else if (classification === "investing") {
-        investingCashFlow += cashImpact;
+      if (!Number.isNaN(debitValue)) {
+        totalDebits += debitValue;
+      }
+      if (!Number.isNaN(creditValue)) {
+        totalCredits += creditValue;
       }
     });
 
-    const netCashFlow =
-      operatingCashFlow + financingCashFlow + investingCashFlow;
+    const netCashFlow = totalDebits - totalCredits;
 
     return {
-      operatingCashFlow,
-      financingCashFlow,
-      investingCashFlow,
+      operatingCashFlow: 0,
+      financingCashFlow: 0,
+      investingCashFlow: 0,
+      totalDebits,
+      totalCredits,
       netCashFlow,
     };
   };

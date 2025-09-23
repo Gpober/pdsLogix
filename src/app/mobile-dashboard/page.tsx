@@ -225,10 +225,20 @@ export default function EnhancedMobileDashboard() {
     operating: Category[];
     financing: Category[];
     investing: Category[];
+    totals: {
+      debits: number;
+      credits: number;
+      net: number;
+    };
   }>({
     operating: [],
     financing: [],
     investing: [],
+    totals: {
+      debits: 0,
+      credits: 0,
+      net: 0,
+    },
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [arTransactions, setArTransactions] = useState<ARTransaction[]>([]);
@@ -459,11 +469,12 @@ export default function EnhancedMobileDashboard() {
     const operating = cfData.operating.reduce((sum, c) => sum + c.total, 0);
     const financing = cfData.financing.reduce((sum, c) => sum + c.total, 0);
     const investing = cfData.investing.reduce((sum, c) => sum + c.total, 0);
-    return { 
-      operating, 
-      financing, 
+    const net = cfData.totals?.net ?? operating + financing + investing;
+    return {
+      operating,
+      financing,
       investing,
-      net: operating + financing + investing
+      net,
     };
   }, [cfData]);
 
@@ -1107,7 +1118,7 @@ export default function EnhancedMobileDashboard() {
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
       const t = (row.account_type || "").toLowerCase();
-      
+
       if (t.includes("income") || t.includes("revenue")) {
         const amount = credit - debit;
         rev[row.account] = (rev[row.account] || 0) + amount;
@@ -1149,6 +1160,8 @@ export default function EnhancedMobileDashboard() {
     }
     
     const { data } = await query;
+    let totalDebits = 0;
+    let totalCredits = 0;
     const op: Record<string, number> = {};
     const fin: Record<string, number> = {};
     const inv: Record<string, number> = {};
@@ -1156,7 +1169,14 @@ export default function EnhancedMobileDashboard() {
     ((data as JournalRow[]) || []).forEach((row) => {
       const debit = Number(row.debit) || 0;
       const credit = Number(row.credit) || 0;
-      
+
+      if (!Number.isNaN(debit)) {
+        totalDebits += debit;
+      }
+      if (!Number.isNaN(credit)) {
+        totalCredits += credit;
+      }
+
       // Enhanced cash impact calculation mirroring cash flow component
       const classification = classifyTransaction(row.account_type, row.report_category);
       
@@ -1188,7 +1208,12 @@ export default function EnhancedMobileDashboard() {
     setCfData({
       operating: operatingArr,
       financing: financingArr,
-      investing: investingArr
+      investing: investingArr,
+      totals: {
+        debits: totalDebits,
+        credits: totalCredits,
+        net: totalDebits - totalCredits,
+      },
     });
   };
 
