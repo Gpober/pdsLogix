@@ -270,9 +270,54 @@ export default function FinancialOverviewPage() {
     benefits: number;
     contractorPayments: number;
   };
+  type SummaryView = "payroll" | "accountsReceivable" | "accountsPayable";
+  type AccountsReceivableSummary = {
+    totalAR: number;
+    current: number;
+    days30: number;
+    days60: number;
+    days90: number;
+    pastDue: number;
+    averageDSO: number;
+    customerCount: number;
+    totalInvoices: number;
+  };
+  type AccountsPayableSummary = {
+    totalAP: number;
+    current: number;
+    days30: number;
+    days60: number;
+    days90: number;
+    pastDue: number;
+    averageDaysOutstanding: number;
+    vendorCount: number;
+    totalBills: number;
+  };
+  type ArAgingRow = {
+    customer: string | null;
+    due_date: string | null;
+    open_balance: number | string | null;
+  };
+  type ApAgingRow = {
+    vendor: string | null;
+    due_date: string | null;
+    open_balance: number | string | null;
+  };
+  const [summaryView, setSummaryView] = useState<SummaryView>("payroll");
   const [payrollSummary, setPayrollSummary] = useState<PayrollSummary | null>(null);
   const [payrollLoading, setPayrollLoading] = useState(false);
   const [payrollError, setPayrollError] = useState<string | null>(null);
+  const [accountsReceivableSummary, setAccountsReceivableSummary] =
+    useState<AccountsReceivableSummary | null>(null);
+  const [accountsReceivableLoading, setAccountsReceivableLoading] =
+    useState(false);
+  const [accountsReceivableError, setAccountsReceivableError] =
+    useState<string | null>(null);
+  const [accountsPayableSummary, setAccountsPayableSummary] =
+    useState<AccountsPayableSummary | null>(null);
+  const [accountsPayableLoading, setAccountsPayableLoading] = useState(false);
+  const [accountsPayableError, setAccountsPayableError] =
+    useState<string | null>(null);
   const [selectedCustomers, setSelectedCustomers] = useState<Set<string>>(
     new Set(["All Customers"]),
   );
@@ -1242,6 +1287,182 @@ export default function FinancialOverviewPage() {
     }
   };
 
+  const parseDueDateParts = (dateString?: string | null) => {
+    if (!dateString) return null;
+    const cleanDate = dateString.includes("T")
+      ? dateString.split("T")[0]
+      : dateString;
+    const [yearStr, monthStr, dayStr] = cleanDate.split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+    if (!year || !month || !day) return null;
+    return { year, month, day };
+  };
+
+  const calculateDaysOutstanding = (dueDate?: string | null) => {
+    const parts = parseDueDateParts(dueDate);
+    if (!parts) return 0;
+    const due = new Date(parts.year, parts.month - 1, parts.day);
+    const today = new Date();
+    const diffTime = today.getTime() - due.getTime();
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  };
+
+  const getAgingBucket = (
+    daysOutstanding: number,
+  ): "current" | "31-60" | "61-90" | "90+" => {
+    if (daysOutstanding <= 0) return "current";
+    if (daysOutstanding <= 30) return "current";
+    if (daysOutstanding <= 60) return "31-60";
+    if (daysOutstanding <= 90) return "61-90";
+    return "90+";
+  };
+
+  const fetchAccountsReceivableSummary = async () => {
+    try {
+      setAccountsReceivableLoading(true);
+      setAccountsReceivableError(null);
+      const { data, error } = await supabase
+        .from("ar_aging_detail")
+        .select("customer,due_date,open_balance")
+        .gt("open_balance", 0);
+      if (error) throw error;
+
+      const selected = Array.from(selectedCustomers).filter(
+        (c) => c !== "All Customers",
+      );
+      const rows = (Array.isArray(data) ? (data as ArAgingRow[]) : []).filter(
+        (row) => matchesSelectedCustomers(row.customer ?? "", selected),
+      );
+
+      const customers = new Set<string>();
+      let totalAR = 0;
+      let current = 0;
+      let days30 = 0;
+      let days60 = 0;
+      let days90 = 0;
+      let totalDaysWeighted = 0;
+
+      for (const row of rows) {
+        const openBalance = Number(row.open_balance) || 0;
+        if (!openBalance) continue;
+        const customerName = row.customer?.trim() ?? "";
+        if (customerName) customers.add(customerName);
+        const daysOutstanding = calculateDaysOutstanding(row.due_date);
+        totalAR += openBalance;
+        totalDaysWeighted += daysOutstanding * openBalance;
+        const bucket = getAgingBucket(daysOutstanding);
+        switch (bucket) {
+          case "current":
+            current += openBalance;
+            break;
+          case "31-60":
+            days30 += openBalance;
+            break;
+          case "61-90":
+            days60 += openBalance;
+            break;
+          case "90+":
+            days90 += openBalance;
+            break;
+        }
+      }
+
+      const pastDue = days30 + days60 + days90;
+      setAccountsReceivableSummary({
+        totalAR,
+        current,
+        days30,
+        days60,
+        days90,
+        pastDue,
+        averageDSO: totalAR > 0 ? Math.round(totalDaysWeighted / totalAR) : 0,
+        customerCount: customers.size,
+        totalInvoices: rows.length,
+      });
+    } catch (e) {
+      const err = e as Error;
+      setAccountsReceivableError(
+        err.message || "Failed to load accounts receivable summary",
+      );
+      setAccountsReceivableSummary(null);
+    } finally {
+      setAccountsReceivableLoading(false);
+    }
+  };
+
+  const fetchAccountsPayableSummary = async () => {
+    try {
+      setAccountsPayableLoading(true);
+      setAccountsPayableError(null);
+      const { data, error } = await supabase
+        .from("ap_aging")
+        .select("vendor,due_date,open_balance")
+        .gt("open_balance", 0);
+      if (error) throw error;
+
+      const rows: ApAgingRow[] = Array.isArray(data)
+        ? (data as ApAgingRow[])
+        : [];
+      const vendors = new Set<string>();
+      let totalAP = 0;
+      let current = 0;
+      let days30 = 0;
+      let days60 = 0;
+      let days90 = 0;
+      let totalDaysWeighted = 0;
+
+      for (const row of rows) {
+        const openBalance = Number(row.open_balance) || 0;
+        if (!openBalance) continue;
+        const vendorName =
+          typeof row.vendor === "string" ? row.vendor.trim() : "";
+        if (vendorName) vendors.add(vendorName);
+        const daysOutstanding = calculateDaysOutstanding(row.due_date);
+        totalAP += openBalance;
+        totalDaysWeighted += daysOutstanding * openBalance;
+        const bucket = getAgingBucket(daysOutstanding);
+        switch (bucket) {
+          case "current":
+            current += openBalance;
+            break;
+          case "31-60":
+            days30 += openBalance;
+            break;
+          case "61-90":
+            days60 += openBalance;
+            break;
+          case "90+":
+            days90 += openBalance;
+            break;
+        }
+      }
+
+      const pastDue = days30 + days60 + days90;
+      setAccountsPayableSummary({
+        totalAP,
+        current,
+        days30,
+        days60,
+        days90,
+        pastDue,
+        averageDaysOutstanding:
+          totalAP > 0 ? Math.round(totalDaysWeighted / totalAP) : 0,
+        vendorCount: vendors.size,
+        totalBills: rows.length,
+      });
+    } catch (e) {
+      const err = e as Error;
+      setAccountsPayableError(
+        err.message || "Failed to load accounts payable summary",
+      );
+      setAccountsPayableSummary(null);
+    } finally {
+      setAccountsPayableLoading(false);
+    }
+  };
+
   const handleSync = async () => {
     try {
       await fetch("/api/sync", { method: "POST" });
@@ -1251,6 +1472,8 @@ export default function FinancialOverviewPage() {
       loadTrendData();
       loadPropertyData();
       fetchPayrollSummary();
+      fetchAccountsReceivableSummary();
+      fetchAccountsPayableSummary();
     }
   };
 
@@ -1261,6 +1484,8 @@ export default function FinancialOverviewPage() {
     loadTrendData();
     loadPropertyData();
     fetchPayrollSummary();
+    fetchAccountsReceivableSummary();
+    fetchAccountsPayableSummary();
   }, [
     timePeriod,
     selectedMonth,
@@ -1429,6 +1654,27 @@ export default function FinancialOverviewPage() {
       );
     }
     return null;
+  };
+
+  const summaryTabs: { key: SummaryView; label: string }[] = [
+    { key: "payroll", label: "Payroll" },
+    { key: "accountsReceivable", label: "A/R" },
+    { key: "accountsPayable", label: "A/P" },
+  ];
+
+  const summaryMeta: Record<SummaryView, { title: string; subtitle: string }> = {
+    payroll: {
+      title: "Payroll Summary",
+      subtitle: "Overview of payroll activity",
+    },
+    accountsReceivable: {
+      title: "Accounts Receivable Summary",
+      subtitle: "Outstanding customer balances",
+    },
+    accountsPayable: {
+      title: "Accounts Payable Summary",
+      subtitle: "Outstanding vendor obligations",
+    },
   };
 
   if (error) {
@@ -2021,77 +2267,233 @@ export default function FinancialOverviewPage() {
 
             {/* Financial Health Summary */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              {/* Payroll Summary */}
+              {/* Payroll / A/R / A/P Summary */}
               <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-gray-200">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Payroll Summary
-                  </h3>
-                  <div className="text-sm text-gray-600 mt-1">
-                    Overview of payroll activity
+                <div className="p-6 border-b border-gray-200 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {summaryMeta[summaryView].title}
+                    </h3>
+                    <div className="text-sm text-gray-600 mt-1">
+                      {summaryMeta[summaryView].subtitle}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {summaryTabs.map((tab) => (
+                      <Button
+                        key={tab.key}
+                        className={`h-8 px-3 text-xs ${
+                          summaryView === tab.key
+                            ? ""
+                            : "!bg-white !text-gray-700 border border-gray-200"
+                        }`}
+                        aria-pressed={summaryView === tab.key}
+                        onClick={() => setSummaryView(tab.key)}
+                      >
+                        {tab.label}
+                      </Button>
+                    ))}
                   </div>
                 </div>
                 <div className="p-6">
-                  {payrollLoading ? (
+                  {summaryView === "payroll" ? (
+                    payrollLoading ? (
+                      <div className="text-sm text-gray-500">Loading...</div>
+                    ) : payrollError ? (
+                      <div className="text-sm text-red-500">{payrollError}</div>
+                    ) : payrollSummary ? (
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-gray-500">Employees Paid</div>
+                          <div className="text-lg font-semibold">
+                            {payrollSummary.employees}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">W-2 Headcount</div>
+                          <div className="text-lg font-semibold">
+                            {payrollSummary.w2}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">
+                            Contractor Headcount
+                          </div>
+                          <div className="text-lg font-semibold">
+                            {payrollSummary.contractors}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Net Pay</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(payrollSummary.netPay)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Gross Payroll</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(payrollSummary.grossPayroll)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Employer Taxes</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(payrollSummary.employerTaxes)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Benefits</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(payrollSummary.benefits)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Contractors</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(payrollSummary.contractorPayments)}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">
+                        No payroll data
+                      </div>
+                    )
+                  ) : summaryView === "accountsReceivable" ? (
+                    accountsReceivableLoading ? (
+                      <div className="text-sm text-gray-500">Loading...</div>
+                    ) : accountsReceivableError ? (
+                      <div className="text-sm text-red-500">
+                        {accountsReceivableError}
+                      </div>
+                    ) : accountsReceivableSummary ? (
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <div className="text-gray-500">Customers</div>
+                          <div className="text-lg font-semibold">
+                            {accountsReceivableSummary.customerCount}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Open Invoices</div>
+                          <div className="text-lg font-semibold">
+                            {accountsReceivableSummary.totalInvoices}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Total A/R</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(accountsReceivableSummary.totalAR)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Past Due (&gt;30)</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(accountsReceivableSummary.pastDue)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Current (0-30)</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(accountsReceivableSummary.current)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">31-60 Days</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(accountsReceivableSummary.days30)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">61-90 Days</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(accountsReceivableSummary.days60)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">90+ Days</div>
+                          <div className="text-lg font-semibold">
+                            {formatCurrency(accountsReceivableSummary.days90)}
+                          </div>
+                        </div>
+                        <div className="col-span-2">
+                          <div className="text-gray-500">Average DSO</div>
+                          <div className="text-lg font-semibold">
+                            {accountsReceivableSummary.averageDSO} days
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">
+                        No accounts receivable data
+                      </div>
+                    )
+                  ) : accountsPayableLoading ? (
                     <div className="text-sm text-gray-500">Loading...</div>
-                  ) : payrollError ? (
-                    <div className="text-sm text-red-500">{payrollError}</div>
-                  ) : payrollSummary ? (
+                  ) : accountsPayableError ? (
+                    <div className="text-sm text-red-500">
+                      {accountsPayableError}
+                    </div>
+                  ) : accountsPayableSummary ? (
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
-                        <div className="text-gray-500">Employees Paid</div>
+                        <div className="text-gray-500">Vendors</div>
                         <div className="text-lg font-semibold">
-                          {payrollSummary.employees}
+                          {accountsPayableSummary.vendorCount}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-500">W-2 Headcount</div>
+                        <div className="text-gray-500">Open Bills</div>
                         <div className="text-lg font-semibold">
-                          {payrollSummary.w2}
+                          {accountsPayableSummary.totalBills}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-500">
-                          Contractor Headcount
-                        </div>
+                        <div className="text-gray-500">Total A/P</div>
                         <div className="text-lg font-semibold">
-                          {payrollSummary.contractors}
+                          {formatCurrency(accountsPayableSummary.totalAP)}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-500">Net Pay</div>
+                        <div className="text-gray-500">Past Due (&gt;30)</div>
                         <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.netPay)}
+                          {formatCurrency(accountsPayableSummary.pastDue)}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-500">Gross Payroll</div>
+                        <div className="text-gray-500">Current (0-30)</div>
                         <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.grossPayroll)}
+                          {formatCurrency(accountsPayableSummary.current)}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-500">Employer Taxes</div>
+                        <div className="text-gray-500">31-60 Days</div>
                         <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.employerTaxes)}
+                          {formatCurrency(accountsPayableSummary.days30)}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-500">Benefits</div>
+                        <div className="text-gray-500">61-90 Days</div>
                         <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.benefits)}
+                          {formatCurrency(accountsPayableSummary.days60)}
                         </div>
                       </div>
                       <div>
-                        <div className="text-gray-500">Contractors</div>
+                        <div className="text-gray-500">90+ Days</div>
                         <div className="text-lg font-semibold">
-                          {formatCurrency(payrollSummary.contractorPayments)}
+                          {formatCurrency(accountsPayableSummary.days90)}
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-gray-500">Average DPO</div>
+                        <div className="text-lg font-semibold">
+                          {accountsPayableSummary.averageDaysOutstanding} days
                         </div>
                       </div>
                     </div>
                   ) : (
                     <div className="text-sm text-gray-500">
-                      No payroll data
+                      No accounts payable data
                     </div>
                   )}
                 </div>
