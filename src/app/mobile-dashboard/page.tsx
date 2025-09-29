@@ -3490,7 +3490,8 @@ export default function EnhancedMobileDashboard() {
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 2000,
-            backdropFilter: 'blur(10px)'
+            backdropFilter: 'blur(10px)',
+            padding: '20px',
           }}
           onClick={closeModal}
         >
@@ -3498,30 +3499,49 @@ export default function EnhancedMobileDashboard() {
             style={{
               background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))',
               borderRadius: '24px',
-              padding: '32px',
-              margin: '20px',
+              width: '100%',
               maxWidth: '400px',
-              width: '90%',
+              maxHeight: '85vh',
+              display: 'flex',
+              flexDirection: 'column',
               boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
               border: '1px solid rgba(255,255,255,0.3)',
               backdropFilter: 'blur(20px)',
-              textAlign: 'center'
+              overflow: 'hidden',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+            {/* Header - Fixed at top */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '20px',
+                borderBottom: '1px solid rgba(0,0,0,0.1)',
+                flexShrink: 0,
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{
-                  background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
-                  borderRadius: '12px',
-                  padding: '8px',
-                  boxShadow: `0 4px 16px ${BRAND_COLORS.primary}40`
-                }}>
+                <div
+                  style={{
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+                    borderRadius: '12px',
+                    padding: '8px',
+                    boxShadow: `0 4px 16px ${BRAND_COLORS.primary}40`,
+                  }}
+                >
                   <Bot size={20} style={{ color: 'white' }} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '18px', fontWeight: '700', margin: 0, color: BRAND_COLORS.accent }}>
+                  <h3
+                    style={{
+                      fontSize: '18px',
+                      fontWeight: '700',
+                      margin: 0,
+                      color: BRAND_COLORS.accent,
+                    }}
+                  >
                     AI CFO
                   </h3>
                   <p style={{ fontSize: '12px', margin: 0, color: '#64748b' }}>
@@ -3537,212 +3557,373 @@ export default function EnhancedMobileDashboard() {
                   borderRadius: '8px',
                   padding: '8px',
                   cursor: 'pointer',
-                  color: '#64748b'
+                  color: '#64748b',
+                  flexShrink: 0,
                 }}
               >
                 <X size={20} />
               </button>
             </div>
 
-            {/* Status */}
-            <div style={{ marginBottom: '24px' }}>
-              {isListening ? (
-                <div>
-                  <div style={{
-                    width: '80px',
-                    height: '80px',
-                    borderRadius: '50%',
-                    background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.tertiary})`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 16px',
-                    animation: 'pulse 2s infinite',
-                    boxShadow: `0 0 30px ${BRAND_COLORS.primary}60`
-                  }}>
-                    <Mic size={32} style={{ color: 'white' }} />
+            {/* Scrollable Content Area */}
+            <div
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                padding: '20px',
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
+              {/* Status */}
+              <div style={{ marginBottom: '24px' }}>
+                {isListening ? (
+                  <div>
+                    <div
+                      style={{
+                        width: '80px',
+                        height: '80px',
+                        borderRadius: '50%',
+                        background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.tertiary})`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        margin: '0 auto 16px',
+                        animation: 'pulse 2s infinite',
+                        boxShadow: `0 0 30px ${BRAND_COLORS.primary}60`,
+                      }}
+                    >
+                      <Mic size={32} style={{ color: 'white' }} />
+                    </div>
+                    <p
+                      style={{
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        color: BRAND_COLORS.primary,
+                        margin: 0,
+                        textAlign: 'center',
+                      }}
+                    >
+                      Listening...
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '12px',
+                        color: '#64748b',
+                        margin: '4px 0 0',
+                        textAlign: 'center',
+                      }}
+                    >
+                      Ask me about your financial data
+                    </p>
                   </div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.primary, margin: 0 }}>
-                    Listening...
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Ask me about your financial data
-                  </p>
-                </div>
-              ) : isProcessing ? (
-                <div>
-                  <div style={{
-                    width: '80px',
-                    height: '80px',
-                    borderRadius: '50%',
-                    background: `linear-gradient(135deg, ${BRAND_COLORS.warning}, #f59e0b)`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    margin: '0 auto 16px',
-                    animation: 'pulse 1.5s infinite',
-                    boxShadow: '0 0 30px rgba(245, 158, 11, 0.6)'
-                  }}>
-                    <MessageCircle size={32} style={{ color: 'white' }} />
+                ) : isProcessing ? (
+                  <div>
+                    <div
+                      style={{
+                        width: '80px',
+                        height: '80px',
+                        borderRadius: '50%',
+                        background: `linear-gradient(135deg, ${BRAND_COLORS.warning}, #f59e0b)`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        margin: '0 auto 16px',
+                        animation: 'pulse 1.5s infinite',
+                        boxShadow: '0 0 30px rgba(245, 158, 11, 0.6)',
+                      }}
+                    >
+                      <MessageCircle size={32} style={{ color: 'white' }} />
+                    </div>
+                    <p
+                      style={{
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        color: BRAND_COLORS.warning,
+                        margin: 0,
+                        textAlign: 'center',
+                      }}
+                    >
+                      Processing...
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '12px',
+                        color: '#64748b',
+                        margin: '4px 0 0',
+                        textAlign: 'center',
+                      }}
+                    >
+                      Analyzing your request
+                    </p>
                   </div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.warning, margin: 0 }}>
-                    Processing...
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Analyzing your request
-                  </p>
-                </div>
-              ) : (
-                <div>
-                  <div
+                ) : (
+                  <div>
+                    <div
+                      style={{
+                        width: '80px',
+                        height: '80px',
+                        borderRadius: '50%',
+                        background: `linear-gradient(135deg, ${BRAND_COLORS.gray[200]}, ${BRAND_COLORS.gray[100]})`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        margin: '0 auto 16px',
+                        border: `3px solid ${BRAND_COLORS.primary}`,
+                      }}
+                    >
+                      <Mic size={32} style={{ color: BRAND_COLORS.primary }} />
+                    </div>
+                    <p
+                      style={{
+                        fontSize: '16px',
+                        fontWeight: '600',
+                        color: BRAND_COLORS.accent,
+                        margin: 0,
+                        textAlign: 'center',
+                      }}
+                    >
+                      Ready to Help
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '12px',
+                        color: '#64748b',
+                        margin: '4px 0 0',
+                        textAlign: 'center',
+                      }}
+                    >
+                      Hold the button to ask a question
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Transcript */}
+              {transcript && (
+                <div
+                  style={{
+                    background: 'rgba(255,255,255,0.8)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    marginBottom: '16px',
+                    border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                    textAlign: 'left',
+                  }}
+                >
+                  <p
                     style={{
-                      width: '80px',
-                      height: '80px',
-                      borderRadius: '50%',
-                      background: `linear-gradient(135deg, ${BRAND_COLORS.gray[200]}, ${BRAND_COLORS.gray[100]})`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      margin: '0 auto 16px',
-                      border: `3px solid ${BRAND_COLORS.primary}`
+                      fontSize: '12px',
+                      color: '#64748b',
+                      margin: '0 0 8px',
+                      fontWeight: '600',
                     }}
                   >
-                    <Mic size={32} style={{ color: BRAND_COLORS.primary }} />
+                    You said:
+                  </p>
+                  <p
+                    style={{
+                      fontSize: '14px',
+                      color: BRAND_COLORS.accent,
+                      margin: 0,
+                      fontStyle: 'italic',
+                      wordWrap: 'break-word',
+                    }}
+                  >
+                    "{transcript}"
+                  </p>
+                </div>
+              )}
+
+              {/* Response - Now scrollable */}
+              {response && (
+                <div
+                  style={{
+                    background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
+                    borderRadius: '12px',
+                    padding: '16px',
+                    marginBottom: '16px',
+                    border: `1px solid ${BRAND_COLORS.primary}30`,
+                    textAlign: 'left',
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: '12px',
+                      color: BRAND_COLORS.primary,
+                      margin: '0 0 8px',
+                      fontWeight: '600',
+                    }}
+                  >
+                    AI CFO:
+                  </p>
+                  <p
+                    style={{
+                      fontSize: '14px',
+                      color: BRAND_COLORS.accent,
+                      margin: 0,
+                      lineHeight: '1.6',
+                      wordWrap: 'break-word',
+                      whiteSpace: 'pre-wrap',
+                    }}
+                  >
+                    {response}
+                  </p>
+                </div>
+              )}
+
+              {/* Example Questions */}
+              {!transcript && !response && (
+                <div
+                  style={{
+                    background: 'rgba(255,255,255,0.6)',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    marginBottom: '16px',
+                    border: `1px solid ${BRAND_COLORS.gray[200]}`,
+                    textAlign: 'left',
+                  }}
+                >
+                  <p
+                    style={{
+                      fontSize: '12px',
+                      color: '#64748b',
+                      margin: '0 0 12px',
+                      fontWeight: '600',
+                    }}
+                  >
+                    Try asking:
+                  </p>
+                  <div style={{ display: 'grid', gap: '8px' }}>
+                    <p
+                      style={{
+                        fontSize: '13px',
+                        color: BRAND_COLORS.accent,
+                        margin: 0,
+                        padding: '8px',
+                        background: 'rgba(255,255,255,0.8)',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      "What's our total revenue this month?"
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '13px',
+                        color: BRAND_COLORS.accent,
+                        margin: 0,
+                        padding: '8px',
+                        background: 'rgba(255,255,255,0.8)',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      "Which customer has the highest profit margin?"
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '13px',
+                        color: BRAND_COLORS.accent,
+                        margin: 0,
+                        padding: '8px',
+                        background: 'rgba(255,255,255,0.8)',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      "Show me overdue receivables"
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '13px',
+                        color: BRAND_COLORS.accent,
+                        margin: 0,
+                        padding: '8px',
+                        background: 'rgba(255,255,255,0.8)',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      "How many tons did we process today?"
+                    </p>
                   </div>
-                  <p style={{ fontSize: '16px', fontWeight: '600', color: BRAND_COLORS.accent, margin: 0 }}>
-                    Ready to Help
-                  </p>
-                  <p style={{ fontSize: '12px', color: '#64748b', margin: '4px 0 0' }}>
-                    Hold the button to ask a question
-                  </p>
                 </div>
               )}
             </div>
 
-            {/* Transcript */}
-            {transcript && (
-              <div style={{
-                background: 'rgba(255,255,255,0.8)',
-                borderRadius: '12px',
-                padding: '16px',
-                marginBottom: '16px',
-                border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                textAlign: 'left'
-              }}>
-                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 8px', fontWeight: '600' }}>
-                  You said:
-                </p>
-                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, fontStyle: 'italic' }}>
-                  "{transcript}"
-                </p>
-              </div>
-            )}
-
-            {/* Response */}
-            {response && (
-              <div style={{
-                background: `linear-gradient(135deg, ${BRAND_COLORS.primary}10, ${BRAND_COLORS.tertiary}05)`,
-                borderRadius: '12px',
-                padding: '16px',
-                marginBottom: '16px',
-                border: `1px solid ${BRAND_COLORS.primary}30`,
-                textAlign: 'left'
-              }}>
-                <p style={{ fontSize: '12px', color: BRAND_COLORS.primary, margin: '0 0 8px', fontWeight: '600' }}>
-                  AI CFO:
-                </p>
-                <p style={{ fontSize: '14px', color: BRAND_COLORS.accent, margin: 0, lineHeight: '1.5' }}>
-                  {response}
-                </p>
-              </div>
-            )}
-
-            {/* Example Questions */}
-            {!transcript && !response && (
-              <div style={{
-                background: 'rgba(255,255,255,0.6)',
-                borderRadius: '12px',
-                padding: '16px',
-                marginBottom: '16px',
-                border: `1px solid ${BRAND_COLORS.gray[200]}`,
-                textAlign: 'left'
-              }}>
-                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 12px', fontWeight: '600' }}>
-                  Try asking:
-                </p>
-                <div style={{ display: 'grid', gap: '8px' }}>
-                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
-                    "What's our total revenue this month?"
-                  </p>
-                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
-                    "Which customer has the highest profit margin?"
-                  </p>
-                  <p style={{ fontSize: '13px', color: BRAND_COLORS.accent, margin: 0, padding: '8px', background: 'rgba(255,255,255,0.8)', borderRadius: '6px' }}>
-                    "Show me overdue receivables"
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Instructions */}
-            <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0, lineHeight: '1.4' }}>
-              Hold the microphone button below to speak, then release to stop
-            </p>
-
-            {/* Microphone Button */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: '16px' }}>
-              <div
-                onPointerDown={startListening}
-                onPointerUp={stopListening}
-                onPointerLeave={stopListening}
+            {/* Footer - Fixed at bottom */}
+            <div
+              style={{
+                padding: '20px',
+                borderTop: '1px solid rgba(0,0,0,0.1)',
+                flexShrink: 0,
+                background: 'white',
+              }}
+            >
+              <p
                 style={{
-                  width: '64px',
-                  height: '64px',
-                  borderRadius: '50%',
-                  background: isListening
-                    ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})`
-                    : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
-                  border: 'none',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: isListening
-                    ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20`
-                    : `0 8px 32px ${BRAND_COLORS.primary}40`,
-                  transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                  transform: isListening ? 'scale(1.1)' : 'scale(1)',
-                  userSelect: 'none',
-                  WebkitUserSelect: 'none',
-                  MozUserSelect: 'none'
+                  fontSize: '11px',
+                  color: '#94a3b8',
+                  margin: '0 0 12px',
+                  lineHeight: '1.4',
+                  textAlign: 'center',
                 }}
               >
-                {isListening ? (
-                  <div style={{ position: 'relative' }}>
+                Hold the microphone button below to speak, then release to stop
+              </p>
+
+              {/* Microphone Button */}
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <div
+                  onPointerDown={startListening}
+                  onPointerUp={stopListening}
+                  onPointerLeave={stopListening}
+                  style={{
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '50%',
+                    background: isListening
+                      ? `linear-gradient(135deg, ${BRAND_COLORS.tertiary}, ${BRAND_COLORS.primary})`
+                      : `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: isListening
+                      ? `0 8px 32px ${BRAND_COLORS.primary}60, 0 0 0 8px ${BRAND_COLORS.primary}20`
+                      : `0 8px 32px ${BRAND_COLORS.primary}40`,
+                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    transform: isListening ? 'scale(1.1)' : 'scale(1)',
+                    userSelect: 'none',
+                    WebkitUserSelect: 'none',
+                    MozUserSelect: 'none',
+                    WebkitTapHighlightColor: 'transparent',
+                  }}
+                >
+                  {isListening ? (
+                    <div style={{ position: 'relative' }}>
+                      <Mic size={28} style={{ color: 'white' }} />
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '50%',
+                          left: '50%',
+                          transform: 'translate(-50%, -50%)',
+                          width: '40px',
+                          height: '40px',
+                          borderRadius: '50%',
+                          border: '2px solid rgba(255,255,255,0.6)',
+                          animation: 'ripple 1.5s infinite',
+                        }}
+                      />
+                    </div>
+                  ) : (
                     <Mic size={28} style={{ color: 'white' }} />
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        width: '40px',
-                        height: '40px',
-                        borderRadius: '50%',
-                        border: '2px solid rgba(255,255,255,0.6)',
-                        animation: 'ripple 1.5s infinite'
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <Mic size={28} style={{ color: 'white' }} />
-                )}
+                  )}
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
-
       {/* Floating AI CFO Button */}
       {!showModal && (
         <div
