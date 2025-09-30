@@ -156,7 +156,7 @@ function currentWeekMonSun(tz = NY_TZ) {
 
 /* -------------------------- Intent classification ------------------------- */
 
-type Topic = "payroll" | "ar" | "financial";
+type Topic = "payroll" | "ar" | "ap" | "financial";
 type Intent =
   | "customer_profitability"
   | "incoming_cash"
@@ -164,7 +164,9 @@ type Intent =
   | "gross_profit"
   | "generic_financial"
   | "generic_payroll"
-  | "generic_ar";
+  | "generic_ar"
+  | "generic_ap"
+  | "outgoing_cash";
 
 function classify(message: string): { topic: Topic; intent: Intent } {
   const m = (message || "").toLowerCase();
@@ -174,9 +176,14 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   const arTerms = /\b(ar|a\/r|accounts receivable|aging|aged|past due|overdue|collections?|invoices?|receivables?)\b/.test(
     m
   );
+  const apTerms =
+    /\b(ap|a\/p|accounts payable|payables?|vendors?|supplier invoices?|bills?|outgoing payments?|disbursements?)\b/.test(m);
+  const vendorFocus = /\bvendors?|suppliers?\b/.test(m);
   const incomingTerms = /\b(this week|next week|today|tomorrow|in the next (?:\d+\s*)?day|coming in|expected cash|cash forecast|receipts?)\b/.test(
     m
   );
+  const outgoingTerms =
+    /\b(outgoing cash|cash out|cash going out|pay(?:ments?)? due|bills? due|due (?:today|tomorrow|this week|next week)|owe|owing|upcoming payments?|disbursements?|pay vendors?)\b/.test(m);
 
   const cogsTerms = /\bcogs\b|cost of goods\b|costs? of sales?\b/.test(m);
   const grossProfitTerms = /\bgross profit\b|\bgp\b(?!t)|\bgp%\b|\bgross margin\b/.test(m);
@@ -190,6 +197,10 @@ function classify(message: string): { topic: Topic; intent: Intent } {
   );
 
   if (payrollTerms) return { topic: "payroll", intent: "generic_payroll" };
+
+  if (apTerms || (vendorFocus && /\b(bills?|payments?|due|owe|owing)\b/.test(m))) {
+    return { topic: "ap", intent: outgoingTerms ? "outgoing_cash" : "generic_ap" };
+  }
 
   if (mentionsCustomer && (grossProfitTerms || cogsTerms)) {
     return { topic: "financial", intent: "customer_profitability" };
@@ -314,6 +325,88 @@ function buildTools(topic: Topic, intent: Intent) {
     }
   }
 
+  // A/P
+  if (topic === "ap") {
+    const apSummary = pickFunctionName(["getAPAgingSummary", "getAPSummary", "getAccountsPayableSummary"]);
+    if (apSummary) {
+      tools.push({
+        type: "function",
+        function: {
+          name: apSummary,
+          description: "Accounts payable aging summary grouped by vendor (Supabase: ap_aging).",
+          parameters: {
+            type: "object",
+            properties: {
+              vendor: { type: "string", description: "Vendor name" },
+              vendorId: { type: "string" },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              dueOnly: { type: "boolean" },
+              status: { type: "string", description: "open|paid|overdue" },
+              minPastDueDays: { type: "number" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+
+    const apDetail = pickFunctionName(["getAPAgingDetail", "getAPOpenBills", "getAPInvoices"]);
+    if (apDetail) {
+      tools.push({
+        type: "function",
+        function: {
+          name: apDetail,
+          description: "Detailed vendor bills from ap_aging including due dates and open balances.",
+          parameters: {
+            type: "object",
+            properties: {
+              vendor: { type: "string" },
+              vendorId: { type: "string" },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              dueOnly: { type: "boolean" },
+              status: { type: "string" },
+              minPastDueDays: { type: "number" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+
+    const apRaw = pickFunctionName(["queryAPAgingTable", "queryAPTable", "queryAPAging"]);
+    if (apRaw) {
+      tools.push({
+        type: "function",
+        function: {
+          name: apRaw,
+          description: "Direct query access to ap_aging with flexible column filters.",
+          parameters: {
+            type: "object",
+            properties: {
+              select: { type: "string", description: "Columns to return" },
+              filters: {
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
+                additionalProperties: true,
+              },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+  }
+
   // A/R
   if (topic === "ar") {
     const agingDetail = pickFunctionName([
@@ -361,7 +454,11 @@ function buildTools(topic: Topic, intent: Intent) {
             properties: {
               customerId: { type: "string" },
               customer: { type: "string" },
-              timeframe: { type: "string", enum: ["this_week", "last_week", "3_months", "6_months", "12_months"] },
+              timeframe: {
+                type: "string",
+                description:
+                  'Timeframe label (e.g., "this_week", "last_week", "this_month", "last_month", "ytd", "3_months", "6_months", "12_months", "90_days").',
+              },
             },
             additionalProperties: false,
           },
@@ -561,12 +658,14 @@ Keep responses concise (≈350 words). Use bullets and short sections. If conten
 
 ROUTING
 - Payroll → payments
+- A/P → ap_aging
 - A/R → ar_aging_detail
 - Financials & customer profitability → journal_entry_lines
 - If the user says "what's coming in this week", interpret as expected receipts from open invoices due THIS calendar week.
 
 EXECUTION
 - ALWAYS use tools when available. Do not invent numbers.
+- When wording is imperfect, make a reasonable assumption, run the query, and note the assumption rather than refusing.
 - If the user didn't provide a period:
   - A/R "incoming cash": use Monday–Sunday of the current week (America/New_York).
   - Financial: default to YTD (America/New_York).
@@ -605,11 +704,13 @@ GROSS PROFIT LOGIC
 
     const scrubArgs = (fnName: string, rawArgs: any) => {
       const allow = new Set<string>();
-      if (/payments/i.test(fnName)) {
+      const fnLower = fnName.toLowerCase();
+
+      if (fnLower.includes("payment") || fnLower.includes("payroll")) {
         ["startDate", "endDate", "employee", "department", "minAmount", "maxAmount", "limit", "offset"].forEach((k) =>
           allow.add(k)
         );
-      } else if (/ar/i.test(fnName)) {
+      } else if (fnLower.includes("ar")) {
         [
           "customer",
           "customerId",
@@ -621,6 +722,18 @@ GROSS PROFIT LOGIC
           "limit",
           "offset",
           "timeframe",
+        ].forEach((k) => allow.add(k));
+      } else if (fnLower.includes("ap")) {
+        [
+          "vendor",
+          "vendorId",
+          "startDate",
+          "endDate",
+          "dueOnly",
+          "status",
+          "minPastDueDays",
+          "limit",
+          "offset",
         ].forEach((k) => allow.add(k));
       } else {
         // financial
@@ -662,6 +775,20 @@ GROSS PROFIT LOGIC
         if (typeof rawArgs.dueOnly === "undefined") rawArgs.dueOnly = true;
         if (!rawArgs.status) rawArgs.status = "open";
         if (typeof rawArgs.limit === "undefined") rawArgs.limit = 200;
+      }
+
+      // A/P "cash out" defaults → current Mon–Sun window, open bills only
+      if (topic === "ap" && intent === "outgoing_cash") {
+        const { start, end } = currentWeekMonSun(NY_TZ);
+        rawArgs.startDate = rawArgs.startDate || start;
+        rawArgs.endDate = rawArgs.endDate || end;
+        if (typeof rawArgs.dueOnly === "undefined") rawArgs.dueOnly = true;
+        if (!rawArgs.status) rawArgs.status = "open";
+      }
+
+      if (topic === "ap") {
+        if (typeof rawArgs.limit === "undefined") rawArgs.limit = 200;
+        if (typeof rawArgs.offset === "undefined") rawArgs.offset = 0;
       }
 
       // Financial defaults → YTD; keep payload small
