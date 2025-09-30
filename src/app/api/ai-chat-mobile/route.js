@@ -67,13 +67,23 @@ function detectQueryType(message) {
     s.includes('overdue') || s.includes('slow pay') || s.includes('unpaid')
   ) return 'ar_analysis'
 
+  // A/P specific
+  if (
+    s.includes('accounts payable') ||
+    s.includes('a/p') || s.includes('ap') ||
+    s.includes('payable') || s.includes('payables') ||
+    s.includes('bill') || s.includes('bills') ||
+    s.includes('vendor') || s.includes('vendors') ||
+    s.includes('owe') || s.includes('owing') || s.includes('owed')
+  ) return 'ap_analysis'
+
   // Payroll / Workforce
   if (
     s.includes('labor') || s.includes('payroll') || s.includes('staff') ||
     s.includes('employee') || s.includes('wages') || s.includes('salary') ||
     s.includes('contractor') || s.includes('contractors') ||
     s.includes('subcontractor') || s.includes('freelancer') ||
-    s.includes('vendor') || s.includes('1099') ||
+    s.includes('1099') ||
     s.includes('payroll by customer') || s.includes('labor by client') ||
     s.includes('staff costs by customer') || s.includes('employee costs by project')
   ) return 'payroll'
@@ -89,10 +99,12 @@ function detectQueryType(message) {
     s.includes('profitability') || s.includes('margin') || s.includes('gross profit') ||
     s.includes('company total') || s.includes('total profit') ||
     s.includes('overall profit') || s.includes('bottom line') ||
-    s.includes('financial data') || s.includes('all financial') ||
+    s.includes('financial data') || s.includes('all financial') || s.includes('financial health') ||
     s.includes('journal entry') || s.includes('journal entries') ||
     s.includes('expense') || s.includes('expenses') || s.includes('cost') ||
-    s.includes('spending') || s.includes('cogs') || s.includes('cost of goods sold')
+    s.includes('spending') || s.includes('cogs') || s.includes('cost of goods sold') ||
+    s.includes('p&l') || s.includes('p/l') || s.includes('p and l') ||
+    s.includes('pnl') || s.includes('profit and loss') || s.includes('income statement')
   ) return 'financial_analysis'
 
   // Performance

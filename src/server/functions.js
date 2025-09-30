@@ -211,6 +211,113 @@ export const availableFunctions = {
   },
 
   /* ==========================================================================
+     A/P Aging Analysis
+     ======================================================================== */
+  getAPAgingSummary: async ({ vendor = null, startDate = null, endDate = null } = {}) => {
+    try {
+      let query = supabase
+        .from('ap_aging')
+        .select('vendor, due_date, open_balance');
+
+      if (vendor) query = query.ilike('vendor', `%${safeLike(vendor)}%`);
+      if (startDate) query = query.gte('due_date', toISO(startDate) || startDate);
+      if (endDate) query = query.lte('due_date', toISO(endDate) || endDate);
+
+      query = query.order('vendor', { ascending: true })
+                   .order('due_date', { ascending: true });
+
+      const { data: apData, error } = await query;
+      if (error) throw error;
+
+      if (!apData?.length) {
+        return {
+          success: true,
+          summary: 'No A/P data found',
+          total_ap: 0,
+          vendor_count: 0,
+          total_bills: 0,
+          vendors: [],
+        };
+      }
+
+      const now = Date.now();
+      const buckets = apData.reduce((acc, row) => {
+        const vend = row.vendor || 'Unknown';
+        const ob = row.open_balance ?? 0;
+        const dpd = row.due_date ? Math.floor((now - new Date(row.due_date).getTime()) / DAY_MS) : 0;
+
+        if (!acc[vend]) {
+          acc[vend] = {
+            vendor_name: vend,
+            current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_over_90: 0,
+            total_outstanding: 0, bill_count: 0, oldest_bill_days: 0,
+          };
+        }
+
+        if (dpd <= 0) acc[vend].current += ob;
+        else if (dpd <= 30) acc[vend].days_1_30 += ob;
+        else if (dpd <= 60) acc[vend].days_31_60 += ob;
+        else if (dpd <= 90) acc[vend].days_61_90 += ob;
+        else acc[vend].days_over_90 += ob;
+
+        acc[vend].total_outstanding += ob;
+        acc[vend].bill_count += 1;
+        acc[vend].oldest_bill_days = Math.max(acc[vend].oldest_bill_days, dpd || 0);
+        return acc;
+      }, {});
+
+      const vendors = Object.values(buckets);
+      const totalAP = vendors.reduce((s, c) => s + c.total_outstanding, 0);
+
+      return {
+        success: true,
+        summary: 'Current A/P aging analysis',
+        total_ap: totalAP,
+        vendor_count: vendors.length,
+        total_bills: apData.length,
+        vendors,
+        aging_summary: {
+          current: vendors.reduce((s, c) => s + c.current, 0),
+          days_1_30: vendors.reduce((s, c) => s + c.days_1_30, 0),
+          days_31_60: vendors.reduce((s, c) => s + c.days_31_60, 0),
+          days_61_90: vendors.reduce((s, c) => s + c.days_61_90, 0),
+          days_over_90: vendors.reduce((s, c) => s + c.days_over_90, 0),
+        },
+      };
+    } catch (error) {
+      console.error('❌ getAPAgingSummary error:', error);
+      return { success: false, error: 'Failed to analyze A/P aging', details: error.message };
+    }
+  },
+
+  /* ==========================================================================
+     A/P Generic table query
+     ======================================================================== */
+  queryAPAgingTable: async ({ select = '*', filters = {}, orderBy = null, ascending = true, limit = 100, offset = 0 } = {}) => {
+    try {
+      let query = supabase.from('ap_aging').select(select, { count: 'exact' });
+
+      for (const [col, val] of Object.entries(filters || {})) {
+        if (val === null || typeof val === 'undefined') continue;
+        if (Array.isArray(val)) query = query.in(col, val);
+        else if (typeof val === 'string') query = query.ilike(col, `%${safeLike(val)}%`);
+        else query = query.eq(col, val);
+      }
+
+      if (orderBy) query = query.order(orderBy, { ascending });
+      query = query.range(offset, offset + clampLimit(limit, 500) - 1);
+
+      const { data, error, count } = await query;
+      if (error) throw error;
+
+      return { success: true, records: data || [], pagination: { count: count ?? data?.length ?? 0, limit, offset } };
+    } catch (error) {
+      console.error('❌ queryAPAgingTable error:', error);
+      return { success: false, error: 'Failed to query ap_aging', details: error.message };
+    }
+  },
+
+  /* ==========================================================================
      Payroll Payments Summary
      ======================================================================== */
   getPaymentsSummary: async ({
