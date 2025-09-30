@@ -493,32 +493,7 @@ function buildTools(topic: Topic, intent: Intent) {
       });
     }
 
-    const jlRawAR = pickFunctionName(["queryJournalEntryLines", "queryJournalEntries"]);
-    if (jlRawAR) {
-      tools.push({
-        type: "function",
-        function: {
-          name: jlRawAR,
-          description: "Direct query access to journal_entry_lines with arbitrary filters.",
-          parameters: {
-            type: "object",
-            properties: {
-              select: { type: "string", description: "Columns to return" },
-              filters: {
-                type: "object",
-                description: "Key/value filters; string values use ilike matching",
-                additionalProperties: true,
-              },
-              orderBy: { type: "string" },
-              ascending: { type: "boolean" },
-              limit: { type: "number" },
-              offset: { type: "number" },
-            },
-            additionalProperties: false,
-          },
-        },
-      });
-    }
+    // Do not expose journal_entry_lines tooling within A/R; keep focus on ar_aging_detail.
   }
 
   // Financial / GL
@@ -706,11 +681,11 @@ GROSS PROFIT LOGIC
       const allow = new Set<string>();
       const fnLower = fnName.toLowerCase();
 
-      if (fnLower.includes("payment") || fnLower.includes("payroll")) {
+      if (topic === "payroll" || fnLower.includes("payroll") || fnLower.includes("payment")) {
         ["startDate", "endDate", "employee", "department", "minAmount", "maxAmount", "limit", "offset"].forEach((k) =>
           allow.add(k)
         );
-      } else if (fnLower.includes("ar")) {
+      } else if (topic === "ar" || /aging|receivables?|invoices?|collections?/.test(fnLower)) {
         [
           "customer",
           "customerId",
@@ -723,7 +698,7 @@ GROSS PROFIT LOGIC
           "offset",
           "timeframe",
         ].forEach((k) => allow.add(k));
-      } else if (fnLower.includes("ap")) {
+      } else if (topic === "ap" || /accounts?payable|vendor|bills?/.test(fnLower)) {
         [
           "vendor",
           "vendorId",
@@ -736,9 +711,10 @@ GROSS PROFIT LOGIC
           "offset",
         ].forEach((k) => allow.add(k));
       } else {
-        // financial
+        // financial / journal entry style queries
         [
           "customer",
+          "customerId",
           "startDate",
           "endDate",
           "includeCOGS",
@@ -749,8 +725,14 @@ GROSS PROFIT LOGIC
           "metricsOnly",
           "limit",
           "offset",
+          "timeframe",
         ].forEach((k) => allow.add(k));
       }
+
+      if (fnLower.includes("query") || fnLower.includes("journal") || fnLower.includes("aging")) {
+        ["select", "filters", "orderBy", "ascending"].forEach((k) => allow.add(k));
+      }
+
       const out: any = {};
       if (rawArgs && typeof rawArgs === "object") {
         for (const [k, v] of Object.entries(rawArgs)) if (allow.has(k)) out[k] = v;
