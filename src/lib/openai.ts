@@ -7,8 +7,18 @@ import { availableFunctions } from "../server/functions";
 /* ------------------------------ OpenAI setup ------------------------------ */
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const MODEL_PLANNER = "gpt-4o";      // swap to 'gpt-4o-mini' if you want to save $
-const MODEL_COMPOSER = "gpt-4o";
+
+const DEFAULT_MODEL = process.env.OPENAI_MODEL_LATEST || "gpt-4o-latest";
+const MODEL_FALLBACKS = (process.env.OPENAI_MODEL_FALLBACKS || "gpt-4o,gpt-4o-mini")
+  .split(",")
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+const MODEL_PLANNER = process.env.OPENAI_MODEL_PLANNER || DEFAULT_MODEL;
+const MODEL_COMPOSER = process.env.OPENAI_MODEL_COMPOSER || DEFAULT_MODEL;
+const UNIQUE_MODEL_FALLBACKS = MODEL_FALLBACKS.filter(
+  (model, index, arr) => arr.indexOf(model) === index && model !== MODEL_PLANNER && model !== MODEL_COMPOSER
+);
 
 function assertApiKey() {
   if (!process.env.OPENAI_API_KEY) {
@@ -57,34 +67,74 @@ async function fetchWithRetry(
   throw lastErr || new Error("Network error");
 }
 
-async function createChatCompletion(body: Record<string, unknown>) {
+async function createChatCompletion(body: Record<string, unknown>, fallbackModels: string[] = []) {
   assertApiKey();
-  const res = await fetchWithRetry(OPENAI_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
 
-  const text = await res.text();
-  if (!res.ok) {
-    console.error("❌ OpenAI error", {
-      status: res.status,
-      statusText: res.statusText,
-      responseText: text.slice(0, 1500),
-      requestPreview: redactForLog(JSON.stringify(body || {})),
-    });
-    throw new Error(`OpenAI API error ${res.status}: ${text}`);
+  const modelsToTry = [
+    String(body.model || MODEL_PLANNER),
+    ...fallbackModels.filter((m) => m && m !== body.model),
+  ];
+
+  let lastError: any = null;
+
+  for (const modelName of modelsToTry) {
+    const payload = { ...body, model: modelName };
+    try {
+      const res = await fetchWithRetry(OPENAI_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const text = await res.text();
+      if (!res.ok) {
+        const errorInfo = {
+          status: res.status,
+          statusText: res.statusText,
+          responseText: text.slice(0, 1500),
+          requestPreview: redactForLog(JSON.stringify(payload || {})),
+        };
+        console.error("❌ OpenAI error", errorInfo);
+
+        const message = `OpenAI API error ${res.status}: ${text}`;
+        lastError = new Error(message);
+
+        const modelError =
+          res.status === 404 ||
+          /model/i.test(text) ||
+          /model/i.test(res.statusText || "") ||
+          /does not exist/i.test(text);
+
+        if (!modelError || modelName === modelsToTry[modelsToTry.length - 1]) {
+          throw lastError;
+        }
+
+        console.warn(`⚠️ Model ${modelName} failed, retrying with fallback if available.`);
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(text);
+        return parsed;
+      } catch (e: any) {
+        console.error("❌ Failed to parse OpenAI JSON:", e?.message, text.slice(0, 500));
+        throw new Error("Failed to parse OpenAI response JSON");
+      }
+    } catch (err: any) {
+      lastError = err;
+      const message = err?.message || "";
+      const allowRetry = /model/i.test(message) || /unknown model/i.test(message) || /does not exist/i.test(message);
+      if (!allowRetry || modelName === modelsToTry[modelsToTry.length - 1]) {
+        throw err;
+      }
+      console.warn(`⚠️ Error with model ${modelName}: ${message}. Trying fallback if available.`);
+    }
   }
 
-  try {
-    return JSON.parse(text);
-  } catch (e: any) {
-    console.error("❌ Failed to parse OpenAI JSON:", e?.message, text.slice(0, 500));
-    throw new Error("Failed to parse OpenAI response JSON");
-  }
+  throw lastError || new Error("OpenAI API request failed");
 }
 
 /** Compact any tool result before feeding back to the LLM (keeps token use sane) */
@@ -740,10 +790,11 @@ EXECUTION
 - If the user didn't provide a period:
   - A/R "incoming cash": use Monday–Sunday of the current week (America/New_York).
   - Financial: default to YTD (America/New_York).
-- If only a customer name is given, scope to that customer; otherwise company-wide with top contributors.
-- Present clear KPIs and bullets. End with "More than just a balance sheet" when analysis is provided.
+  - If only a customer name is given, scope to that customer; otherwise company-wide with top contributors.
+  - Present clear KPIs and bullets. End with "More than just a balance sheet" when analysis is provided.
+  - For revenue, expense, COGS, profit, or profitability questions you MUST run getFinancialSummary (journal_entry_lines) before responding. Never claim you lack access—explain any assumptions.
 
-GROSS PROFIT LOGIC
+  GROSS PROFIT LOGIC
 - Revenue: sum of credits in Income/Revenue/Sales accounts.
 - COGS: sum of debits in accounts containing "COGS" or "Cost of Goods" (exclude overhead unless asked).
 - Gross Profit (GP) = Revenue − COGS. GP% = (GP / Revenue) × 100.
@@ -761,13 +812,119 @@ GROSS PROFIT LOGIC
       ...(tools.length ? { tools, tool_choice: "auto" } : {}),
     };
 
-    const completion = await createChatCompletion(firstReq);
-    const aiMsg = completion.choices?.[0]?.message ?? {};
+    const completion = await createChatCompletion(firstReq, UNIQUE_MODEL_FALLBACKS);
+    const initialAiMsg = completion.choices?.[0]?.message ?? {};
     console.log("✅ First call finish_reason:", completion.choices?.[0]?.finish_reason);
+
+    const prefersFinancialTools = [
+      "getFinancialSummary",
+      "getGLSummary",
+      "getJournalSummary",
+      "queryJournalEntryLines",
+    ];
+
+    const resolveFallbackFinancialTool = () => {
+      const toolNameFromList = (tools || [])
+        .map((t: any) => t?.function?.name)
+        .find((name: any) =>
+          prefersFinancialTools.some((candidate) => candidate.toLowerCase() === String(name || "").toLowerCase())
+        );
+
+      if (toolNameFromList) return toolNameFromList;
+
+      return prefersFinancialTools.find((name) =>
+        typeof (availableFunctions as any)[name] === "function"
+      );
+    };
+
+    let aiMsg: ChatCompletionMessageParam = initialAiMsg as ChatCompletionMessageParam;
+
+    if (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0) {
+      if (topic === "financial") {
+        const fallbackName = resolveFallbackFinancialTool();
+        if (fallbackName) {
+          const { start, end } = ytdRange(NY_TZ);
+          const fallbackArgs = {
+            startDate: start,
+            endDate: end,
+            groupByMonth: true,
+            metricsOnly: true,
+          };
+          const fallbackCallId = `auto_fin_${Date.now()}`;
+          aiMsg = {
+            role: "assistant",
+            content: "",
+            tool_calls: [
+              {
+                id: fallbackCallId,
+                type: "function",
+                function: {
+                  name: fallbackName,
+                  arguments: JSON.stringify(fallbackArgs),
+                },
+              },
+            ],
+          } as ChatCompletionMessageParam;
+
+          const hasDefinition = (tools || []).some(
+            (t: any) => String(t?.function?.name || "").toLowerCase() === fallbackName.toLowerCase()
+          );
+          if (!hasDefinition) {
+            const isQuery = fallbackName.toLowerCase().includes("queryjournal");
+            const parameters = isQuery
+              ? {
+                  type: "object",
+                  properties: {
+                    select: { type: "string", description: "Columns to return" },
+                    filters: {
+                      type: "object",
+                      description: "Key/value filters; string values use ilike matching",
+                      additionalProperties: true,
+                    },
+                    orderBy: { type: "string" },
+                    ascending: { type: "boolean" },
+                    limit: { type: "number" },
+                    offset: { type: "number" },
+                  },
+                  additionalProperties: false,
+                }
+              : {
+                  type: "object",
+                  properties: {
+                    startDate: { type: "string" },
+                    endDate: { type: "string" },
+                    accountLike: { type: "string" },
+                    entity: { type: "string" },
+                    groupByMonth: { type: "boolean" },
+                    metricsOnly: { type: "boolean" },
+                    limit: { type: "number" },
+                    offset: { type: "number" },
+                  },
+                  additionalProperties: false,
+                };
+
+            tools.push({
+              type: "function",
+              function: {
+                name: fallbackName,
+                description:
+                  "Fallback financial summary from journal_entry_lines. Auto-added to guarantee revenue/expense coverage.",
+                parameters,
+              },
+            });
+          }
+
+          console.log("⚠️ Planner skipped tool call; forcing financial summary.", {
+            fallbackName,
+            fallbackArgs,
+          });
+        }
+      }
+    }
 
     if (!aiMsg.tool_calls || aiMsg.tool_calls.length === 0) {
       console.log("ℹ️ No tool calls; returning text.");
-      return aiMsg.content ?? "No response.";
+      return (initialAiMsg as any).content ?? "No response.";
     }
 
     // ---- Execute tool calls
@@ -915,7 +1072,7 @@ GROSS PROFIT LOGIC
       temperature: 0.2,
       max_tokens: 900,
       ...(tools.length ? { tools, tool_choice: "auto" } : {}),
-    });
+    }, UNIQUE_MODEL_FALLBACKS);
 
     const finalMsg = second.choices?.[0]?.message ?? {};
     console.log("✅ Second call finish_reason:", second.choices?.[0]?.finish_reason);
