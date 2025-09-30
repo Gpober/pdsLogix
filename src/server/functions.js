@@ -16,6 +16,147 @@ const safeLike = (s) => (s ?? '').replace(/[%_]/g, (ch) => '\\' + ch); // escape
 const toISO = (s) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+const clampDateISO = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : null);
+
+function resolveTimeframeWindow(raw) {
+  const now = new Date();
+  const hasInput = typeof raw === 'string' && raw.trim();
+  const label = hasInput ? raw.trim().toLowerCase() : '6_months';
+  const clean = label.replace(/\s+/g, '_');
+  const result = {
+    start: null,
+    end: null,
+    label: clean,
+    assumed: !hasInput,
+    reason: !hasInput ? 'Missing timeframe; defaulted to last 6 months.' : null,
+  };
+
+  const end = new Date(now);
+  const setRange = (startDate, endDate = end) => {
+    result.start = clampDateISO(startDate);
+    result.end = clampDateISO(endDate);
+  };
+
+  switch (clean) {
+    case 'today':
+      setRange(end, end);
+      break;
+    case 'yesterday': {
+      const start = new Date(end);
+      start.setDate(start.getDate() - 1);
+      setRange(start, start);
+      result.label = 'yesterday';
+      break;
+    }
+    case 'this_week': {
+      const day = end.getDay(); // 0=Sun..6=Sat
+      const monday = new Date(end);
+      monday.setDate(end.getDate() - ((day + 6) % 7));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      setRange(monday, sunday);
+      break;
+    }
+    case 'last_week': {
+      const day = end.getDay();
+      const thisMonday = new Date(end);
+      thisMonday.setDate(end.getDate() - ((day + 6) % 7));
+      const lastSunday = new Date(thisMonday);
+      lastSunday.setDate(thisMonday.getDate() - 1);
+      const lastMonday = new Date(lastSunday);
+      lastMonday.setDate(lastSunday.getDate() - 6);
+      setRange(lastMonday, lastSunday);
+      break;
+    }
+    case 'this_month': {
+      const start = new Date(end.getFullYear(), end.getMonth(), 1);
+      const last = new Date(end.getFullYear(), end.getMonth() + 1, 0);
+      setRange(start, last);
+      break;
+    }
+    case 'last_month': {
+      const start = new Date(end.getFullYear(), end.getMonth() - 1, 1);
+      const last = new Date(end.getFullYear(), end.getMonth(), 0);
+      setRange(start, last);
+      break;
+    }
+    case 'ytd': {
+      const start = new Date(end.getFullYear(), 0, 1);
+      setRange(start, end);
+      break;
+    }
+    case '12_months': {
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 12);
+      setRange(start, end);
+      break;
+    }
+    case '6_months': {
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 6);
+      setRange(start, end);
+      break;
+    }
+    case '3_months': {
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 3);
+      setRange(start, end);
+      break;
+    }
+    default: {
+      const daysMatch = clean.match(/^(\d+)_?days?$/);
+      const weeksMatch = clean.match(/^(\d+)_?weeks?$/);
+      const monthsMatch = clean.match(/^(\d+)_?months?$/);
+
+      if (daysMatch) {
+        const days = Number(daysMatch[1]);
+        const start = new Date(end);
+        start.setDate(start.getDate() - Math.max(days, 0));
+        setRange(start, end);
+        result.label = `${days}_days`;
+        result.assumed = true;
+        result.reason = `Interpreted "${raw}" as last ${days} days.`;
+      } else if (weeksMatch) {
+        const weeks = Number(weeksMatch[1]);
+        const start = new Date(end);
+        start.setDate(start.getDate() - Math.max(weeks * 7, 0));
+        setRange(start, end);
+        result.label = `${weeks}_weeks`;
+        result.assumed = true;
+        result.reason = `Interpreted "${raw}" as last ${weeks} weeks.`;
+      } else if (monthsMatch) {
+        const months = Number(monthsMatch[1]);
+        const start = new Date(end);
+        start.setMonth(start.getMonth() - Math.max(months, 0));
+        setRange(start, end);
+        result.label = `${months}_months`;
+        result.assumed = true;
+        result.reason = `Interpreted "${raw}" as last ${months} months.`;
+      } else {
+        const fallback = new Date(end);
+        fallback.setMonth(fallback.getMonth() - 6);
+        setRange(fallback, end);
+        result.label = '6_months';
+        result.assumed = true;
+        result.reason = `Unrecognized timeframe "${raw}"; defaulted to last 6 months.`;
+      }
+    }
+  }
+
+  if (!result.start) {
+    const fallback = new Date(end);
+    fallback.setMonth(fallback.getMonth() - 6);
+    setRange(fallback, end);
+    if (!result.assumed) {
+      result.assumed = true;
+      result.reason = 'Missing timeframe; defaulted to last 6 months.';
+    }
+    result.label = result.label || '6_months';
+  }
+
+  return result;
+}
+
 /** Normalize A/R args */
 function normalizeARArgs(args = {}) {
   const {
@@ -28,6 +169,28 @@ function normalizeARArgs(args = {}) {
 
   return {
     customer: (customer ?? customerId) || null,
+    startDate: toISO(startDate),
+    endDate: toISO(endDate),
+    dueOnly: typeof dueOnly === 'boolean' ? dueOnly : false,
+    status: typeof status === 'string' ? status.toLowerCase() : null,
+    minPastDueDays: Number.isFinite(+minPastDueDays) ? +minPastDueDays : null,
+    limit: clampLimit(limit, 100),
+    offset: Number.isFinite(+offset) && +offset >= 0 ? +offset : 0,
+  };
+}
+
+/** Normalize A/P args */
+function normalizeAPArgs(args = {}) {
+  const {
+    vendor, vendorId,
+    startDate, endDate,
+    dueOnly, status,
+    minPastDueDays,
+    limit, offset,
+  } = args;
+
+  return {
+    vendor: (vendor ?? vendorId) || null,
     startDate: toISO(startDate),
     endDate: toISO(endDate),
     dueOnly: typeof dueOnly === 'boolean' ? dueOnly : false,
@@ -140,6 +303,12 @@ export const availableFunctions = {
     try {
       const cust = customer ?? customerId;
 
+      const window = resolveTimeframeWindow(timeframe);
+      const labelText = window.label.replace(/_/g, ' ');
+
+      const assumptions = [];
+      if (window.assumed && window.reason) assumptions.push(window.reason);
+
       let query = supabase
         .from('journal_entry_lines')
         .select('date, account, account_type, debit, credit, customer, name');
@@ -156,21 +325,27 @@ export const availableFunctions = {
 
       if (cust) query = query.ilike('customer', `%${safeLike(cust)}%`);
 
-      const dateLimit = new Date();
-      if (timeframe === '6_months') dateLimit.setMonth(dateLimit.getMonth() - 6);
-      else if (timeframe === '3_months') dateLimit.setMonth(dateLimit.getMonth() - 3);
-      else if (timeframe === '12_months') dateLimit.setFullYear(dateLimit.getFullYear() - 1);
+      if (window.start) query = query.gte('date', window.start);
+      if (window.end) query = query.lte('date', window.end);
 
-      query = query
-        .gte('date', dateLimit.toISOString().slice(0, 10))
-        .order('date', { ascending: true })
-        .limit(HARD_ROW_CAP);
+      query = query.order('date', { ascending: true }).limit(HARD_ROW_CAP);
 
       const { data, error } = await query;
       if (error) throw error;
 
       if (!data?.length) {
-        return { success: true, summary: `No A/R transactions for ${timeframe}`, timeframe, customers: [] };
+        const emptyResponse = {
+          success: true,
+          summary: `No A/R transactions for ${labelText}`,
+          timeframe: window.label,
+          display_timeframe: labelText,
+          customers: [],
+        };
+
+        if (assumptions.length) emptyResponse.assumptions = assumptions;
+        if (window.start || window.end) emptyResponse.window = { start: window.start, end: window.end };
+
+        return emptyResponse;
       }
 
       // Debit to AR = invoice; Credit to AR = payment
@@ -193,10 +368,11 @@ export const availableFunctions = {
       const overallInvoiced = customers.reduce((sum, c) => sum + c.total_invoiced, 0);
       const overallPaid = customers.reduce((sum, c) => sum + c.total_paid, 0);
 
-      return {
+      const response = {
         success: true,
-        summary: `A/R payment history for ${timeframe}`,
-        timeframe,
+        summary: `A/R payment history for ${labelText}`,
+        timeframe: window.label,
+        display_timeframe: labelText,
         customers,
         overall_stats: {
           total_invoiced: overallInvoiced,
@@ -204,11 +380,236 @@ export const availableFunctions = {
           collection_rate: overallInvoiced > 0 ? overallPaid / overallInvoiced : 0,
         },
       };
+
+      if (assumptions.length) response.assumptions = assumptions;
+
+      if (window.start || window.end) {
+        response.window = { start: window.start, end: window.end };
+      }
+
+      return response;
     } catch (error) {
       console.error('❌ getARPaymentHistory error:', error);
       return { success: false, error: 'Failed to analyze payment history', details: error.message };
     }
   },
+
+  /* ==========================================================================
+     A/P Aging Summary (bucketed by due date)
+     ======================================================================== */
+  getAPAgingSummary: async (raw = {}) => {
+    try {
+      const { vendor, startDate, endDate, dueOnly, status, minPastDueDays, limit, offset } = normalizeAPArgs(raw);
+
+      let query = supabase
+        .from('ap_aging')
+        .select('vendor, number, date, due_date, amount, open_balance, location')
+        .limit(HARD_ROW_CAP);
+
+      if (vendor) query = query.ilike('vendor', `%${safeLike(vendor)}%`);
+      if (startDate) {
+        const s = toISO(startDate) || startDate;
+        query = query.or(`due_date.gte.${s},and(due_date.is.null,date.gte.${s})`);
+      }
+      if (endDate) {
+        const e = toISO(endDate) || endDate;
+        query = query.or(`due_date.lte.${e},and(due_date.is.null,date.lte.${e})`);
+      }
+
+      if (status === 'open') {
+        query = query.gt('open_balance', 0);
+      } else if (status === 'paid') {
+        query = query.eq('open_balance', 0);
+      } else if (status === 'overdue') {
+        query = query.gt('open_balance', 0).lt('due_date', todayISO());
+      }
+
+      if (dueOnly) query = query.gt('open_balance', 0);
+
+      let { data, error } = await query;
+      if (error) throw error;
+
+      let records = data || [];
+
+      if (Number.isFinite(minPastDueDays) && minPastDueDays > 0) {
+        const now = Date.now();
+        records = records.filter((r) => {
+          if (!r.due_date) return false;
+          const dpd = Math.floor((now - new Date(r.due_date).getTime()) / DAY_MS);
+          return (r.open_balance || 0) > 0 && dpd >= minPastDueDays;
+        });
+      }
+
+      if (!records.length) {
+        return {
+          success: true,
+          summary: 'No A/P data found',
+          total_payables: 0,
+          vendor_count: 0,
+          bill_count: 0,
+          vendors: [],
+          aging_summary: { current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_over_90: 0 },
+          pagination: { count: 0, limit, offset },
+        };
+      }
+
+      const now = Date.now();
+      const overallAging = { current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_over_90: 0 };
+
+      const vendorMap = records.reduce((acc, row) => {
+        const vendorName = row.vendor || 'Unknown Vendor';
+        const open = row.open_balance ?? 0;
+        const dueDate = row.due_date ? new Date(row.due_date).getTime() : null;
+        const dpd = dueDate ? Math.floor((now - dueDate) / DAY_MS) : 0;
+        const bucket = dpd <= 0 ? 'current' : dpd <= 30 ? 'days_1_30' : dpd <= 60 ? 'days_31_60' : dpd <= 90 ? 'days_61_90' : 'days_over_90';
+
+        if (!acc[vendorName]) {
+          acc[vendorName] = {
+            vendor_name: vendorName,
+            location: row.location || null,
+            total_open: 0,
+            total_amount: 0,
+            bill_count: 0,
+            oldest_invoice_days: 0,
+            next_due_date: null,
+            aging: { current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_over_90: 0 },
+          };
+        }
+
+        const slot = acc[vendorName];
+        slot.total_open += open;
+        slot.total_amount += row.amount ?? open;
+        slot.bill_count += 1;
+        slot.aging[bucket] += open;
+        slot.oldest_invoice_days = Math.max(slot.oldest_invoice_days, dpd || 0);
+        if (row.due_date) {
+          const dueISO = String(row.due_date).slice(0, 10);
+          if (!slot.next_due_date || dueISO < slot.next_due_date) slot.next_due_date = dueISO;
+        }
+
+        overallAging[bucket] += open;
+        return acc;
+      }, {});
+
+      const vendors = Object.values(vendorMap).sort((a, b) => (b.total_open || 0) - (a.total_open || 0));
+      const pagedVendors = vendors.slice(offset, offset + limit);
+
+      const totalPayables = vendors.reduce((sum, v) => sum + (v.total_open || 0), 0);
+
+      return {
+        success: true,
+        summary: 'Accounts payable aging summary',
+        total_payables: totalPayables,
+        vendor_count: vendors.length,
+        bill_count: records.length,
+        vendors: pagedVendors,
+        aging_summary: overallAging,
+        pagination: { count: vendors.length, limit, offset },
+      };
+    } catch (error) {
+      console.error('❌ getAPAgingSummary error:', error);
+      return { success: false, error: 'Failed to summarize A/P aging', details: error.message };
+    }
+  },
+
+  /* ==========================================================================
+     A/P Aging Detail (open bills)
+     ======================================================================== */
+  getAPAgingDetail: async (raw = {}) => {
+    try {
+      const { vendor, startDate, endDate, dueOnly, status, minPastDueDays, limit, offset } = normalizeAPArgs(raw);
+
+      let query = supabase
+        .from('ap_aging')
+        .select('vendor, number, date, due_date, amount, open_balance, location', { count: 'exact' });
+
+      if (vendor) query = query.ilike('vendor', `%${safeLike(vendor)}%`);
+      if (startDate) {
+        const s = toISO(startDate) || startDate;
+        query = query.or(`due_date.gte.${s},and(due_date.is.null,date.gte.${s})`);
+      }
+      if (endDate) {
+        const e = toISO(endDate) || endDate;
+        query = query.or(`due_date.lte.${e},and(due_date.is.null,date.lte.${e})`);
+      }
+
+      if (status === 'open') {
+        query = query.gt('open_balance', 0);
+      } else if (status === 'paid') {
+        query = query.eq('open_balance', 0);
+      } else if (status === 'overdue') {
+        query = query.gt('open_balance', 0).lt('due_date', todayISO());
+      }
+
+      if (dueOnly) query = query.gt('open_balance', 0);
+
+      query = query
+        .order('due_date', { ascending: true, nullsFirst: false })
+        .order('date', { ascending: true })
+        .order('vendor', { ascending: true })
+        .range(offset, offset + limit - 1);
+
+      const { data, error, count } = await query;
+      if (error) throw error;
+
+      let records = data || [];
+
+      const now = Date.now();
+      if (!records.length) {
+        return {
+          success: true,
+          summary: 'No A/P data found',
+          total_payables: 0,
+          bill_count: 0,
+          records: [],
+          aging_summary: { current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_over_90: 0 },
+          pagination: { count: 0, limit, offset },
+        };
+      }
+
+      if (Number.isFinite(minPastDueDays) && minPastDueDays > 0) {
+        records = records.filter((r) => {
+          if (!r.due_date) return false;
+          const dpd = Math.floor((now - new Date(r.due_date).getTime()) / DAY_MS);
+          return (r.open_balance || 0) > 0 && dpd >= minPastDueDays;
+        });
+      }
+
+      const annotated = records.map((row) => {
+        const dueDate = row.due_date ? new Date(row.due_date).getTime() : null;
+        const dpd = dueDate ? Math.floor((now - dueDate) / DAY_MS) : 0;
+        const bucket = dpd <= 0 ? 'current' : dpd <= 30 ? 'days_1_30' : dpd <= 60 ? 'days_31_60' : dpd <= 90 ? 'days_61_90' : 'days_over_90';
+        return { ...row, days_past_due: dpd, aging_bucket: bucket };
+      });
+
+      const agingSummary = annotated.reduce(
+        (acc, row) => {
+          const bucket = row.aging_bucket;
+          acc[bucket] += row.open_balance || 0;
+          return acc;
+        },
+        { current: 0, days_1_30: 0, days_31_60: 0, days_61_90: 0, days_over_90: 0 }
+      );
+
+      const totalOpen = annotated.reduce((sum, row) => sum + (row.open_balance || 0), 0);
+
+      return {
+        success: true,
+        summary: 'Accounts payable aging detail',
+        total_payables: totalOpen,
+        bill_count: annotated.length,
+        records: annotated,
+        aging_summary: agingSummary,
+        pagination: { count: typeof count === 'number' ? count : annotated.length, limit, offset },
+      };
+    } catch (error) {
+      console.error('❌ getAPAgingDetail error:', error);
+      return { success: false, error: 'Failed to fetch A/P aging detail', details: error.message };
+    }
+  },
+
+  // Convenience alias for open bills
+  getAPOpenBills: async (args = {}) => availableFunctions.getAPAgingDetail({ ...args, status: args.status ?? 'open' }),
 
   /* ==========================================================================
      Payroll Payments Summary
@@ -410,6 +811,30 @@ export const availableFunctions = {
     } catch (error) {
       console.error('❌ queryARAgingDetailTable error:', error);
       return { success: false, error: 'Failed to query ar_aging_detail', details: error.message };
+    }
+  },
+
+  queryAPAgingTable: async ({ select = '*', filters = {}, orderBy = null, ascending = true, limit = 100, offset = 0 } = {}) => {
+    try {
+      let query = supabase.from('ap_aging').select(select, { count: 'exact' });
+
+      for (const [col, val] of Object.entries(filters || {})) {
+        if (val === null || typeof val === 'undefined') continue;
+        if (Array.isArray(val)) query = query.in(col, val);
+        else if (typeof val === 'string') query = query.ilike(col, `%${safeLike(val)}%`);
+        else query = query.eq(col, val);
+      }
+
+      if (orderBy) query = query.order(orderBy, { ascending });
+      query = query.range(offset, offset + clampLimit(limit, 500) - 1);
+
+      const { data, error, count } = await query;
+      if (error) throw error;
+
+      return { success: true, records: data || [], pagination: { count: count ?? data?.length ?? 0, limit, offset } };
+    } catch (error) {
+      console.error('❌ queryAPAgingTable error:', error);
+      return { success: false, error: 'Failed to query ap_aging', details: error.message };
     }
   },
 
