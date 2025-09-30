@@ -185,12 +185,12 @@ const SiriStyleAICFO = () => {
       {/* Floating AI Button (Siri-style) */}
       <button
         ref={buttonRef}
-        className={`fixed bottom-6 right-6 w-16 h-16 rounded-full shadow-2xl flex items-center justify-center z-50 transition-all duration-200 ${
-          isHolding 
-            ? 'bg-red-500 scale-110 shadow-red-500/50' 
-            : isListening 
-              ? 'bg-blue-600 animate-pulse' 
-              : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:scale-105'
+        className={`fixed bottom-6 right-6 w-16 h-16 rounded-full shadow-2xl flex items-center justify-center z-50 transition-colors duration-200 ${
+          isHolding
+            ? 'bg-red-500 shadow-red-500/50 ring-4 ring-red-300/60'
+            : isListening
+              ? 'bg-blue-600 animate-pulse'
+              : 'bg-gradient-to-r from-blue-500 to-blue-600'
         }`}
         onMouseDown={handleHoldStart}
         onMouseUp={handleHoldEnd}
@@ -324,12 +324,12 @@ const SiriStyleAICFO = () => {
                 onMouseUp={handleHoldEnd}
                 onTouchStart={handleHoldStart}
                 onTouchEnd={handleHoldEnd}
-                className={`w-full h-12 rounded-xl flex items-center justify-center transition-all duration-200 ${
-                  isHolding 
-                    ? 'bg-red-500 scale-95' 
-                    : isListening 
-                      ? 'bg-blue-600' 
-                      : 'bg-gradient-to-r from-blue-500 to-blue-600 hover:scale-105'
+                className={`w-full h-12 rounded-xl flex items-center justify-center transition-colors duration-200 ${
+                  isHolding
+                    ? 'bg-red-500'
+                    : isListening
+                      ? 'bg-blue-600'
+                      : 'bg-gradient-to-r from-blue-500 to-blue-600'
                 }`}
                 disabled={isProcessing}
               >
