@@ -244,14 +244,24 @@ function pickFunctionName(candidates: string[]): string | null {
   return null;
 }
 
-function buildTools(topic: Topic, intent: Intent) {
+function buildTools(topic: Topic, intent: Intent, message?: string) {
   const tools: any[] = [];
+  const normalizedMessage = (message || "").toLowerCase();
+  const mentionsJournalEntries = /journal[_\s-]?entry[_\s-]?lines?/.test(normalizedMessage);
+  const mentionsAPTables =
+    /\bap_aging\b/.test(normalizedMessage) || /accounts?\s+payable/.test(normalizedMessage) || /\bap\s+aging\b/.test(normalizedMessage);
+
+  const pushTool = (tool: any) => {
+    if (!tool?.function?.name) return;
+    if (tools.some((t: any) => t?.function?.name === tool.function.name)) return;
+    tools.push(tool);
+  };
 
   // Payroll → payments
   if (topic === "payroll") {
     const name = pickFunctionName(["getPaymentsSummary", "paymentsSummary", "listPayments"]);
     if (name) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name,
@@ -276,7 +286,7 @@ function buildTools(topic: Topic, intent: Intent) {
 
     const monthly = pickFunctionName(["getPayrollByMonth", "getMonthlyPayroll", "payrollByMonth"]);
     if (monthly) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: monthly,
@@ -299,7 +309,7 @@ function buildTools(topic: Topic, intent: Intent) {
 
     const payrollRaw = pickFunctionName(["queryPayroll", "queryPayments", "queryPayrollTable"]);
     if (payrollRaw) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: payrollRaw,
@@ -329,7 +339,7 @@ function buildTools(topic: Topic, intent: Intent) {
   if (topic === "ap") {
     const apSummary = pickFunctionName(["getAPAgingSummary", "getAPSummary", "getAccountsPayableSummary"]);
     if (apSummary) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: apSummary,
@@ -355,7 +365,7 @@ function buildTools(topic: Topic, intent: Intent) {
 
     const apDetail = pickFunctionName(["getAPAgingDetail", "getAPOpenBills", "getAPInvoices"]);
     if (apDetail) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: apDetail,
@@ -381,7 +391,7 @@ function buildTools(topic: Topic, intent: Intent) {
 
     const apRaw = pickFunctionName(["queryAPAgingTable", "queryAPTable", "queryAPAging"]);
     if (apRaw) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: apRaw,
@@ -416,7 +426,7 @@ function buildTools(topic: Topic, intent: Intent) {
       "getARInvoices",
     ]);
     if (agingDetail) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: agingDetail,
@@ -444,7 +454,7 @@ function buildTools(topic: Topic, intent: Intent) {
 
     const arHistory = pickFunctionName(["getARPaymentHistory", "getARHistory", "getReceiptsHistory"]);
     if (arHistory) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: arHistory,
@@ -504,7 +514,7 @@ function buildTools(topic: Topic, intent: Intent) {
 
     if (intent === "customer_profitability" && (custProfit || finSummary)) {
       const name = custProfit || finSummary!;
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name,
@@ -525,7 +535,7 @@ function buildTools(topic: Topic, intent: Intent) {
         },
       });
     } else if (finSummary) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: finSummary,
@@ -549,7 +559,7 @@ function buildTools(topic: Topic, intent: Intent) {
       });
 
       if (acctTrends) {
-        tools.push({
+        pushTool({
           type: "function",
           function: {
             name: acctTrends,
@@ -573,11 +583,97 @@ function buildTools(topic: Topic, intent: Intent) {
 
     const jlRawFin = pickFunctionName(["queryJournalEntryLines", "queryJournalEntries"]);
     if (jlRawFin) {
-      tools.push({
+      pushTool({
         type: "function",
         function: {
           name: jlRawFin,
           description: "Direct query access to journal_entry_lines with flexible column filters.",
+          parameters: {
+            type: "object",
+            properties: {
+              select: { type: "string", description: "Columns to return" },
+              filters: {
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
+                additionalProperties: true,
+              },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+  }
+
+  // Ensure direct table access when the user explicitly references the tables,
+  // even if the classifier routed the request elsewhere (e.g., "show ap_aging rows").
+  if (mentionsJournalEntries) {
+    const journalDirect = pickFunctionName(["queryJournalEntryLines", "queryJournalEntries"]);
+    if (journalDirect) {
+      pushTool({
+        type: "function",
+        function: {
+          name: journalDirect,
+          description: "Direct query access to journal_entry_lines with flexible column filters.",
+          parameters: {
+            type: "object",
+            properties: {
+              select: { type: "string", description: "Columns to return" },
+              filters: {
+                type: "object",
+                description: "Key/value filters; string values use ilike matching",
+                additionalProperties: true,
+              },
+              orderBy: { type: "string" },
+              ascending: { type: "boolean" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+  }
+
+  if (mentionsAPTables) {
+    const apDetail = pickFunctionName(["getAPAgingDetail", "getAPOpenBills", "getAPInvoices"]);
+    if (apDetail) {
+      pushTool({
+        type: "function",
+        function: {
+          name: apDetail,
+          description: "Detailed vendor bills from ap_aging including due dates and open balances.",
+          parameters: {
+            type: "object",
+            properties: {
+              vendor: { type: "string" },
+              vendorId: { type: "string" },
+              startDate: { type: "string" },
+              endDate: { type: "string" },
+              dueOnly: { type: "boolean" },
+              status: { type: "string" },
+              minPastDueDays: { type: "number" },
+              limit: { type: "number" },
+              offset: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+      });
+    }
+
+    const apRaw = pickFunctionName(["queryAPAgingTable", "queryAPTable", "queryAPAging"]);
+    if (apRaw) {
+      pushTool({
+        type: "function",
+        function: {
+          name: apRaw,
+          description: "Direct query access to ap_aging with flexible column filters.",
           parameters: {
             type: "object",
             properties: {
@@ -607,7 +703,7 @@ function buildTools(topic: Topic, intent: Intent) {
 export const createCFOCompletion = async (message: string, context: any = {}) => {
   try {
     const { topic, intent } = classify(message);
-    const tools = buildTools(topic, intent);
+    const tools = buildTools(topic, intent, message);
 
     console.log("🚀 createCFOCompletion:", {
       topic,
