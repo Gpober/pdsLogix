@@ -1,10 +1,39 @@
-import { NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+type QueryResult = Record<string, unknown>
+
+interface JournalEntryRow extends QueryResult {
+  account_type?: string | null
+  credit?: number | null
+  debit?: number | null
+  customer?: string | null
+  vendor?: string | null
+  department?: string | null
+  first_name?: string | null
+  last_name?: string | null
+  total_amount?: number | null
+  open_balance?: number | null
+  due_date?: string | null
+}
+
+interface OpenAIChoice {
+  message?: {
+    content?: string
+  }
+}
+
+interface OpenAIResponse {
+  choices?: OpenAIChoice[]
+}
+
+interface RequestPayload {
+  message?: string
+  userId?: string
+  context?: unknown
+}
+
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 
 // Compact database schema for AI
 const DATABASE_SCHEMA = `
@@ -34,22 +63,57 @@ Available Supabase tables:
 Today's date: ${new Date().toISOString().split('T')[0]}
 `
 
-export async function POST(request) {
+let cachedSupabase: SupabaseClient | null = null
+
+function getSupabaseClient(): SupabaseClient {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    throw new Error('Supabase environment variables are not configured')
+  }
+
+  if (!cachedSupabase) {
+    cachedSupabase = createClient(supabaseUrl, supabaseServiceRoleKey)
+  }
+
+  return cachedSupabase
+}
+
+function getOpenAIApiKey(): string {
+  const openaiApiKey = process.env.OPENAI_API_KEY
+  if (!openaiApiKey) {
+    throw new Error('OPENAI_API_KEY is not configured')
+  }
+  return openaiApiKey
+}
+
+function sanitizeSqlOutput(rawSql: string): string {
+  return rawSql
+    .replace(/```sql\n?/gi, '')
+    .replace(/```\n?/g, '')
+    .replace(/^SELECT/i, 'SELECT')
+    .trim()
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    let body = {}
+    const supabase = getSupabaseClient()
+    const openaiApiKey = getOpenAIApiKey()
+
+    let body: RequestPayload = {}
     try {
-      body = await request.json()
+      body = (await request.json()) as RequestPayload
     } catch {
       body = {}
     }
 
-    const { message, userId, context: frontendContext } = body || {}
+    const { message } = body
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 })
     }
 
-    const safeUserId = (typeof userId === 'string' && userId.length) ? userId : 'anon'
     const queryType = detectQueryType(message)
 
     console.log('🎯 Query Type:', queryType, '| Message:', message)
@@ -82,18 +146,18 @@ A: SELECT customer, SUM(credit - debit) as revenue FROM journal_entry_lines WHER
 
 SQL:`
 
-    const sqlResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const sqlResponse = await fetch(OPENAI_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${openaiApiKey}`,
       },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL_LATEST || 'gpt-4o',
         messages: [
-          { 
-            role: 'system', 
-            content: 'You are a SQL expert. Generate clean PostgreSQL queries. Return ONLY the SQL with no markdown formatting or explanations.' 
+          {
+            role: 'system',
+            content: 'You are a SQL expert. Generate clean PostgreSQL queries. Return ONLY the SQL with no markdown formatting or explanations.'
           },
           { role: 'user', content: sqlPrompt }
         ],
@@ -106,29 +170,31 @@ SQL:`
       throw new Error('Failed to generate SQL')
     }
 
-    const sqlData = await sqlResponse.json()
-    let sqlQuery = sqlData.choices[0].message.content.trim()
-    
-    // Clean SQL
-    sqlQuery = sqlQuery
-      .replace(/```sql\n?/g, '')
-      .replace(/```\n?/g, '')
-      .replace(/^SELECT/i, 'SELECT')
-      .trim()
+    const sqlData = (await sqlResponse.json()) as OpenAIResponse
+    const sqlContent = sqlData.choices?.[0]?.message?.content?.trim()
+
+    if (!sqlContent) {
+      throw new Error('SQL response from OpenAI was empty')
+    }
+
+    const sqlQuery = sanitizeSqlOutput(sqlContent)
 
     console.log('📊 Generated SQL:', sqlQuery)
 
     // Step 2: Execute query
-    let queryResults = []
+    let queryResults: QueryResult[] = []
     try {
-      queryResults = await executeSmartQuery(sqlQuery, message)
-    } catch (error) {
-      console.error('❌ Query execution failed:', error)
+      queryResults = await executeSmartQuery(sqlQuery, message, supabase)
+    } catch (queryError) {
+      const err = queryError instanceof Error ? queryError : new Error('Unknown query execution error')
+      console.error('❌ Query execution failed:', err)
       // Fallback to simple data fetch
-      queryResults = await getFallbackData(queryType)
+      queryResults = await getFallbackData(queryType, supabase)
     }
 
     console.log('✅ Query returned', queryResults.length, 'rows')
+
+    const truncatedResults = queryResults.slice(0, 20)
 
     // Step 3: Generate natural language response
     const responsePrompt = `You are a friendly AI CFO assistant for a construction/property management company called "I AM CFO".
@@ -136,7 +202,7 @@ SQL:`
 User asked: "${message}"
 
 Data returned from database:
-${JSON.stringify(queryResults.slice(0, 20), null, 2)}
+${JSON.stringify(truncatedResults, null, 2)}
 
 Generate a concise, conversational response (2-4 sentences max):
 1. Directly answer their question with specific numbers
@@ -146,18 +212,18 @@ Generate a concise, conversational response (2-4 sentences max):
 
 Keep it SHORT and actionable. No fluff or preambles.`
 
-    const responseGen = await fetch('https://api.openai.com/v1/chat/completions', {
+    const responseGen = await fetch(OPENAI_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${openaiApiKey}`,
       },
       body: JSON.stringify({
         model: process.env.OPENAI_MODEL_LATEST || 'gpt-4o',
         messages: [
-          { 
-            role: 'system', 
-            content: 'You are a helpful AI CFO. Give concise, actionable insights. Format numbers clearly. Keep responses under 100 words.' 
+          {
+            role: 'system',
+            content: 'You are a helpful AI CFO. Give concise, actionable insights. Format numbers clearly. Keep responses under 100 words.'
           },
           { role: 'user', content: responsePrompt }
         ],
@@ -170,8 +236,12 @@ Keep it SHORT and actionable. No fluff or preambles.`
       throw new Error('Failed to generate response')
     }
 
-    const responseData = await responseGen.json()
-    const aiResponse = responseData.choices[0].message.content.trim()
+    const responseData = (await responseGen.json()) as OpenAIResponse
+    const aiResponse = responseData.choices?.[0]?.message?.content?.trim()
+
+    if (!aiResponse) {
+      throw new Error('OpenAI response was empty')
+    }
 
     return NextResponse.json({
       response: aiResponse,
@@ -184,331 +254,351 @@ Keep it SHORT and actionable. No fluff or preambles.`
     })
 
   } catch (error) {
-    console.error('❌ API Error:', error?.message || error)
-    
+    const err = error instanceof Error ? error : new Error('Unknown API error')
+    console.error('❌ API Error:', err.message, err)
+
     return NextResponse.json({
       response: "I'm having trouble processing that question. Could you try asking something like 'What's our revenue this month?' or 'Which customer has the highest profit?'",
-      error: error?.message,
+      error: err.message,
       context: { queryType: 'error', platform: 'mobile' }
     }, { status: 200 }) // Return 200 so UI shows the message
   }
 }
 
 // Smart query executor
-async function executeSmartQuery(sql: string, originalQuestion: string) {
+async function executeSmartQuery(sql: string, originalQuestion: string, supabase: SupabaseClient): Promise<QueryResult[]> {
   const sqlLower = sql.toLowerCase()
-  
+
   try {
-    // Determine which table and build Supabase query
     if (sqlLower.includes('journal_entry_lines')) {
-      return await executeJournalQuery(sql, originalQuestion)
+      return await executeJournalQuery(originalQuestion, supabase)
     } else if (sqlLower.includes('ar_aging_detail')) {
-      return await executeARQuery(sql, originalQuestion)
+      return await executeARQuery(originalQuestion, supabase)
     } else if (sqlLower.includes('ap_aging')) {
-      return await executeAPQuery(sql, originalQuestion)
+      return await executeAPQuery(originalQuestion, supabase)
     } else if (sqlLower.includes('payments')) {
-      return await executePayrollQuery(sql, originalQuestion)
+      return await executePayrollQuery(originalQuestion, supabase)
     }
-    
+
     // Default: try journal entries
-    return await executeJournalQuery(sql, originalQuestion)
-    
+    return await executeJournalQuery(originalQuestion, supabase)
+
   } catch (error) {
-    console.error('Query execution error:', error)
-    throw error
+    const err = error instanceof Error ? error : new Error('Unknown query execution error')
+    console.error('Query execution error:', err)
+    throw err
   }
 }
 
 // Execute journal entries query
-async function executeJournalQuery(sql: string, question: string) {
+async function executeJournalQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
   const questionLower = question.toLowerCase()
   let query = supabase.from('journal_entry_lines').select('*')
-  
+
   // Apply common filters based on question
   if (questionLower.includes('revenue') || questionLower.includes('income')) {
     query = query.or('account_type.ilike.%income%,account_type.ilike.%revenue%')
   }
-  
+
   if (questionLower.includes('expense')) {
     query = query.ilike('account_type', '%expense%')
   }
-  
+
   if (questionLower.includes('cogs') || questionLower.includes('cost of goods')) {
     query = query.or('account_type.ilike.%cogs%,account_type.ilike.%cost of goods%')
   }
-  
+
   // Date filters
   if (questionLower.includes('this month') || questionLower.includes('current month')) {
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
     query = query.gte('date', startOfMonth)
   }
-  
+
   if (questionLower.includes('this year') || questionLower.includes('ytd')) {
     const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
     query = query.gte('date', startOfYear)
   }
-  
+
   query = query.limit(1000)
-  
+
   const { data, error } = await query
-  
-  if (error) throw error
-  
+
+  if (error) throw new Error(error.message)
+
+  const records = (data ?? []) as JournalEntryRow[]
+
   // Post-process for aggregations
   if (questionLower.includes('customer') && (questionLower.includes('revenue') || questionLower.includes('profit'))) {
-    return aggregateByCustomer(data || [])
+    return aggregateByCustomer(records)
   }
-  
+
   if (questionLower.includes('total') || questionLower.includes('sum')) {
-    return aggregateTotals(data || [], questionLower)
+    return aggregateTotals(records, questionLower)
   }
-  
-  return data || []
+
+  return records
 }
 
 // Execute AR query
-async function executeARQuery(sql: string, question: string) {
+async function executeARQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
   let query = supabase
     .from('ar_aging_detail')
     .select('*')
     .gt('open_balance', 0)
-  
+
   const questionLower = question.toLowerCase()
-  
+
   if (questionLower.includes('overdue')) {
     query = query.lt('due_date', new Date().toISOString().split('T')[0])
   }
-  
+
   query = query.limit(100)
-  
+
   const { data, error } = await query
-  if (error) throw error
-  
+  if (error) throw new Error(error.message)
+
+  const records = (data ?? []) as JournalEntryRow[]
+
   // Group by customer if needed
   if (questionLower.includes('customer') || questionLower.includes('which')) {
-    return aggregateARByCustomer(data || [])
+    return aggregateARByCustomer(records)
   }
-  
-  return data || []
+
+  return records
 }
 
 // Execute AP query
-async function executeAPQuery(sql: string, question: string) {
+async function executeAPQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
   let query = supabase
     .from('ap_aging')
     .select('*')
     .gt('open_balance', 0)
-  
+
   const questionLower = question.toLowerCase()
-  
+
   if (questionLower.includes('overdue')) {
     query = query.lt('due_date', new Date().toISOString().split('T')[0])
   }
-  
+
   query = query.limit(100)
-  
+
   const { data, error } = await query
-  if (error) throw error
-  
+  if (error) throw new Error(error.message)
+
+  const records = (data ?? []) as JournalEntryRow[]
+
   // Group by vendor if needed
   if (questionLower.includes('vendor') || questionLower.includes('which')) {
-    return aggregateAPByVendor(data || [])
+    return aggregateAPByVendor(records)
   }
-  
-  return data || []
+
+  return records
 }
 
 // Execute payroll query
-async function executePayrollQuery(sql: string, question: string) {
+async function executePayrollQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
   const questionLower = question.toLowerCase()
   let query = supabase.from('payments').select('*')
-  
+
   // Date filters
   if (questionLower.includes('this month')) {
     const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
     query = query.gte('date', startOfMonth)
   }
-  
+
   query = query.limit(500)
-  
+
   const { data, error } = await query
-  if (error) throw error
-  
+  if (error) throw new Error(error.message)
+
+  const records = (data ?? []) as JournalEntryRow[]
+
   // Group by department or employee
   if (questionLower.includes('department')) {
-    return aggregatePayrollByDepartment(data || [])
+    return aggregatePayrollByDepartment(records)
   }
-  
+
   if (questionLower.includes('employee')) {
-    return aggregatePayrollByEmployee(data || [])
+    return aggregatePayrollByEmployee(records)
   }
-  
-  return data || []
+
+  return records
 }
 
 // Aggregation helpers
-function aggregateByCustomer(data: any[]) {
-  const customerMap = new Map()
-  
+function aggregateByCustomer(data: JournalEntryRow[]): QueryResult[] {
+  const customerMap = new Map<string, { customer: string; revenue: number; count: number }>()
+
   data.forEach(row => {
-    const customer = row.customer || 'Unknown'
-    const revenue = (row.credit || 0) - (row.debit || 0)
-    
+    const customer = (row.customer as string | null) || 'Unknown'
+    const revenue = (row.credit ?? 0) - (row.debit ?? 0)
+
     if (!customerMap.has(customer)) {
       customerMap.set(customer, { customer, revenue: 0, count: 0 })
     }
-    
-    const current = customerMap.get(customer)
+
+    const current = customerMap.get(customer)!
     current.revenue += revenue
     current.count += 1
   })
-  
+
   return Array.from(customerMap.values())
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 10)
 }
 
-function aggregateTotals(data: any[], question: string) {
+function aggregateTotals(data: JournalEntryRow[], question: string): QueryResult[] {
   let total = 0
-  
+
   data.forEach(row => {
     if (question.includes('revenue') || question.includes('income')) {
-      total += (row.credit || 0) - (row.debit || 0)
+      total += (row.credit ?? 0) - (row.debit ?? 0)
     } else if (question.includes('expense') || question.includes('cogs')) {
-      total += (row.debit || 0) - (row.credit || 0)
+      total += (row.debit ?? 0) - (row.credit ?? 0)
     } else {
-      total += (row.credit || 0) - (row.debit || 0)
+      total += (row.credit ?? 0) - (row.debit ?? 0)
     }
   })
-  
+
   return [{ total, record_count: data.length }]
 }
 
-function aggregateARByCustomer(data: any[]) {
-  const customerMap = new Map()
-  
+function aggregateARByCustomer(data: JournalEntryRow[]): QueryResult[] {
+  const customerMap = new Map<string, { customer: string; total_outstanding: number; invoice_count: number }>()
+
   data.forEach(row => {
-    const customer = row.customer || 'Unknown'
-    const balance = row.open_balance || 0
-    
+    const customer = (row.customer as string | null) || 'Unknown'
+    const balance = row.open_balance ?? 0
+
     if (!customerMap.has(customer)) {
       customerMap.set(customer, { customer, total_outstanding: 0, invoice_count: 0 })
     }
-    
-    const current = customerMap.get(customer)
+
+    const current = customerMap.get(customer)!
     current.total_outstanding += balance
     current.invoice_count += 1
   })
-  
+
   return Array.from(customerMap.values())
     .sort((a, b) => b.total_outstanding - a.total_outstanding)
     .slice(0, 10)
 }
 
-function aggregateAPByVendor(data: any[]) {
-  const vendorMap = new Map()
-  
+function aggregateAPByVendor(data: JournalEntryRow[]): QueryResult[] {
+  const vendorMap = new Map<string, { vendor: string; total_outstanding: number; bill_count: number }>()
+
   data.forEach(row => {
-    const vendor = row.vendor || 'Unknown'
-    const balance = row.open_balance || 0
-    
+    const vendor = (row.vendor as string | null) || 'Unknown'
+    const balance = row.open_balance ?? 0
+
     if (!vendorMap.has(vendor)) {
       vendorMap.set(vendor, { vendor, total_outstanding: 0, bill_count: 0 })
     }
-    
-    const current = vendorMap.get(vendor)
+
+    const current = vendorMap.get(vendor)!
     current.total_outstanding += balance
     current.bill_count += 1
   })
-  
+
   return Array.from(vendorMap.values())
     .sort((a, b) => b.total_outstanding - a.total_outstanding)
     .slice(0, 10)
 }
 
-function aggregatePayrollByDepartment(data: any[]) {
-  const deptMap = new Map()
-  
+function aggregatePayrollByDepartment(data: JournalEntryRow[]): QueryResult[] {
+  const deptMap = new Map<string, { department: string; total: number; employee_count: number }>()
+
   data.forEach(row => {
-    const dept = row.department || 'Unknown'
-    const amount = row.total_amount || 0
-    
+    const dept = (row.department as string | null) || 'Unknown'
+    const amount = row.total_amount ?? 0
+
     if (!deptMap.has(dept)) {
       deptMap.set(dept, { department: dept, total: 0, employee_count: 0 })
     }
-    
-    const current = deptMap.get(dept)
+
+    const current = deptMap.get(dept)!
     current.total += amount
     current.employee_count += 1
   })
-  
+
   return Array.from(deptMap.values())
     .sort((a, b) => b.total - a.total)
 }
 
-function aggregatePayrollByEmployee(data: any[]) {
-  const empMap = new Map()
-  
+function aggregatePayrollByEmployee(data: JournalEntryRow[]): QueryResult[] {
+  const empMap = new Map<string, { employee: string; total: number; payment_count: number }>()
+
   data.forEach(row => {
-    const name = `${row.first_name || ''} ${row.last_name || ''}`.trim() || 'Unknown'
-    const amount = row.total_amount || 0
-    
+    const firstName = (row.first_name as string | null) || ''
+    const lastName = (row.last_name as string | null) || ''
+    const name = `${firstName} ${lastName}`.trim() || 'Unknown'
+    const amount = row.total_amount ?? 0
+
     if (!empMap.has(name)) {
       empMap.set(name, { employee: name, total: 0, payment_count: 0 })
     }
-    
-    const current = empMap.get(name)
+
+    const current = empMap.get(name)!
     current.total += amount
     current.payment_count += 1
   })
-  
+
   return Array.from(empMap.values())
     .sort((a, b) => b.total - a.total)
     .slice(0, 10)
 }
 
 // Fallback data fetcher
-async function getFallbackData(queryType: string) {
+async function getFallbackData(queryType: string, supabase: SupabaseClient): Promise<QueryResult[]> {
   switch (queryType) {
-    case 'ar_analysis':
-      const { data: arData } = await supabase
+    case 'ar_analysis': {
+      const { data, error } = await supabase
         .from('ar_aging_detail')
         .select('*')
         .gt('open_balance', 0)
         .limit(50)
-      return arData || []
-      
-    case 'payroll':
-      const { data: payrollData } = await supabase
+
+      if (error) throw new Error(error.message)
+      return (data ?? []) as QueryResult[]
+    }
+
+    case 'payroll': {
+      const { data, error } = await supabase
         .from('payments')
         .select('*')
         .limit(100)
-      return payrollData || []
-      
-    default:
-      const { data: journalData } = await supabase
+
+      if (error) throw new Error(error.message)
+      return (data ?? []) as QueryResult[]
+    }
+
+    default: {
+      const { data, error } = await supabase
         .from('journal_entry_lines')
         .select('*')
         .limit(100)
-      return journalData || []
+
+      if (error) throw new Error(error.message)
+      return (data ?? []) as QueryResult[]
+    }
   }
 }
 
-function detectQueryType(message: string) {
+function detectQueryType(message: string): string {
   const s = String(message || '').toLowerCase()
 
   if (s.includes('accounts receivable') || s.includes('a/r') || s.includes('overdue') || s.includes('invoice'))
     return 'ar_analysis'
-  
+
   if (s.includes('payroll') || s.includes('employee') || s.includes('labor'))
     return 'payroll'
-  
+
   if (s.includes('vendor') || s.includes('accounts payable') || s.includes('a/p') || s.includes('bill'))
     return 'ap_analysis'
-  
+
   if (s.includes('customer') || s.includes('client'))
     return 'customer_analysis'
-  
+
   if (s.includes('revenue') || s.includes('income') || s.includes('profit'))
     return 'financial_analysis'
 
