@@ -322,7 +322,7 @@ export default function EnhancedMobileDashboard() {
         body: JSON.stringify({
           message: query,
           context: {
-            platform: 'I AM CFO',
+            platform: 'ALLIANCE CFO AND ADVISORY',
             userType: 'property_manager',
             requestType: 'voice_query',
             currentData: {
@@ -1424,10 +1424,17 @@ export default function EnhancedMobileDashboard() {
         color: 'white',
         boxShadow: `0 8px 32px ${BRAND_COLORS.primary}33`
       }}>
-        <div className="relative flex items-center justify-center mb-4">
+        <div className="relative mb-4">
+          <span
+            onClick={() => handlePropertySelect(null)}
+            className="block text-center"
+            style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
+          >
+            ALLIANCE CFO AND ADVISORY
+          </span>
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="absolute left-0"
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10"
             style={{
               background: 'rgba(255, 255, 255, 0.2)',
               border: 'none',
@@ -1438,12 +1445,6 @@ export default function EnhancedMobileDashboard() {
           >
             {menuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
-          <span
-            onClick={() => handlePropertySelect(null)}
-            style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
-          >
-            I AM CFO
-          </span>
         </div>
 
         {/* Dashboard Summary */}
