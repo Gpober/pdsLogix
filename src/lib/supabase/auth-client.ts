@@ -11,4 +11,5 @@ if (!supabaseAnonKey) {
   throw new Error("Missing NEXT_PUBLIC_PLATFORM_SUPABASE_ANON_KEY environment variable")
 }
 
+// This client connects to YOUR platform Supabase for authentication
 export const authClient = createClient(supabaseUrl, supabaseAnonKey)
