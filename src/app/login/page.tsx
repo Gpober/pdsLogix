@@ -36,10 +36,10 @@ export default function ClientLoginPage() {
         return
       }
 
-      // Verify user belongs to this organization
+      // Verify user belongs to this organization OR is super admin
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('organization_id, organizations(subdomain)')
+        .select('role, organization_id, organizations(subdomain, status)')
         .eq('id', authData.user.id)
         .single()
 
@@ -50,13 +50,30 @@ export default function ClientLoginPage() {
         return
       }
 
-      // Check if user belongs to THIS specific organization
+      const userRole = userData?.role
       const orgSubdomain = (userData as any).organizations?.subdomain
-      const currentSubdomain = window.location.hostname.split('.')[0] // Gets 'pdslogix' from 'pdslogix.iamcfo.com'
+      const orgStatus = (userData as any).organizations?.status
+
+      // SUPER ADMIN BYPASS - Allow super admins into any client dashboard
+      if (userRole === 'super_admin') {
+        router.push('/dashboard')
+        return
+      }
+
+      // Check if user belongs to THIS specific organization
+      const currentSubdomain = window.location.hostname.split('.')[0]
 
       if (orgSubdomain !== currentSubdomain) {
         await supabase.auth.signOut()
         setError('Access denied. You do not have permission to access this dashboard.')
+        setLoading(false)
+        return
+      }
+
+      // Check if organization is suspended
+      if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
+        await supabase.auth.signOut()
+        setError('Your account has been suspended. Please contact support.')
         setLoading(false)
         return
       }
