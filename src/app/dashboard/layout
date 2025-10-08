@@ -1,0 +1,81 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const supabase = createClient()
+
+  useEffect(() => {
+    checkAuth()
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        router.push('/login')
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  async function checkAuth() {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        router.push('/login')
+        return
+      }
+
+      // Verify user belongs to this organization
+      const currentSubdomain = window.location.hostname.split('.')[0]
+      
+      const { data: userData, error } = await supabase
+        .from('users')
+        .select('organization_id, organizations(subdomain)')
+        .eq('id', session.user.id)
+        .single()
+
+      if (error || !userData) {
+        await supabase.auth.signOut()
+        router.push('/login')
+        return
+      }
+
+      const orgSubdomain = (userData as any).organizations?.subdomain
+      
+      if (orgSubdomain !== currentSubdomain) {
+        await supabase.auth.signOut()
+        router.push('/login')
+        return
+      }
+
+      setLoading(false)
+
+    } catch (error) {
+      console.error('Auth check error:', error)
+      router.push('/login')
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <p className="mt-4 text-gray-600">Loading dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
