@@ -15,11 +15,27 @@ export default function HomePage() {
   async function checkAuthAndRedirect() {
     const { data: { session } } = await supabase.auth.getSession()
     
-    if (session) {
-      // User is logged in, redirect to dashboard
+    if (!session) {
+      // User is not logged in, redirect to login
+      router.push('/login')
+      return
+    }
+
+    // User is logged in - check if super admin or regular user
+    const { data: userData } = await supabase
+      .from('users')
+      .select('role, organization_id')
+      .eq('id', session.user.id)
+      .single()
+
+    if (userData?.role === 'super_admin') {
+      // Super admin - go straight to dashboard
+      router.push('/dashboard')
+    } else if (userData?.organization_id) {
+      // Regular user - go to dashboard
       router.push('/dashboard')
     } else {
-      // User is not logged in, redirect to login
+      // Something's wrong - send to login
       router.push('/login')
     }
   }
