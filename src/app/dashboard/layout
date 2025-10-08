@@ -35,12 +35,10 @@ export default function DashboardLayout({
         return
       }
 
-      // Verify user belongs to this organization
-      const currentSubdomain = window.location.hostname.split('.')[0]
-      
+      // Get user data including role
       const { data: userData, error } = await supabase
         .from('users')
-        .select('organization_id, organizations(subdomain)')
+        .select('role, organization_id, organizations(subdomain, status)')
         .eq('id', session.user.id)
         .single()
 
@@ -50,9 +48,28 @@ export default function DashboardLayout({
         return
       }
 
+      const userRole = userData?.role
       const orgSubdomain = (userData as any).organizations?.subdomain
+      const orgStatus = (userData as any).organizations?.status
+
+      // SUPER ADMIN BYPASS - Allow super admins to access ANY client dashboard
+      if (userRole === 'super_admin') {
+        console.log('Super admin access granted')
+        setLoading(false)
+        return
+      }
+
+      // For regular users, verify they belong to this organization
+      const currentSubdomain = window.location.hostname.split('.')[0]
       
       if (orgSubdomain !== currentSubdomain) {
+        await supabase.auth.signOut()
+        router.push('/login')
+        return
+      }
+
+      // Check if suspended or cancelled
+      if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
         await supabase.auth.signOut()
         router.push('/login')
         return
