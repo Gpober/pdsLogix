@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { supabase as dataSupabase } from '@/lib/supabaseClient'
+import { dataSupabase } from '@/lib/supabase/supabaseClient'
 import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X } from 'lucide-react'
 
 // ============================================================================
@@ -135,8 +134,7 @@ export default function MobilePayrollSubmit() {
     try {
       console.log('🔍 Mobile Payroll: Starting auth check...')
       
-      const platformClient = createClient()
-      const { data: { user }, error: authError } = await platformClient.auth.getUser()
+      const { data: { user }, error: authError } = await dataSupabase.auth.getUser()
 
       if (authError || !user) {
         console.log('❌ Mobile Payroll: No user found, redirecting to login')
@@ -149,7 +147,7 @@ export default function MobilePayrollSubmit() {
 
       // Query platform Supabase for user role and location
       console.log('🔍 Mobile Payroll: Fetching user record...')
-      const { data: userRecord, error: userError } = await platformClient
+      const { data: userRecord, error: userError } = await dataSupabase
         .from('users')
         .select('role, full_name, location_id')
         .eq('id', user.id)
@@ -398,8 +396,7 @@ export default function MobilePayrollSubmit() {
   }
 
   async function handleSignOut() {
-    const platformClient = createClient()
-    await platformClient.auth.signOut()
+    await dataSupabase.auth.signOut()
     router.push('/login')
   }
 
