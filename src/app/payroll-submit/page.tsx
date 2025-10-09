@@ -32,54 +32,36 @@ type Alert = { type: 'success' | 'error'; message: string }
 // PAYROLL PERIOD CALCULATION FROM SELECTED PAY DATE
 // ============================================================================
 
-function parseLocalDate(dateStr: string): Date | null {
-  const parts = dateStr.split('-').map(Number)
-  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) {
-    return null
-  }
-
-  const [year, month, day] = parts
-  return new Date(year, month - 1, day)
-}
-
-function formatDisplayDate(dateStr: string, options?: Intl.DateTimeFormatOptions): string {
-  const date = parseLocalDate(dateStr)
-  if (!date) {
-    return dateStr
-  }
-
-  return date.toLocaleDateString('en-US', options)
-}
-
 function calculatePayrollInfo(payDateStr: string): {
   payrollGroup: PayrollGroup
   periodStart: string
   periodEnd: string
 } {
+  console.log('🔍 Input payDateStr:', payDateStr)
+  
   // Parse date in local timezone to avoid timezone issues
-  const payDate = parseLocalDate(payDateStr)
-  if (!payDate) {
-    return {
-      payrollGroup: 'A',
-      periodStart: payDateStr,
-      periodEnd: payDateStr,
-    }
-  }
+  const [year, month, day] = payDateStr.split('-').map(Number)
+  console.log('📅 Parsed:', { year, month, day })
+  
+  const payDate = new Date(year, month - 1, day, 12, 0, 0) // Set to noon to avoid DST issues
+  console.log('📅 Pay Date object:', payDate.toString())
   
   // Period END is the Wednesday 9 days before pay date
-  const periodEnd = new Date(payDate)
-  periodEnd.setDate(payDate.getDate() - 9) // Wednesday, 9 days before Friday
+  const periodEnd = new Date(year, month - 1, day - 9, 12, 0, 0)
+  console.log('📅 Period End object:', periodEnd.toString())
   
   // Period START is 2 weeks (14 days) before period end
-  const periodStart = new Date(periodEnd)
-  periodStart.setDate(periodEnd.getDate() - 13) // 14 days total (including end date)
+  const periodStart = new Date(year, month - 1, day - 9 - 13, 12, 0, 0)
+  console.log('📅 Period Start object:', periodStart.toString())
   
   // Determine payroll group based on which week
   // Using January 3, 2025 (first Friday of 2025) as Group A reference
-  const referenceDate = new Date(2025, 0, 3) // January 3, 2025 = Group A
+  const referenceDate = new Date(2025, 0, 3, 12, 0, 0)
   const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
   const weeksDifference = Math.floor(daysDifference / 7)
-  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'B' : 'A'
+  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'A' : 'B'
+  
+  console.log('🔢 Days difference:', daysDifference, 'Weeks:', weeksDifference, 'Group:', payrollGroup)
   
   // Format dates as YYYY-MM-DD in local timezone
   const formatDate = (date: Date) => {
@@ -89,11 +71,14 @@ function calculatePayrollInfo(payDateStr: string): {
     return `${y}-${m}-${d}`
   }
   
-  return {
+  const result = {
     payrollGroup,
     periodStart: formatDate(periodStart),
     periodEnd: formatDate(periodEnd),
   }
+  
+  console.log('✅ Final result:', result)
+  return result
 }
 
 function getNextFriday(): string {
@@ -110,15 +95,10 @@ function getNextFriday(): string {
 }
 
 function formatDateRange(startDate: string, endDate: string) {
-  const start = parseLocalDate(startDate)
-  const end = parseLocalDate(endDate)
-
-  if (!start || !end) {
-    return `${startDate} - ${endDate}`
-  }
-
-  const startFormatted = formatDisplayDate(startDate, { month: 'short', day: 'numeric', year: 'numeric' })
-  const endFormatted = formatDisplayDate(endDate, { month: 'short', day: 'numeric', year: 'numeric' })
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   return `${startFormatted} - ${endFormatted}`
 }
 
@@ -165,26 +145,113 @@ export default function PayrollSubmit() {
 
   async function checkAuthAndLoadData() {
     try {
+      console.log('🔍 Desktop Payroll: Starting auth check...')
+      
       const platformClient = createClient()
       const { data: { user }, error: authError } = await platformClient.auth.getUser()
-      if (authError || !user) { router.replace('/login'); return }
+      
+      if (authError || !user) {
+        console.log('❌ Desktop Payroll: No user found')
+        router.replace('/login')
+        return
+      }
+      
       setUserId(user.id)
-      const { data: userRecord, error: userError } = await platformClient.from('users').select('role, location_id').eq('id', user.id).single()
-      if (userError || !userRecord) { router.replace('/login'); return }
+      console.log('✅ Desktop Payroll: User authenticated:', user.email)
+      
+      const { data: userRecord, error: userError } = await platformClient
+        .from('users')
+        .select('role, location_id')
+        .eq('id', user.id)
+        .single()
+      
+      if (userError) {
+        console.error('❌ Desktop Payroll: User record error:', userError)
+        setIsInitializing(false)
+        return
+      }
+      
+      if (!userRecord) {
+        console.error('❌ Desktop Payroll: No user record found')
+        router.replace('/login')
+        return
+      }
+      
       const role = userRecord.role as string
-      const locId = userRecord.location_id as string
+      let locId = userRecord.location_id as string
+      
+      console.log('✅ Desktop Payroll: User role:', role, 'Location ID:', locId)
+      
       setUserRole(role)
-      setLocationId(locId)
-      if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') { router.replace('/dashboard'); return }
-      try {
-        const { data: locationData } = await dataSupabase.from('locations').select('name').eq('id', locId).single()
-        setLocationName(locationData?.name || 'Unknown Location')
-      } catch (err) { setLocationName('Unknown Location') }
+      
+      // SUPER ADMIN: If no location_id, get the first available location
+      if (role === 'super_admin' && !locId) {
+        console.log('🔍 Super admin without location - fetching first location...')
+        try {
+          const { data: locations, error: locError } = await dataSupabase
+            .from('locations')
+            .select('id, name')
+            .eq('is_active', true)
+            .limit(1)
+            .single()
+          
+          if (!locError && locations) {
+            locId = locations.id
+            setLocationId(locId)
+            setLocationName(locations.name)
+            console.log('✅ Using location:', locations.name, '(', locId, ')')
+          } else {
+            console.error('❌ No locations found')
+            setLocationName('No Location Available')
+            setIsInitializing(false)
+            return
+          }
+        } catch (err) {
+          console.error('❌ Failed to fetch location:', err)
+          setLocationName('Error Loading Location')
+          setIsInitializing(false)
+          return
+        }
+      } else {
+        setLocationId(locId)
+      }
+      
+      if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
+        console.log('❌ Desktop Payroll: Access denied for role:', role)
+        router.replace('/dashboard')
+        return
+      }
+      
+      console.log('✅ Desktop Payroll: Access granted for role:', role)
+      
+      // Get location name if we don't have it yet
+      if (!locationName || locationName === '') {
+        try {
+          const { data: locationData, error: locError } = await dataSupabase
+            .from('locations')
+            .select('name')
+            .eq('id', locId)
+            .single()
+          
+          if (locError) {
+            console.warn('⚠️ Desktop Payroll: Location fetch failed:', locError)
+            setLocationName('Unknown Location')
+          } else {
+            setLocationName(locationData?.name || 'Unknown Location')
+            console.log('✅ Desktop Payroll: Location name:', locationData?.name)
+          }
+        } catch (err) {
+          console.warn('⚠️ Desktop Payroll: Location fetch error:', err)
+          setLocationName('Unknown Location')
+        }
+      }
+      
       setIsInitializing(false)
+      console.log('✅ Desktop Payroll: Initialization complete, loading employees...')
       await loadEmployees(locId)
     } catch (error) {
-      console.error('Auth error:', error)
-      router.replace('/login')
+      console.error('❌ Desktop Payroll: Auth error:', error)
+      setIsInitializing(false)
     }
   }
 
@@ -353,11 +420,7 @@ export default function PayrollSubmit() {
             </div>
             <div className="text-right">
               <h2 className="text-sm font-medium text-blue-100 mb-1">Pay Date</h2>
-              <p className="text-2xl font-bold">{
-                payDate
-                  ? formatDisplayDate(payDate, { month: 'short', day: 'numeric', year: 'numeric' })
-                  : '-'
-              }</p>
+              <p className="text-2xl font-bold">{payDate ? new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
             </div>
           </div>
         </div>
