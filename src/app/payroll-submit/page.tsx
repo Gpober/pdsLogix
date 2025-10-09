@@ -32,14 +32,39 @@ type Alert = { type: 'success' | 'error'; message: string }
 // PAYROLL PERIOD CALCULATION FROM SELECTED PAY DATE
 // ============================================================================
 
+function parseLocalDate(dateStr: string): Date | null {
+  const parts = dateStr.split('-').map(Number)
+  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) {
+    return null
+  }
+
+  const [year, month, day] = parts
+  return new Date(year, month - 1, day)
+}
+
+function formatDisplayDate(dateStr: string, options?: Intl.DateTimeFormatOptions): string {
+  const date = parseLocalDate(dateStr)
+  if (!date) {
+    return dateStr
+  }
+
+  return date.toLocaleDateString('en-US', options)
+}
+
 function calculatePayrollInfo(payDateStr: string): {
   payrollGroup: PayrollGroup
   periodStart: string
   periodEnd: string
 } {
   // Parse date in local timezone to avoid timezone issues
-  const [year, month, day] = payDateStr.split('-').map(Number)
-  const payDate = new Date(year, month - 1, day)
+  const payDate = parseLocalDate(payDateStr)
+  if (!payDate) {
+    return {
+      payrollGroup: 'A',
+      periodStart: payDateStr,
+      periodEnd: payDateStr,
+    }
+  }
   
   // Period END is the Wednesday 9 days before pay date
   const periodEnd = new Date(payDate)
@@ -85,10 +110,15 @@ function getNextFriday(): string {
 }
 
 function formatDateRange(startDate: string, endDate: string) {
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const start = parseLocalDate(startDate)
+  const end = parseLocalDate(endDate)
+
+  if (!start || !end) {
+    return `${startDate} - ${endDate}`
+  }
+
+  const startFormatted = formatDisplayDate(startDate, { month: 'short', day: 'numeric', year: 'numeric' })
+  const endFormatted = formatDisplayDate(endDate, { month: 'short', day: 'numeric', year: 'numeric' })
   return `${startFormatted} - ${endFormatted}`
 }
 
@@ -323,7 +353,11 @@ export default function PayrollSubmit() {
             </div>
             <div className="text-right">
               <h2 className="text-sm font-medium text-blue-100 mb-1">Pay Date</h2>
-              <p className="text-2xl font-bold">{payDate ? new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
+              <p className="text-2xl font-bold">{
+                payDate
+                  ? formatDisplayDate(payDate, { month: 'short', day: 'numeric', year: 'numeric' })
+                  : '-'
+              }</p>
             </div>
           </div>
         </div>
