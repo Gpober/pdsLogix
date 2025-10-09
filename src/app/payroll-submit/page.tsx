@@ -28,23 +28,46 @@ type EmployeeRow = Employee & {
 
 type Alert = { type: 'success' | 'error'; message: string }
 
-function getPayrollInfo(date = new Date()) {
-  const current = new Date(date)
-  const dayOfWeek = current.getDay()
-  const daysToSubtract = dayOfWeek >= 5 ? dayOfWeek - 5 : dayOfWeek + 2
-  const mostRecentFriday = new Date(current)
-  mostRecentFriday.setDate(current.getDate() - daysToSubtract)
-  const periodEnd = new Date(mostRecentFriday)
-  periodEnd.setDate(mostRecentFriday.getDate() - 9)
+// ============================================================================
+// PAYROLL PERIOD CALCULATION FROM SELECTED PAY DATE
+// ============================================================================
+
+function calculatePayrollInfo(payDateStr: string): {
+  payrollGroup: PayrollGroup
+  periodStart: string
+  periodEnd: string
+} {
+  const payDate = new Date(payDateStr)
+  
+  // Period END is the Wednesday before pay date (2 days before Friday)
+  const periodEnd = new Date(payDate)
+  periodEnd.setDate(payDate.getDate() - 2) // Wednesday
+  
+  // Period START is 2 weeks (14 days) before period end
   const periodStart = new Date(periodEnd)
-  periodStart.setDate(periodEnd.getDate() - 13)
-  const payrollGroup: PayrollGroup = mostRecentFriday.getDate() <= 14 ? 'A' : 'B'
+  periodStart.setDate(periodEnd.getDate() - 13) // 14 days total (including end date)
+  
+  // Determine payroll group based on which week
+  // Using January 3, 2025 (first Friday of 2025) as Group A reference
+  const referenceDate = new Date('2025-01-03') // First Friday of 2025 = Group A
+  const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
+  const weeksDifference = Math.floor(daysDifference / 7)
+  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'A' : 'B'
+  
   return {
-    payDate: mostRecentFriday.toISOString().split('T')[0],
     payrollGroup,
     periodStart: periodStart.toISOString().split('T')[0],
     periodEnd: periodEnd.toISOString().split('T')[0],
   }
+}
+
+function getNextFriday(): string {
+  const today = new Date()
+  const dayOfWeek = today.getDay()
+  const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 6
+  const nextFriday = new Date(today)
+  nextFriday.setDate(today.getDate() + daysUntilFriday)
+  return nextFriday.toISOString().split('T')[0]
 }
 
 function formatDateRange(startDate: string, endDate: string) {
@@ -71,13 +94,28 @@ export default function PayrollSubmit() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([])
   const [alert, setAlert] = useState<Alert | null>(null)
 
+  // Initialize with next Friday
   useEffect(() => {
-    const payrollInfo = getPayrollInfo()
-    setPayDate(payrollInfo.payDate)
-    setPayrollGroup(payrollInfo.payrollGroup)
-    setPeriodStart(payrollInfo.periodStart)
-    setPeriodEnd(payrollInfo.periodEnd)
+    const nextFriday = getNextFriday()
+    setPayDate(nextFriday)
+    const info = calculatePayrollInfo(nextFriday)
+    setPayrollGroup(info.payrollGroup)
+    setPeriodStart(info.periodStart)
+    setPeriodEnd(info.periodEnd)
+    console.log('📅 Desktop Payroll Info:', { payDate: nextFriday, ...info })
   }, [])
+
+  // Recalculate when pay date changes
+  function handlePayDateChange(newPayDate: string) {
+    setPayDate(newPayDate)
+    if (newPayDate) {
+      const info = calculatePayrollInfo(newPayDate)
+      setPayrollGroup(info.payrollGroup)
+      setPeriodStart(info.periodStart)
+      setPeriodEnd(info.periodEnd)
+      console.log('📅 Updated Payroll Info:', { payDate: newPayDate, ...info })
+    }
+  }
 
   useEffect(() => { checkAuthAndLoadData() }, [])
 
@@ -242,22 +280,41 @@ export default function PayrollSubmit() {
             <button onClick={() => setAlert(null)} className={alert.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>✕</button>
           </div>
         )}
+
+        {/* Pay Date Selector */}
+        <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 mb-6 border border-gray-200 dark:border-gray-800">
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Select Pay Date (Friday)
+            </label>
+            <input
+              type="date"
+              value={payDate}
+              onChange={(e) => handlePayDateChange(e.target.value)}
+              className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+        </div>
+
+        {/* Pay Period Info Card */}
         <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 mb-6 text-white shadow-lg">
           <div className="flex items-start justify-between">
             <div>
               <h2 className="text-sm font-medium text-blue-100 mb-1">Pay Period</h2>
-              <p className="text-2xl font-bold mb-4">{formatDateRange(periodStart, periodEnd)}</p>
+              <p className="text-2xl font-bold mb-4">{periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}</p>
               <div className="flex items-center gap-3">
                 <span className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-semibold">Payroll Group {payrollGroup}</span>
-                <span className="text-blue-100 text-sm">Every other Friday</span>
+                <span className="text-blue-100 text-sm">Auto-calculated from pay date</span>
               </div>
             </div>
             <div className="text-right">
               <h2 className="text-sm font-medium text-blue-100 mb-1">Pay Date</h2>
-              <p className="text-2xl font-bold">{new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+              <p className="text-2xl font-bold">{payDate ? new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
             </div>
           </div>
         </div>
+
+        {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800">
             <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Total Employees</p>
@@ -280,6 +337,8 @@ export default function PayrollSubmit() {
             <p className="text-xs text-gray-500 mt-1">Before taxes</p>
           </div>
         </div>
+
+        {/* Employee Table */}
         <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
           <div className="overflow-x-auto">
             {isLoading ? (
@@ -328,6 +387,8 @@ export default function PayrollSubmit() {
             )}
           </div>
         </div>
+
+        {/* Submit Button */}
         <div className="mt-6 flex items-center justify-between">
           <p className="text-sm text-gray-600 dark:text-gray-400">Press <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs font-mono">Ctrl+Enter</kbd> to submit</p>
           <button onClick={handleSubmit} disabled={isSubmitting || totals.employees === 0} className={`inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-semibold text-white shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${isSubmitting || totals.employees === 0 ? 'cursor-not-allowed bg-gray-400 dark:bg-gray-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
