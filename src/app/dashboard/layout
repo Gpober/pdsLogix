@@ -75,10 +75,13 @@ export default function DashboardLayout({
         const currentPath = window.location.pathname
 
         // If employee is NOT on a payroll page, redirect them
-        if (!currentPath.includes('/payroll-submit')) {
+        const isOnPayrollPage = currentPath.includes('/payroll-submit') || 
+                                currentPath.includes('/mobile-payroll-submit')
+        
+        if (!isOnPayrollPage) {
           if (isMobile) {
             console.log('📱 Employee detected - redirecting to mobile payroll')
-            router.push('/mobile-payroll-submit') // ✅ CORRECTED
+            router.push('/mobile-payroll-submit')
           } else {
             console.log('💻 Employee detected - redirecting to desktop payroll')
             router.push('/payroll-submit')
