@@ -124,7 +124,6 @@ export default function PayrollSubmitPage() {
         const role = userRecord?.role
 
         // Allow employees, admins, owners, and super_admin
-        // (But layout will prevent non-employees from reaching dashboard)
         if (!role) {
           router.replace('/login')
           return
@@ -513,7 +512,7 @@ export default function PayrollSubmitPage() {
   }, [totals.employeeCount, isSubmitting])
 
   // ============================================================================
-  // SIGN OUT HANDLER (Only for employees)
+  // SIGN OUT HANDLER
   // ============================================================================
 
   const handleSignOut = async () => {
@@ -574,7 +573,7 @@ export default function PayrollSubmitPage() {
       <div className="px-4 py-8 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
           
-          {/* Page Title - Different for employees vs admins */}
+          {/* Page Title */}
           <div className="mb-6">
             {userRole === 'employee' ? (
               <div className="text-center">
@@ -825,13 +824,4 @@ export default function PayrollSubmitPage() {
       </div>
     </div>
   )
-}">
-                          Employee
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
-                          Type
-                        </th>
-                        <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
-                          Rate
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300
+}
