@@ -45,7 +45,9 @@ function calculatePayrollInfo(payDateStr: string): {
   periodStart: string
   periodEnd: string
 } {
-  const payDate = new Date(payDateStr)
+  // Parse date in local timezone to avoid timezone issues
+  const [year, month, day] = payDateStr.split('-').map(Number)
+  const payDate = new Date(year, month - 1, day)
   
   // Period END is the Wednesday 9 days before pay date
   const periodEnd = new Date(payDate)
@@ -57,15 +59,23 @@ function calculatePayrollInfo(payDateStr: string): {
   
   // Determine payroll group based on which week
   // Using January 3, 2025 (first Friday of 2025) as Group A reference
-  const referenceDate = new Date('2025-01-03') // First Friday of 2025 = Group A
+  const referenceDate = new Date(2025, 0, 3) // January 3, 2025 = Group A
   const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
   const weeksDifference = Math.floor(daysDifference / 7)
   const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'A' : 'B'
   
+  // Format dates as YYYY-MM-DD in local timezone
+  const formatDate = (date: Date) => {
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  
   return {
     payrollGroup,
-    periodStart: periodStart.toISOString().split('T')[0],
-    periodEnd: periodEnd.toISOString().split('T')[0],
+    periodStart: formatDate(periodStart),
+    periodEnd: formatDate(periodEnd),
   }
 }
 
@@ -75,7 +85,11 @@ function getNextFriday(): string {
   const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 6
   const nextFriday = new Date(today)
   nextFriday.setDate(today.getDate() + daysUntilFriday)
-  return nextFriday.toISOString().split('T')[0]
+  
+  const y = nextFriday.getFullYear()
+  const m = String(nextFriday.getMonth() + 1).padStart(2, '0')
+  const d = String(nextFriday.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 function formatDateRange(startDate: string, endDate: string): string {
