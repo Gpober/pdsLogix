@@ -14,7 +14,7 @@ export default function DashboardLayout({
   const supabase = createClient()
 
   useEffect(() => {
-    checkAuth()
+    checkAuthAndRoute()
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -26,8 +26,9 @@ export default function DashboardLayout({
     return () => subscription.unsubscribe()
   }, [])
 
-  async function checkAuth() {
+  async function checkAuthAndRoute() {
     try {
+      // Get current session
       const { data: { session } } = await supabase.auth.getSession()
       
       if (!session) {
@@ -35,7 +36,7 @@ export default function DashboardLayout({
         return
       }
 
-      // Get user data including role
+      // Get user data including role and organization
       const { data: userData, error } = await supabase
         .from('users')
         .select('role, organization_id, organizations(subdomain, status)')
@@ -43,6 +44,7 @@ export default function DashboardLayout({
         .single()
 
       if (error || !userData) {
+        console.error('Failed to load user data:', error)
         await supabase.auth.signOut()
         router.push('/login')
         return
@@ -52,43 +54,136 @@ export default function DashboardLayout({
       const orgSubdomain = (userData as any).organizations?.subdomain
       const orgStatus = (userData as any).organizations?.status
 
-      // SUPER ADMIN BYPASS - Allow super admins to access ANY client dashboard
+      // =================================================================
+      // SUPER ADMIN BYPASS - Full access to everything
+      // =================================================================
       if (userRole === 'super_admin') {
-        console.log('Super admin access granted')
+        console.log('✅ Super admin access granted')
+        setLoading(false)
+        return // Allow access to any page
+      }
+
+      // =================================================================
+      // EMPLOYEE ROUTING - Only payroll submit page, no dashboard access
+      // =================================================================
+      if (userRole === 'employee') {
+        // Detect if mobile device
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) 
+          || window.innerWidth < 768
+
+        // Check current path
+        const currentPath = window.location.pathname
+
+        // If employee is NOT on a payroll page, redirect them
+        if (!currentPath.includes('/payroll-submit')) {
+          if (isMobile) {
+            console.log('📱 Employee detected - redirecting to mobile payroll')
+            router.push('/mobile/payroll-submit')
+          } else {
+            console.log('💻 Employee detected - redirecting to desktop payroll')
+            router.push('/payroll-submit')
+          }
+          return
+        }
+
+        // Employee is on correct page - allow access
+        console.log('✅ Employee on payroll page - access granted')
         setLoading(false)
         return
       }
 
-      // For regular users, verify they belong to this organization
-      const currentSubdomain = window.location.hostname.split('.')[0]
-      
-      if (orgSubdomain !== currentSubdomain) {
-        await supabase.auth.signOut()
-        router.push('/login')
+      // =================================================================
+      // ADMIN/OWNER ROUTING - Full dashboard access
+      // =================================================================
+      if (userRole === 'owner' || userRole === 'admin') {
+        // Verify organization subdomain match
+        const currentSubdomain = window.location.hostname.split('.')[0]
+        
+        if (orgSubdomain !== currentSubdomain) {
+          console.error('❌ Subdomain mismatch')
+          await supabase.auth.signOut()
+          router.push('/login')
+          return
+        }
+
+        // Check if organization is suspended or cancelled
+        if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
+          console.error('❌ Organization suspended or cancelled')
+          await supabase.auth.signOut()
+          router.push('/login')
+          return
+        }
+
+        // Detect if mobile device
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) 
+          || window.innerWidth < 768
+
+        // Route mobile users to mobile dashboard (unless on specific pages)
+        if (isMobile) {
+          const currentPath = window.location.pathname
+          
+          // Don't redirect if they're on payroll or other specific pages
+          if (!currentPath.includes('/payroll-submit') && 
+              !currentPath.includes('/mobile-dashboard') &&
+              currentPath === '/dashboard') {
+            console.log('📱 Admin/Owner mobile - redirecting to mobile dashboard')
+            router.push('/mobile-dashboard')
+            return
+          }
+        }
+
+        // Admin/Owner has full access
+        console.log('✅ Admin/Owner access granted')
+        setLoading(false)
         return
       }
 
-      // Check if suspended or cancelled
-      if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
-        await supabase.auth.signOut()
-        router.push('/login')
+      // =================================================================
+      // MEMBER ROLE - Standard access
+      // =================================================================
+      if (userRole === 'member') {
+        // Verify organization subdomain match
+        const currentSubdomain = window.location.hostname.split('.')[0]
+        
+        if (orgSubdomain !== currentSubdomain) {
+          console.error('❌ Subdomain mismatch')
+          await supabase.auth.signOut()
+          router.push('/login')
+          return
+        }
+
+        // Check if organization is suspended or cancelled
+        if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
+          console.error('❌ Organization suspended or cancelled')
+          await supabase.auth.signOut()
+          router.push('/login')
+          return
+        }
+
+        console.log('✅ Member access granted')
+        setLoading(false)
         return
       }
 
-      setLoading(false)
+      // =================================================================
+      // UNKNOWN ROLE - Deny access
+      // =================================================================
+      console.error('❌ Unknown user role:', userRole)
+      await supabase.auth.signOut()
+      router.push('/login')
 
     } catch (error) {
-      console.error('Auth check error:', error)
+      console.error('❌ Auth check error:', error)
       router.push('/login')
     }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center dark:bg-gray-950">
         <div className="text-center">
           <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          <p className="mt-4 text-gray-600">Loading dashboard...</p>
+          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
         </div>
       </div>
     )
