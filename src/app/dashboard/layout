@@ -78,7 +78,7 @@ export default function DashboardLayout({
         if (!currentPath.includes('/payroll-submit')) {
           if (isMobile) {
             console.log('📱 Employee detected - redirecting to mobile payroll')
-            router.push('/mobile/payroll-submit')
+            router.push('/mobile-payroll-submit') // ✅ CORRECTED
           } else {
             console.log('💻 Employee detected - redirecting to desktop payroll')
             router.push('/payroll-submit')
