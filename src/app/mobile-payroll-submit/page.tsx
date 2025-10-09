@@ -13,67 +13,6 @@ import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X } from '
 type PayrollGroup = 'A' | 'B'
 type CompensationType = 'hourly' | 'production'
 
-// ============================================================================
-// PAYROLL PERIOD CALCULATION
-// ============================================================================
-
-function getPayrollInfo(date: Date = new Date()): {
-  payDate: string
-  payrollGroup: PayrollGroup
-  periodStart: string
-  periodEnd: string
-  nextPayDate: string
-} {
-  // Find the most recent Friday (or today if it's Friday)
-  const current = new Date(date)
-  const dayOfWeek = current.getDay()
-  const daysToSubtract = dayOfWeek >= 5 ? dayOfWeek - 5 : dayOfWeek + 2
-  
-  const mostRecentFriday = new Date(current)
-  mostRecentFriday.setDate(current.getDate() - daysToSubtract)
-  
-  // Calculate the Wednesday 2 weeks and 2 days before (16 days total)
-  const periodEnd = new Date(mostRecentFriday)
-  periodEnd.setDate(mostRecentFriday.getDate() - 9) // Wednesday before pay date
-  
-  const periodStart = new Date(periodEnd)
-  periodStart.setDate(periodEnd.getDate() - 13) // 2 weeks before period end
-  
-  // Determine payroll group based on the pay date
-  // Group A: First and third Friday of month (roughly)
-  // Group B: Second and fourth Friday of month (roughly)
-  // Simple rule: if day is 1-14, it's likely Group A, 15-31 is Group B
-  const payrollGroup: PayrollGroup = mostRecentFriday.getDate() <= 14 ? 'A' : 'B'
-  
-  // Next pay date (7 days later)
-  const nextPayDate = new Date(mostRecentFriday)
-  nextPayDate.setDate(mostRecentFriday.getDate() + 7)
-  
-  return {
-    payDate: mostRecentFriday.toISOString().split('T')[0],
-    payrollGroup,
-    periodStart: periodStart.toISOString().split('T')[0],
-    periodEnd: periodEnd.toISOString().split('T')[0],
-    nextPayDate: nextPayDate.toISOString().split('T')[0],
-  }
-}
-
-function formatDateRange(startDate: string, endDate: string): string {
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  
-  const startMonth = start.toLocaleDateString('en-US', { month: 'short' })
-  const startDay = start.getDate()
-  const endMonth = end.toLocaleDateString('en-US', { month: 'short' })
-  const endDay = end.getDate()
-  
-  if (startMonth === endMonth) {
-    return `${startMonth} ${startDay}-${endDay}`
-  } else {
-    return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
-  }
-}
-
 type Employee = {
   id: string
   first_name: string
@@ -98,6 +37,75 @@ type Alert = {
 }
 
 // ============================================================================
+// PAYROLL PERIOD CALCULATION
+// ============================================================================
+
+function getPayrollInfo(date: Date = new Date()): {
+  payDate: string
+  payrollGroup: PayrollGroup
+  periodStart: string
+  periodEnd: string
+} {
+  // Find the most recent Friday (pay date)
+  const current = new Date(date)
+  const dayOfWeek = current.getDay() // 0 = Sunday, 5 = Friday
+  
+  let daysToSubtract: number
+  if (dayOfWeek === 5) {
+    // Today is Friday, use today
+    daysToSubtract = 0
+  } else if (dayOfWeek === 6) {
+    // Saturday, use yesterday (Friday)
+    daysToSubtract = 1
+  } else {
+    // Sunday (0) through Thursday (4), go back to last Friday
+    daysToSubtract = dayOfWeek === 0 ? 2 : dayOfWeek + 2
+  }
+  
+  const payDate = new Date(current)
+  payDate.setDate(current.getDate() - daysToSubtract)
+  
+  // Period END is the Wednesday before pay date (2 days before Friday)
+  const periodEnd = new Date(payDate)
+  periodEnd.setDate(payDate.getDate() - 2) // Wednesday
+  
+  // Period START is 2 weeks (14 days) before period end
+  const periodStart = new Date(periodEnd)
+  periodStart.setDate(periodEnd.getDate() - 13) // 14 days total (including end date)
+  
+  // Determine payroll group based on which week of the month
+  // We'll use a reference date to determine A vs B
+  // January 1, 2025 was a Wednesday, let's say first payroll after that is Group A
+  const referenceDate = new Date('2025-01-03') // First Friday of 2025 = Group A
+  const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
+  const weeksDifference = Math.floor(daysDifference / 7)
+  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'A' : 'B'
+  
+  return {
+    payDate: payDate.toISOString().split('T')[0],
+    payrollGroup,
+    periodStart: periodStart.toISOString().split('T')[0],
+    periodEnd: periodEnd.toISOString().split('T')[0],
+  }
+}
+
+function formatDateRange(startDate: string, endDate: string): string {
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  
+  const startMonth = start.toLocaleDateString('en-US', { month: 'short' })
+  const startDay = start.getDate()
+  const endMonth = end.toLocaleDateString('en-US', { month: 'short' })
+  const endDay = end.getDate()
+  
+  if (startMonth === endMonth) {
+    return `${startMonth} ${startDay}-${endDay}`
+  } else {
+    return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
+  }
+}
+
+// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
@@ -115,13 +123,26 @@ export default function MobilePayrollSubmit() {
   const [locationName, setLocationName] = useState<string>('')
 
   // Form state
-  const [payDate, setPayDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  )
+  const [payDate, setPayDate] = useState<string>('')
   const [payrollGroup, setPayrollGroup] = useState<PayrollGroup>('A')
+  const [periodStart, setPeriodStart] = useState<string>('')
+  const [periodEnd, setPeriodEnd] = useState<string>('')
   const [employees, setEmployees] = useState<EmployeeRow[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
   const [alert, setAlert] = useState<Alert | null>(null)
+
+  // ============================================================================
+  // INITIALIZE PAYROLL INFO
+  // ============================================================================
+
+  useEffect(() => {
+    const payrollInfo = getPayrollInfo()
+    setPayDate(payrollInfo.payDate)
+    setPayrollGroup(payrollInfo.payrollGroup)
+    setPeriodStart(payrollInfo.periodStart)
+    setPeriodEnd(payrollInfo.periodEnd)
+    console.log('📅 Payroll Info:', payrollInfo)
+  }, [])
 
   // ============================================================================
   // AUTH & INITIALIZATION
@@ -157,7 +178,6 @@ export default function MobilePayrollSubmit() {
 
       if (userError) {
         console.error('❌ Mobile Payroll: User record error:', userError)
-        // Don't redirect, just show error state
         setIsInitializing(false)
         showAlert('error', 'Failed to load user data. Please refresh.')
         return
@@ -239,8 +259,9 @@ export default function MobilePayrollSubmit() {
       }))
 
       setEmployees(rows)
+      console.log('✅ Mobile Payroll: Loaded', rows.length, 'employees')
     } catch (error) {
-      console.error('Error loading employees:', error)
+      console.error('❌ Mobile Payroll: Error loading employees:', error)
       showAlert('error', 'Failed to load employees')
     } finally {
       setIsLoading(false)
@@ -566,28 +587,34 @@ export default function MobilePayrollSubmit() {
           </div>
         )}
 
-        {/* Controls */}
+        {/* Pay Period Card */}
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 mb-4 border border-white/20">
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div>
-              <label className="text-blue-200 text-xs font-medium mb-2 block">Pay Date</label>
-              <input
-                type="date"
-                value={payDate}
-                onChange={(e) => setPayDate(e.target.value)}
-                className="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              />
+          <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="text-blue-200 text-xs font-medium mb-1">Pay Period</p>
+                <p className="text-white text-lg font-bold">
+                  {formatDateRange(periodStart, periodEnd)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-blue-200 text-xs font-medium mb-1">Pay Date</p>
+                <p className="text-white text-lg font-bold">
+                  {new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                </p>
+              </div>
             </div>
-            <div>
-              <label className="text-blue-200 text-xs font-medium mb-2 block">Group</label>
-              <select
-                value={payrollGroup}
-                onChange={(e) => setPayrollGroup(e.target.value as PayrollGroup)}
-                className="w-full px-3 py-2 bg-white/5 border border-white/20 rounded-lg text-white text-sm focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="A">Group A</option>
-                <option value="B">Group B</option>
-              </select>
+            <div className="flex items-center gap-2">
+              <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                payrollGroup === 'A' 
+                  ? 'bg-blue-500/30 text-blue-100' 
+                  : 'bg-purple-500/30 text-purple-100'
+              }`}>
+                Payroll Group {payrollGroup}
+              </span>
+              <span className="text-blue-200 text-xs">
+                Every other Friday
+              </span>
             </div>
           </div>
 
