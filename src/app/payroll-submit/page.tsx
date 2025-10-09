@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { supabase as dataSupabase } from '@/lib/supabaseClient'
+import { dataSupabase } from '@/lib/supabase/supabaseClient'
 
 // ============================================================================
 // TYPES
@@ -133,8 +132,7 @@ export default function PayrollSubmit() {
 
   async function checkAuthAndLoadData() {
     try {
-      const platformClient = createClient()
-      const { data: { user }, error: authError } = await platformClient.auth.getUser()
+      const { data: { user }, error: authError } = await dataSupabase.auth.getUser()
 
       if (authError || !user) {
         router.replace('/login')
@@ -143,7 +141,7 @@ export default function PayrollSubmit() {
 
       setUserId(user.id)
 
-      const { data: userRecord, error: userError } = await platformClient
+      const { data: userRecord, error: userError } = await dataSupabase
         .from('users')
         .select('role, location_id')
         .eq('id', user.id)
@@ -378,8 +376,7 @@ export default function PayrollSubmit() {
   }, [handleKeyPress])
 
   async function handleSignOut() {
-    const platformClient = createClient()
-    await platformClient.auth.signOut()
+    await dataSupabase.auth.signOut()
     router.push('/login')
   }
 
