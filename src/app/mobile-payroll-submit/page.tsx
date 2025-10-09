@@ -47,9 +47,9 @@ function calculatePayrollInfo(payDateStr: string): {
 } {
   const payDate = new Date(payDateStr)
   
-  // Period END is the Wednesday before pay date (2 days before Friday)
+  // Period END is the Wednesday 9 days before pay date
   const periodEnd = new Date(payDate)
-  periodEnd.setDate(payDate.getDate() - 2) // Wednesday
+  periodEnd.setDate(payDate.getDate() - 9) // Wednesday, 9 days before Friday
   
   // Period START is 2 weeks (14 days) before period end
   const periodStart = new Date(periodEnd)
