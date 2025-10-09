@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { supabase as dataSupabase } from '@/lib/supabaseClient'
-import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X } from 'lucide-react'
+import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar } from 'lucide-react'
 
 // ============================================================================
 // TYPES
@@ -37,33 +37,15 @@ type Alert = {
 }
 
 // ============================================================================
-// PAYROLL PERIOD CALCULATION
+// PAYROLL PERIOD CALCULATION FROM SELECTED PAY DATE
 // ============================================================================
 
-function getPayrollInfo(date: Date = new Date()): {
-  payDate: string
+function calculatePayrollInfo(payDateStr: string): {
   payrollGroup: PayrollGroup
   periodStart: string
   periodEnd: string
 } {
-  // Find the most recent Friday (pay date)
-  const current = new Date(date)
-  const dayOfWeek = current.getDay() // 0 = Sunday, 5 = Friday
-  
-  let daysToSubtract: number
-  if (dayOfWeek === 5) {
-    // Today is Friday, use today
-    daysToSubtract = 0
-  } else if (dayOfWeek === 6) {
-    // Saturday, use yesterday (Friday)
-    daysToSubtract = 1
-  } else {
-    // Sunday (0) through Thursday (4), go back to last Friday
-    daysToSubtract = dayOfWeek === 0 ? 2 : dayOfWeek + 2
-  }
-  
-  const payDate = new Date(current)
-  payDate.setDate(current.getDate() - daysToSubtract)
+  const payDate = new Date(payDateStr)
   
   // Period END is the Wednesday before pay date (2 days before Friday)
   const periodEnd = new Date(payDate)
@@ -73,20 +55,27 @@ function getPayrollInfo(date: Date = new Date()): {
   const periodStart = new Date(periodEnd)
   periodStart.setDate(periodEnd.getDate() - 13) // 14 days total (including end date)
   
-  // Determine payroll group based on which week of the month
-  // We'll use a reference date to determine A vs B
-  // January 1, 2025 was a Wednesday, let's say first payroll after that is Group A
+  // Determine payroll group based on which week
+  // Using January 3, 2025 (first Friday of 2025) as Group A reference
   const referenceDate = new Date('2025-01-03') // First Friday of 2025 = Group A
   const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
   const weeksDifference = Math.floor(daysDifference / 7)
   const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'A' : 'B'
   
   return {
-    payDate: payDate.toISOString().split('T')[0],
     payrollGroup,
     periodStart: periodStart.toISOString().split('T')[0],
     periodEnd: periodEnd.toISOString().split('T')[0],
   }
+}
+
+function getNextFriday(): string {
+  const today = new Date()
+  const dayOfWeek = today.getDay()
+  const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 6
+  const nextFriday = new Date(today)
+  nextFriday.setDate(today.getDate() + daysUntilFriday)
+  return nextFriday.toISOString().split('T')[0]
 }
 
 function formatDateRange(startDate: string, endDate: string): string {
@@ -132,17 +121,33 @@ export default function MobilePayrollSubmit() {
   const [alert, setAlert] = useState<Alert | null>(null)
 
   // ============================================================================
-  // INITIALIZE PAYROLL INFO
+  // INITIALIZE WITH NEXT FRIDAY
   // ============================================================================
 
   useEffect(() => {
-    const payrollInfo = getPayrollInfo()
-    setPayDate(payrollInfo.payDate)
-    setPayrollGroup(payrollInfo.payrollGroup)
-    setPeriodStart(payrollInfo.periodStart)
-    setPeriodEnd(payrollInfo.periodEnd)
-    console.log('📅 Payroll Info:', payrollInfo)
+    const nextFriday = getNextFriday()
+    setPayDate(nextFriday)
+    const info = calculatePayrollInfo(nextFriday)
+    setPayrollGroup(info.payrollGroup)
+    setPeriodStart(info.periodStart)
+    setPeriodEnd(info.periodEnd)
+    console.log('📅 Initial Payroll Info:', { payDate: nextFriday, ...info })
   }, [])
+
+  // ============================================================================
+  // RECALCULATE WHEN PAY DATE CHANGES
+  // ============================================================================
+
+  function handlePayDateChange(newPayDate: string) {
+    setPayDate(newPayDate)
+    if (newPayDate) {
+      const info = calculatePayrollInfo(newPayDate)
+      setPayrollGroup(info.payrollGroup)
+      setPeriodStart(info.periodStart)
+      setPeriodEnd(info.periodEnd)
+      console.log('📅 Updated Payroll Info:', { payDate: newPayDate, ...info })
+    }
+  }
 
   // ============================================================================
   // AUTH & INITIALIZATION
@@ -168,8 +173,6 @@ export default function MobilePayrollSubmit() {
       setUserId(user.id)
       console.log('✅ Mobile Payroll: User authenticated:', user.email)
 
-      // Query platform Supabase for user role and location
-      console.log('🔍 Mobile Payroll: Fetching user record...')
       const { data: userRecord, error: userError } = await platformClient
         .from('users')
         .select('role, full_name, location_id')
@@ -198,7 +201,6 @@ export default function MobilePayrollSubmit() {
       setUserName(userRecord.full_name || user.email || 'User')
       setLocationId(locId)
 
-      // Allow employees, admins, owners, and super_admins to access this page
       if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
         console.log('❌ Mobile Payroll: Access denied for role:', role)
         router.replace('/dashboard')
@@ -207,8 +209,6 @@ export default function MobilePayrollSubmit() {
       
       console.log('✅ Mobile Payroll: Access granted for role:', role)
 
-      // Now get location name from client data Supabase (optional - won't block if fails)
-      console.log('🔍 Mobile Payroll: Fetching location name...')
       try {
         const { data: locationData, error: locError } = await dataSupabase
           .from('locations')
@@ -444,7 +444,6 @@ export default function MobilePayrollSubmit() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
         <div className="max-w-lg mx-auto pt-6">
-          {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <button
               onClick={() => setSelectedEmployee(null)}
@@ -456,7 +455,6 @@ export default function MobilePayrollSubmit() {
             <div className="w-12" />
           </div>
 
-          {/* Employee Card */}
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -489,7 +487,6 @@ export default function MobilePayrollSubmit() {
             </div>
           </div>
 
-          {/* Input Form */}
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
             <label className="block mb-4">
               <span className="text-blue-200 text-sm font-medium mb-2 block">
@@ -521,7 +518,6 @@ export default function MobilePayrollSubmit() {
               />
             </label>
 
-            {/* Amount Display */}
             <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4">
               <p className="text-blue-200 text-sm mb-1">Total Amount</p>
               <p className="text-white text-3xl font-bold">
@@ -530,7 +526,6 @@ export default function MobilePayrollSubmit() {
             </div>
           </div>
 
-          {/* Save Button */}
           <button
             onClick={handleSaveEmployee}
             className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
@@ -545,7 +540,6 @@ export default function MobilePayrollSubmit() {
   // Main List View
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-      {/* Header */}
       <div className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
         <div className="max-w-lg mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
@@ -564,7 +558,6 @@ export default function MobilePayrollSubmit() {
       </div>
 
       <div className="max-w-lg mx-auto p-4 pb-32">
-        {/* Alert */}
         {alert && (
           <div
             className={`mb-4 p-4 rounded-xl flex items-start gap-3 ${
@@ -587,20 +580,33 @@ export default function MobilePayrollSubmit() {
           </div>
         )}
 
-        {/* Pay Period Card */}
+        {/* Pay Date Selector */}
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 mb-4 border border-white/20">
+          <label className="block mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Calendar className="w-4 h-4 text-blue-300" />
+              <span className="text-blue-200 text-sm font-medium">Select Pay Date (Friday)</span>
+            </div>
+            <input
+              type="date"
+              value={payDate}
+              onChange={(e) => handlePayDateChange(e.target.value)}
+              className="w-full px-4 py-3 text-lg font-semibold bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+            />
+          </label>
+
           <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4 mb-4">
             <div className="flex items-center justify-between mb-2">
               <div>
                 <p className="text-blue-200 text-xs font-medium mb-1">Pay Period</p>
                 <p className="text-white text-lg font-bold">
-                  {formatDateRange(periodStart, periodEnd)}
+                  {periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}
                 </p>
               </div>
               <div className="text-right">
                 <p className="text-blue-200 text-xs font-medium mb-1">Pay Date</p>
                 <p className="text-white text-lg font-bold">
-                  {new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  {payDate ? new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
                 </p>
               </div>
             </div>
@@ -613,12 +619,11 @@ export default function MobilePayrollSubmit() {
                 Payroll Group {payrollGroup}
               </span>
               <span className="text-blue-200 text-xs">
-                Every other Friday
+                Auto-calculated
               </span>
             </div>
           </div>
 
-          {/* Stats */}
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-white/5 rounded-lg p-3 text-center">
               <Users className="w-4 h-4 text-blue-300 mx-auto mb-1" />
@@ -638,7 +643,6 @@ export default function MobilePayrollSubmit() {
           </div>
         </div>
 
-        {/* Employee List */}
         <div className="space-y-3">
           {isLoading ? (
             <div className="text-center py-12">
@@ -696,7 +700,6 @@ export default function MobilePayrollSubmit() {
         </div>
       </div>
 
-      {/* Fixed Bottom Submit Button */}
       <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent p-4 border-t border-white/10">
         <div className="max-w-lg mx-auto">
           <button
