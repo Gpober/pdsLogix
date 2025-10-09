@@ -13,6 +13,67 @@ import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X } from '
 type PayrollGroup = 'A' | 'B'
 type CompensationType = 'hourly' | 'production'
 
+// ============================================================================
+// PAYROLL PERIOD CALCULATION
+// ============================================================================
+
+function getPayrollInfo(date: Date = new Date()): {
+  payDate: string
+  payrollGroup: PayrollGroup
+  periodStart: string
+  periodEnd: string
+  nextPayDate: string
+} {
+  // Find the most recent Friday (or today if it's Friday)
+  const current = new Date(date)
+  const dayOfWeek = current.getDay()
+  const daysToSubtract = dayOfWeek >= 5 ? dayOfWeek - 5 : dayOfWeek + 2
+  
+  const mostRecentFriday = new Date(current)
+  mostRecentFriday.setDate(current.getDate() - daysToSubtract)
+  
+  // Calculate the Wednesday 2 weeks and 2 days before (16 days total)
+  const periodEnd = new Date(mostRecentFriday)
+  periodEnd.setDate(mostRecentFriday.getDate() - 9) // Wednesday before pay date
+  
+  const periodStart = new Date(periodEnd)
+  periodStart.setDate(periodEnd.getDate() - 13) // 2 weeks before period end
+  
+  // Determine payroll group based on the pay date
+  // Group A: First and third Friday of month (roughly)
+  // Group B: Second and fourth Friday of month (roughly)
+  // Simple rule: if day is 1-14, it's likely Group A, 15-31 is Group B
+  const payrollGroup: PayrollGroup = mostRecentFriday.getDate() <= 14 ? 'A' : 'B'
+  
+  // Next pay date (7 days later)
+  const nextPayDate = new Date(mostRecentFriday)
+  nextPayDate.setDate(mostRecentFriday.getDate() + 7)
+  
+  return {
+    payDate: mostRecentFriday.toISOString().split('T')[0],
+    payrollGroup,
+    periodStart: periodStart.toISOString().split('T')[0],
+    periodEnd: periodEnd.toISOString().split('T')[0],
+    nextPayDate: nextPayDate.toISOString().split('T')[0],
+  }
+}
+
+function formatDateRange(startDate: string, endDate: string): string {
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  
+  const startMonth = start.toLocaleDateString('en-US', { month: 'short' })
+  const startDay = start.getDate()
+  const endMonth = end.toLocaleDateString('en-US', { month: 'short' })
+  const endDay = end.getDate()
+  
+  if (startMonth === endMonth) {
+    return `${startMonth} ${startDay}-${endDay}`
+  } else {
+    return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
+  }
+}
+
 type Employee = {
   id: string
   first_name: string
