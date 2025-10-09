@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-import { Inter } from "next/font/google"
 import "./globals.css"
 import { useState, useEffect } from "react"
 import {
@@ -23,7 +22,7 @@ import { usePathname } from "next/navigation"
 import Image from "next/image"
 import LoadingScreenSpinner from './LoadingScreen'
 
-const inter = Inter({ subsets: ["latin"] })
+const bodyClassName = "font-sans antialiased"
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -111,7 +110,7 @@ export default function ClientRootLayout({
           <meta name="apple-mobile-web-app-title" content="I AM CFO" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
-        <body className={inter.className}>
+        <body className={bodyClassName}>
           <LoadingScreenSpinner />
         </body>
       </html>
@@ -131,7 +130,7 @@ export default function ClientRootLayout({
           <meta name="apple-mobile-web-app-title" content="I AM CFO" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
-        <body className={inter.className}>{children}</body>
+        <body className={bodyClassName}>{children}</body>
       </html>
     )
   }
@@ -148,7 +147,7 @@ export default function ClientRootLayout({
           <meta name="apple-mobile-web-app-title" content="I AM CFO" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
-        <body className={inter.className}>{children}</body>
+        <body className={bodyClassName}>{children}</body>
       </html>
     )
   }
@@ -164,7 +163,7 @@ export default function ClientRootLayout({
         <meta name="apple-mobile-web-app-title" content="I AM CFO" />
         <meta name="theme-color" content="#56B6E9" />
       </head>
-      <body className={inter.className}>
+      <body className={bodyClassName}>
         <div className="min-h-screen bg-gray-50">
           {/* Hover area to reveal sidebar */}
           <div

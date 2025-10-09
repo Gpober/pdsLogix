@@ -1,14 +1,51 @@
-import { createClient } from "@supabase/supabase-js"
+import { createClient, type SupabaseClient } from "@supabase/supabase-js"
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+let cachedClient: SupabaseClient | null = null
 
-if (!supabaseUrl) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL environment variable")
+export class SupabaseConfigurationError extends Error {
+  constructor(message = "Supabase environment variables are not configured.") {
+    super(message)
+    this.name = "SupabaseConfigurationError"
+  }
 }
 
-if (!supabaseAnonKey) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable")
+export function isSupabaseConfigured(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  )
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export function getSupabaseClient(): SupabaseClient {
+  if (cachedClient) {
+    return cachedClient
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new SupabaseConfigurationError()
+  }
+
+  cachedClient = createClient(supabaseUrl, supabaseAnonKey)
+  return cachedClient
+}
+
+export function tryGetSupabaseClient(): SupabaseClient | null {
+  try {
+    return getSupabaseClient()
+  } catch (error) {
+    if (error instanceof SupabaseConfigurationError) {
+      return null
+    }
+    throw error
+  }
+}
+
+export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop, receiver) {
+    const client = getSupabaseClient()
+    const value = Reflect.get(client, prop, receiver)
+    return typeof value === "function" ? value.bind(client) : value
+  },
+})

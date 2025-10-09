@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabaseClient"
+import { tryGetSupabaseClient } from "@/lib/supabaseClient"
 
 const MONTH_NAMES = [
   "January",
@@ -44,6 +44,12 @@ interface Entry {
 }
 
 export async function GET(req: Request) {
+  const supabase = tryGetSupabaseClient()
+
+  if (!supabase) {
+    return NextResponse.json({ monthlyData: [] })
+  }
+
   const url = new URL(req.url)
   const months = Number.parseInt(url.searchParams.get("months") || "12", 10)
   const endMonth = Number.parseInt(url.searchParams.get("endMonth") || "1", 10)

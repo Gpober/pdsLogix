@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { supabase } from "@/lib/supabaseClient"
+import { tryGetSupabaseClient } from "@/lib/supabaseClient"
 
 const isIncomeAccount = (type: string | null) => {
   const t = type?.toLowerCase() || ""
@@ -37,6 +37,12 @@ export async function GET(req: Request) {
   const includeProperties = url.searchParams.get("includeProperties") === "true"
 
   if (!includeProperties) {
+    return NextResponse.json({ propertyBreakdown: [] })
+  }
+
+  const supabase = tryGetSupabaseClient()
+
+  if (!supabase) {
     return NextResponse.json({ propertyBreakdown: [] })
   }
 
