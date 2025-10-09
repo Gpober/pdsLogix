@@ -1,369 +1,451 @@
-"use client";
+'use client'
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabaseClient'
 
-import clsx from "clsx";
+// ============================================================================
+// TYPES
+// ============================================================================
 
-type PayrollGroup = "A" | "B";
+type PayrollGroup = 'A' | 'B'
+type CompensationType = 'hourly' | 'production'
 
-type CompensationType = "hourly" | "production";
+interface Employee {
+  id: string
+  employee_code: string
+  full_name: string
+  compensation_type: CompensationType
+  hourly_rate: number | null
+  piece_rate: number | null
+  payroll_group: PayrollGroup
+  active: boolean
+}
 
-type EmployeeRecord = {
-  id: string;
-  employee_code: string;
-  full_name: string;
-  compensation_type: CompensationType;
-  hourly_rate: number | null;
-  piece_rate: number | null;
-  primary_location_id: string;
-  payroll_group: PayrollGroup;
-  active: boolean;
-};
+interface PayrollEntry {
+  hours: string
+  units: string
+  notes: string
+}
 
-type EntryState = {
-  hours: string;
-  units: string;
-  notes: string;
-};
+interface Alert {
+  type: 'success' | 'error' | 'info'
+  message: string
+}
 
-type AlertState = {
-  type: "success" | "error";
-  message: string;
-};
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
 
-const currencyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-});
+const formatCurrency = (amount: number): string => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+  }).format(amount)
+}
+
+const parseNumber = (value: string): number | null => {
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  const parsed = parseFloat(trimmed)
+  return isFinite(parsed) ? parsed : null
+}
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
 
 export default function PayrollSubmitPage() {
-  const router = useRouter();
+  const router = useRouter()
 
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [alert, setAlert] = useState<AlertState | null>(null);
+  // Loading states
+  const [isInitializing, setIsInitializing] = useState(true)
+  const [isLoadingEmployees, setIsLoadingEmployees] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const [userId, setUserId] = useState<string | null>(null);
-  const [locationId, setLocationId] = useState<string | null>(null);
-  const [locationName, setLocationName] = useState<string>("");
+  // Alert state
+  const [alert, setAlert] = useState<Alert | null>(null)
 
-  const [payDate, setPayDate] = useState<string>(
-    () => new Date().toISOString().slice(0, 10)
-  );
-  const [payrollGroup, setPayrollGroup] = useState<PayrollGroup | null>(null);
+  // User context
+  const [userId, setUserId] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string | null>(null)
+  const [locationId, setLocationId] = useState<string | null>(null)
+  const [locationName, setLocationName] = useState<string>('')
 
-  const [employees, setEmployees] = useState<EmployeeRecord[]>([]);
-  const [entries, setEntries] = useState<Record<string, EntryState>>({});
+  // Payroll context
+  const [payDate, setPayDate] = useState<string>(() => {
+    const today = new Date()
+    return today.toISOString().split('T')[0]
+  })
+  const [payrollGroup, setPayrollGroup] = useState<PayrollGroup | null>(null)
+
+  // Employee data
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [entries, setEntries] = useState<Record<string, PayrollEntry>>({})
+
+  // ============================================================================
+  // INITIALIZATION
+  // ============================================================================
 
   useEffect(() => {
-    let isMounted = true;
+    let isMounted = true
 
     const initialize = async () => {
       try {
-        const {
-          data: { user },
-          error: authError,
-        } = await supabase.auth.getUser();
+        // Get authenticated user
+        const { data: { user }, error: authError } = await supabase.auth.getUser()
 
         if (authError || !user) {
-          router.replace("/login");
-          return;
+          router.replace('/login')
+          return
         }
 
+        // Get user role
         const { data: userRecord, error: userError } = await supabase
-          .from("users")
-          .select("role")
-          .eq("id", user.id)
-          .single();
+          .from('users')
+          .select('role')
+          .eq('id', user.id)
+          .single()
 
         if (userError) {
-          console.error("Unable to load user role", userError);
-          setAlert({ type: "error", message: "Unable to load your user profile." });
-          return;
+          console.error('Failed to load user role:', userError)
+          if (isMounted) {
+            setAlert({ 
+              type: 'error', 
+              message: 'Unable to verify your account. Please contact support.' 
+            })
+          }
+          return
         }
 
-        if (!userRecord || userRecord.role !== "employee") {
-          router.replace("/dashboard");
-          return;
+        const role = userRecord?.role
+
+        // Allow employees and super_admin for testing
+        if (role !== 'employee' && role !== 'super_admin') {
+          router.replace('/dashboard')
+          return
         }
 
-        const { data: locationRow, error: locationError } = await supabase
-          .from("user_locations")
-          .select("location_id")
-          .eq("user_id", user.id)
-          .maybeSingle();
+        // Get user's assigned location
+        const { data: locationAssignment, error: locationError } = await supabase
+          .from('user_locations')
+          .select('location_id')
+          .eq('user_id', user.id)
+          .maybeSingle()
 
         if (locationError) {
-          console.error("Unable to load assigned location", locationError);
-          setAlert({
-            type: "error",
-            message: "Unable to determine your assigned location.",
-          });
-          return;
+          console.error('Failed to load location assignment:', locationError)
+          if (isMounted) {
+            setAlert({
+              type: 'error',
+              message: 'Unable to determine your assigned location.',
+            })
+          }
+          return
         }
 
-        if (!locationRow?.location_id) {
-          setAlert({
-            type: "error",
-            message: "You do not have an assigned location.",
-          });
-          return;
+        if (!locationAssignment?.location_id) {
+          if (isMounted) {
+            setAlert({
+              type: 'error',
+              message: 'You do not have an assigned location. Please contact your administrator.',
+            })
+          }
+          return
         }
 
-        const locationUUID = locationRow.location_id as string;
+        const locId = locationAssignment.location_id as string
 
+        // Get location details
         const { data: locationDetails } = await supabase
-          .from("locations")
-          .select("location_name")
-          .eq("id", locationUUID)
-          .maybeSingle();
+          .from('locations')
+          .select('location_name')
+          .eq('id', locId)
+          .maybeSingle()
 
         if (isMounted) {
-          setUserId(user.id);
-          setLocationId(locationUUID);
-          setLocationName(locationDetails?.location_name ?? "");
+          setUserId(user.id)
+          setUserRole(role)
+          setLocationId(locId)
+          setLocationName(locationDetails?.location_name || 'Unknown Location')
+        }
+
+      } catch (error) {
+        console.error('Initialization error:', error)
+        if (isMounted) {
+          setAlert({
+            type: 'error',
+            message: 'An unexpected error occurred during initialization.',
+          })
         }
       } finally {
         if (isMounted) {
-          setIsInitializing(false);
+          setIsInitializing(false)
         }
       }
-    };
+    }
 
-    initialize();
+    initialize()
 
     return () => {
-      isMounted = false;
-    };
-  }, [router]);
+      isMounted = false
+    }
+  }, [router])
 
-  const loadPayrollGroup = useCallback(
-    async (date: string) => {
-      if (!date) return;
+  // ============================================================================
+  // PAYROLL GROUP CALCULATION
+  // ============================================================================
+
+  useEffect(() => {
+    if (!payDate) {
+      setPayrollGroup(null)
+      return
+    }
+
+    let isMounted = true
+
+    const fetchPayrollGroup = async () => {
       try {
-        const { data, error } = await supabase.rpc("get_payroll_group", {
-          target_date: date,
-        });
+        const { data, error } = await supabase.rpc('get_payroll_group', {
+          target_date: payDate,
+        })
+
         if (error) {
-          console.error("Failed to determine payroll group", error);
+          console.error('Failed to determine payroll group:', error)
+          if (isMounted) {
+            setAlert({
+              type: 'error',
+              message: 'Unable to determine payroll group for this date.',
+            })
+            setPayrollGroup(null)
+          }
+          return
+        }
+
+        if (isMounted) {
+          if (data === 'A' || data === 'B') {
+            setPayrollGroup(data)
+          } else {
+            setPayrollGroup(null)
+          }
+        }
+      } catch (error) {
+        console.error('Payroll group calculation error:', error)
+        if (isMounted) {
           setAlert({
-            type: "error",
-            message: "Unable to determine payroll group for the selected date.",
-          });
-          return;
+            type: 'error',
+            message: 'Error calculating payroll group.',
+          })
+          setPayrollGroup(null)
         }
-        if (data === "A" || data === "B") {
-          setPayrollGroup(data);
-        } else {
-          setPayrollGroup(null);
-        }
-      } catch (err) {
-        console.error(err);
-        setAlert({
-          type: "error",
-          message: "Unexpected error while determining payroll group.",
-        });
       }
-    },
-    []
-  );
+    }
+
+    fetchPayrollGroup()
+
+    return () => {
+      isMounted = false
+    }
+  }, [payDate])
+
+  // ============================================================================
+  // EMPLOYEE LOADING
+  // ============================================================================
 
   useEffect(() => {
-    if (payDate) {
-      loadPayrollGroup(payDate);
-    }
-  }, [payDate, loadPayrollGroup]);
-
-  const fetchEmployees = useCallback(async () => {
     if (!locationId || !payrollGroup) {
-      setEmployees([]);
-      return;
+      setEmployees([])
+      setEntries({})
+      return
     }
 
-    setIsLoadingEmployees(true);
-    try {
-      const { data, error } = await supabase
-        .from("employees")
-        .select(
-          "id, employee_code, full_name, compensation_type, hourly_rate, piece_rate, primary_location_id, payroll_group, active"
-        )
-        .eq("primary_location_id", locationId)
-        .eq("payroll_group", payrollGroup)
-        .eq("active", true)
-        .order("full_name", { ascending: true });
+    let isMounted = true
 
-      if (error) {
-        console.error("Failed to load employees", error);
-        setAlert({
-          type: "error",
-          message: "Unable to load employees for this payroll.",
-        });
-        setEmployees([]);
-        return;
+    const loadEmployees = async () => {
+      setIsLoadingEmployees(true)
+      try {
+        const { data, error } = await supabase
+          .from('employees')
+          .select('*')
+          .eq('primary_location_id', locationId)
+          .eq('payroll_group', payrollGroup)
+          .eq('active', true)
+          .order('full_name', { ascending: true })
+
+        if (error) {
+          console.error('Failed to load employees:', error)
+          if (isMounted) {
+            setAlert({
+              type: 'error',
+              message: 'Unable to load employees for this payroll period.',
+            })
+            setEmployees([])
+          }
+          return
+        }
+
+        if (isMounted) {
+          setEmployees(data || [])
+          setEntries({}) // Reset entries when employees change
+        }
+      } catch (error) {
+        console.error('Employee loading error:', error)
+        if (isMounted) {
+          setAlert({
+            type: 'error',
+            message: 'Error loading employee data.',
+          })
+          setEmployees([])
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingEmployees(false)
+        }
       }
-
-      setEmployees(data ?? []);
-      setEntries({});
-    } finally {
-      setIsLoadingEmployees(false);
     }
-  }, [locationId, payrollGroup]);
 
-  useEffect(() => {
-    fetchEmployees();
-  }, [fetchEmployees]);
+    loadEmployees()
 
-  const updateEntry = useCallback(
-    (employeeId: string, updater: (prev: EntryState) => EntryState) => {
-      setEntries((prev) => {
-        const current = prev[employeeId] ?? { hours: "", units: "", notes: "" };
-        return {
-          ...prev,
-          [employeeId]: updater(current),
-        };
-      });
-    },
-    []
-  );
+    return () => {
+      isMounted = false
+    }
+  }, [locationId, payrollGroup])
 
-  const parseNumber = (value: string) => {
-    if (value.trim() === "") return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
+  // ============================================================================
+  // ENTRY MANAGEMENT
+  // ============================================================================
 
-  const getRowError = useCallback(
-    (employee: EmployeeRecord): string | null => {
-      const entry = entries[employee.id];
-      if (!entry) return null;
+  const updateEntry = useCallback((employeeId: string, field: keyof PayrollEntry, value: string) => {
+    setEntries(prev => ({
+      ...prev,
+      [employeeId]: {
+        ...(prev[employeeId] || { hours: '', units: '', notes: '' }),
+        [field]: value,
+      },
+    }))
+  }, [])
 
-      if (employee.compensation_type === "hourly") {
-        const hours = parseNumber(entry.hours);
-        if (hours === null) return null;
-        if (hours < 0) return "Hours cannot be negative";
-        if (hours > 80) return "Maximum 80 hours";
-        return null;
-      }
+  // ============================================================================
+  // VALIDATION
+  // ============================================================================
 
-      const units = parseNumber(entry.units);
-      if (units === null) return null;
-      if (units <= 0) return "Units must be positive";
-      return null;
-    },
-    [entries]
-  );
+  const getValidationError = useCallback((employee: Employee): string | null => {
+    const entry = entries[employee.id]
+    if (!entry) return null
 
-  const getRowAmount = useCallback(
-    (employee: EmployeeRecord): number => {
-      const entry = entries[employee.id];
-      if (!entry) return 0;
-      const rate =
-        employee.compensation_type === "hourly"
-          ? Number(employee.hourly_rate ?? 0)
-          : Number(employee.piece_rate ?? 0);
+    if (employee.compensation_type === 'hourly') {
+      const hours = parseNumber(entry.hours)
+      if (hours === null) return null
+      if (hours < 0) return 'Hours cannot be negative'
+      if (hours > 80) return 'Maximum 80 hours per pay period'
+      return null
+    } else {
+      const units = parseNumber(entry.units)
+      if (units === null) return null
+      if (units <= 0) return 'Units must be greater than 0'
+      return null
+    }
+  }, [entries])
 
-      if (employee.compensation_type === "hourly") {
-        const hours = parseNumber(entry.hours);
-        if (hours === null || hours < 0 || hours > 80) return 0;
-        return hours * rate;
-      }
+  const calculateAmount = useCallback((employee: Employee): number => {
+    const entry = entries[employee.id]
+    if (!entry) return 0
 
-      const units = parseNumber(entry.units);
-      if (units === null || units <= 0) return 0;
-      return units * rate;
-    },
-    [entries]
-  );
+    const rate = employee.compensation_type === 'hourly'
+      ? (employee.hourly_rate || 0)
+      : (employee.piece_rate || 0)
+
+    if (employee.compensation_type === 'hourly') {
+      const hours = parseNumber(entry.hours)
+      if (hours === null || hours < 0 || hours > 80) return 0
+      return hours * rate
+    } else {
+      const units = parseNumber(entry.units)
+      if (units === null || units <= 0) return 0
+      return units * rate
+    }
+  }, [entries])
+
+  // ============================================================================
+  // TOTALS CALCULATION
+  // ============================================================================
 
   const totals = useMemo(() => {
-    let totalAmount = 0;
-    let employeeCount = 0;
+    let totalAmount = 0
+    let employeeCount = 0
 
-    employees.forEach((employee) => {
-      const amount = getRowAmount(employee);
+    employees.forEach(employee => {
+      const error = getValidationError(employee)
+      if (error) return // Skip invalid entries
+
+      const amount = calculateAmount(employee)
       if (amount > 0) {
-        const entry = entries[employee.id];
-        if (!entry) return;
-        const value =
-          employee.compensation_type === "hourly"
-            ? parseNumber(entry.hours)
-            : parseNumber(entry.units);
-        if (value === null) return;
-        if (employee.compensation_type === "hourly") {
-          if (value <= 0 || value > 80) return;
-        } else {
-          if (value <= 0) return;
-        }
-        employeeCount += 1;
-        totalAmount += amount;
+        totalAmount += amount
+        employeeCount += 1
       }
-    });
+    })
 
-    return { totalAmount, employeeCount };
-  }, [employees, entries, getRowAmount]);
+    return { totalAmount, employeeCount }
+  }, [employees, entries, calculateAmount, getValidationError])
 
-  const resetForm = useCallback(() => {
-    setEntries({});
-    setAlert({
-      type: "success",
-      message: "Payroll submitted successfully.",
-    });
-  }, []);
+  // ============================================================================
+  // FORM SUBMISSION
+  // ============================================================================
 
   const handleSubmit = async () => {
     if (!userId || !locationId || !payrollGroup) {
-      setAlert({ type: "error", message: "Missing payroll context." });
-      return;
+      setAlert({
+        type: 'error',
+        message: 'Missing required payroll information. Please refresh the page.',
+      })
+      return
     }
 
+    // Build submission lines
     const lines = employees
-      .map((employee) => {
-        const entry = entries[employee.id];
-        if (!entry) return null;
+      .map(employee => {
+        const entry = entries[employee.id]
+        if (!entry) return null
 
-        const amount = getRowAmount(employee);
-        if (amount <= 0) return null;
+        const error = getValidationError(employee)
+        if (error) return null
 
-        if (employee.compensation_type === "hourly") {
-          const hours = parseNumber(entry.hours);
-          if (hours === null || hours <= 0 || hours > 80) return null;
+        const amount = calculateAmount(employee)
+        if (amount <= 0) return null
+
+        if (employee.compensation_type === 'hourly') {
+          const hours = parseNumber(entry.hours)
+          if (hours === null || hours <= 0) return null
+
           return {
             employee_id: employee.id,
             hours_worked: hours,
             production_units: null,
             calculated_amount: amount,
-            notes: entry.notes.trim() ? entry.notes.trim() : null,
-          };
-        }
+            notes: entry.notes.trim() || null,
+          }
+        } else {
+          const units = parseNumber(entry.units)
+          if (units === null || units <= 0) return null
 
-        const units = parseNumber(entry.units);
-        if (units === null || units <= 0) return null;
-        return {
-          employee_id: employee.id,
-          hours_worked: null,
-          production_units: units,
-          calculated_amount: amount,
-          notes: entry.notes.trim() ? entry.notes.trim() : null,
-        };
+          return {
+            employee_id: employee.id,
+            hours_worked: null,
+            production_units: units,
+            calculated_amount: amount,
+            notes: entry.notes.trim() || null,
+          }
+        }
       })
-      .filter(Boolean) as {
-      employee_id: string;
-      hours_worked: number | null;
-      production_units: number | null;
-      calculated_amount: number;
-      notes: string | null;
-    }[];
+      .filter(Boolean)
 
     if (lines.length === 0) {
       setAlert({
-        type: "error",
-        message: "Enter hours or units for at least one employee before submitting.",
-      });
-      return;
+        type: 'error',
+        message: 'Please enter valid hours or units for at least one employee.',
+      })
+      return
     }
 
     const payload = {
@@ -373,258 +455,322 @@ export default function PayrollSubmitPage() {
       submitted_by: userId,
       total_amount: totals.totalAmount,
       lines,
-    };
+    }
 
-    setSubmitting(true);
-    setAlert(null);
+    setIsSubmitting(true)
+    setAlert(null)
+
     try {
-      const response = await fetch("/api/payroll/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await fetch('/api/payroll/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
+      })
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Failed to submit payroll");
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        throw new Error(errorData.error || 'Failed to submit payroll')
       }
 
-      resetForm();
-    } catch (error) {
-      console.error("Payroll submission failed", error);
+      const result = await response.json()
+
+      // Success - reset form
+      setEntries({})
       setAlert({
-        type: "error",
-        message: "Payroll submission failed. Please try again.",
-      });
+        type: 'success',
+        message: `Payroll submitted successfully! Submission #${result.submission_number || 'N/A'}`,
+      })
+
+      // Auto-dismiss success message after 5 seconds
+      setTimeout(() => setAlert(null), 5000)
+
+    } catch (error) {
+      console.error('Payroll submission failed:', error)
+      setAlert({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to submit payroll. Please try again.',
+      })
     } finally {
-      setSubmitting(false);
+      setIsSubmitting(false)
     }
-  };
+  }
 
-  const renderTableBody = () => {
-    if (isLoadingEmployees) {
-      return (
-        <tr>
-          <td colSpan={6} className="py-10 text-center text-muted-foreground">
-            Loading employees...
-          </td>
-        </tr>
-      );
-    }
+  // ============================================================================
+  // KEYBOARD SHORTCUTS
+  // ============================================================================
 
-    if (employees.length === 0) {
-      return (
-        <tr>
-          <td colSpan={6} className="py-10 text-center text-muted-foreground">
-            No employees found for this payroll group.
-          </td>
-        </tr>
-      );
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl/Cmd + Enter to submit
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        if (totals.employeeCount > 0 && !isSubmitting) {
+          handleSubmit()
+        }
+      }
     }
 
-    return employees.map((employee) => {
-      const entry = entries[employee.id] ?? { hours: "", units: "", notes: "" };
-      const errorMessage = getRowError(employee);
-      const amount = getRowAmount(employee);
-      const rate =
-        employee.compensation_type === "hourly"
-          ? Number(employee.hourly_rate ?? 0)
-          : Number(employee.piece_rate ?? 0);
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [totals.employeeCount, isSubmitting])
 
-      return (
-        <tr key={employee.id} className="border-b last:border-b-0">
-          <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-slate-100">
-            <div>{employee.full_name}</div>
-            <div className="text-xs text-muted-foreground">{employee.employee_code}</div>
-          </td>
-          <td className="px-4 py-3 text-sm">
-            <span
-              className={clsx(
-                "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold",
-                employee.compensation_type === "hourly"
-                  ? "bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200"
-                  : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200"
-              )}
-            >
-              {employee.compensation_type === "hourly" ? "Hourly" : "Production"}
-            </span>
-          </td>
-          <td className="px-4 py-3 text-sm text-right tabular-nums">
-            {currencyFormatter.format(rate)}
-          </td>
-          <td className="px-4 py-3">
-            {employee.compensation_type === "hourly" ? (
-              <input
-                type="number"
-                inputMode="decimal"
-                min={0}
-                max={80}
-                step={0.25}
-                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:bg-slate-900"
-                value={entry.hours}
-                onChange={(event) =>
-                  updateEntry(employee.id, (prev) => ({
-                    ...prev,
-                    hours: event.target.value,
-                  }))
-                }
-              />
-            ) : (
-              <input
-                type="number"
-                inputMode="numeric"
-                min={1}
-                step={1}
-                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:bg-slate-900"
-                value={entry.units}
-                onChange={(event) =>
-                  updateEntry(employee.id, (prev) => ({
-                    ...prev,
-                    units: event.target.value,
-                  }))
-                }
-              />
-            )}
-            {errorMessage ? (
-              <p className="mt-1 text-xs text-red-600">{errorMessage}</p>
-            ) : null}
-          </td>
-          <td className="px-4 py-3 text-sm text-right tabular-nums">
-            {currencyFormatter.format(amount)}
-          </td>
-          <td className="px-4 py-3">
-            <input
-              type="text"
-              placeholder="Notes (optional)"
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:bg-slate-900"
-              value={entry.notes}
-              onChange={(event) =>
-                updateEntry(employee.id, (prev) => ({
-                  ...prev,
-                  notes: event.target.value,
-                }))
-              }
-            />
-          </td>
-        </tr>
-      );
-    });
-  };
+  // ============================================================================
+  // RENDERING
+  // ============================================================================
 
   if (isInitializing) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <div className="rounded-md border border-slate-200 bg-white px-6 py-4 text-sm text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-          Preparing payroll submission...
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="text-center">
+          <div className="inline-block h-12 w-12 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent"></div>
+          <p className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+            Loading payroll system...
+          </p>
         </div>
       </div>
-    );
+    )
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-8 py-10 dark:bg-slate-950">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex items-center justify-between">
+    <div className="min-h-screen bg-gray-50 px-4 py-8 dark:bg-gray-950 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl">
+        
+        {/* Header */}
+        <div className="mb-6 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
               Payroll Submission
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Submit payroll hours and production units for your assigned location.
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              Enter hours and production data for {locationName}
             </p>
           </div>
-          <div className="text-right text-sm text-muted-foreground">
-            <div>{locationName || "Assigned Location"}</div>
-            {payrollGroup ? <div>Payroll Group {payrollGroup}</div> : null}
+          <div className="text-sm">
+            <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900">
+              <div className="text-xs text-gray-600 dark:text-gray-400">Location</div>
+              <div className="font-semibold text-gray-900 dark:text-white">{locationName}</div>
+              {payrollGroup && (
+                <>
+                  <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">Payroll Group</div>
+                  <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                    Group {payrollGroup}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
-        </header>
+        </div>
 
-        {alert ? (
+        {/* Alert */}
+        {alert && (
           <div
-            className={clsx(
-              "rounded-md border px-4 py-3 text-sm",
-              alert.type === "success"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-900/30 dark:text-emerald-200"
-                : "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-900/30 dark:text-red-200"
-            )}
+            className={`mb-6 rounded-lg border px-4 py-3 ${
+              alert.type === 'success'
+                ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-900/20 dark:text-green-400'
+                : alert.type === 'error'
+                ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-900/20 dark:text-red-400'
+                : 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900 dark:bg-blue-900/20 dark:text-blue-400'
+            }`}
           >
-            {alert.message}
-          </div>
-        ) : null}
-
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="grid grid-cols-1 gap-4 border-b border-slate-200 p-4 md:grid-cols-3 dark:border-slate-800">
-            <label className="flex flex-col text-sm font-medium text-slate-700 dark:text-slate-200">
-              Pay Date
-              <input
-                type="date"
-                value={payDate}
-                onChange={(event) => setPayDate(event.target.value)}
-                className="mt-1 rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              />
-            </label>
-            <div className="flex flex-col text-sm text-slate-600 dark:text-slate-300">
-              <span className="font-medium text-slate-700 dark:text-slate-200">Payroll Group</span>
-              <span className="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100">
-                {payrollGroup ?? "--"}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Determined automatically from pay date
-              </span>
-            </div>
-            <div className="flex flex-col text-sm text-slate-600 dark:text-slate-300">
-              <span className="font-medium text-slate-700 dark:text-slate-200">Employee Count</span>
-              <span className="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100">
-                {totals.employeeCount}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Count of employees included in this submission
-              </span>
+            <div className="flex items-start">
+              <span className="text-sm">{alert.message}</span>
+              <button
+                onClick={() => setAlert(null)}
+                className="ml-auto text-sm font-semibold hover:opacity-70"
+              >
+                ✕
+              </button>
             </div>
           </div>
+        )}
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800">
-              <thead className="bg-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                <tr>
-                  <th className="px-4 py-3">Employee</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3 text-right">Rate</th>
-                  <th className="px-4 py-3">Input</th>
-                  <th className="px-4 py-3 text-right">Amount</th>
-                  <th className="px-4 py-3">Notes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 text-sm dark:divide-slate-800">
-                {renderTableBody()}
-              </tbody>
-            </table>
-          </div>
+        {/* Pay Date Selector */}
+        <div className="mb-6 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+          <label className="block">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Select Pay Date
+            </span>
+            <input
+              type="date"
+              value={payDate}
+              onChange={e => setPayDate(e.target.value)}
+              className="mt-2 block w-full rounded-lg border border-gray-300 px-4 py-3 text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white sm:w-auto"
+            />
+          </label>
+          {payrollGroup && (
+            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+              Payroll Group <strong className="text-blue-600 dark:text-blue-400">{payrollGroup}</strong> employees will be loaded for this date.
+            </p>
+          )}
+        </div>
 
-          <div className="flex items-center justify-between border-t border-slate-200 px-4 py-4 text-sm dark:border-slate-800">
-            <div className="font-medium text-slate-600 dark:text-slate-300">
-              Total Amount
+        {/* Employee Table */}
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
+          {isLoadingEmployees ? (
+            <div className="py-12 text-center">
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent"></div>
+              <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">Loading employees...</p>
             </div>
-            <div className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-              {currencyFormatter.format(totals.totalAmount)}
+          ) : employees.length === 0 ? (
+            <div className="py-12 text-center">
+              <p className="text-gray-600 dark:text-gray-400">
+                No employees found for {payrollGroup ? `Group ${payrollGroup}` : 'this selection'}.
+              </p>
             </div>
-          </div>
-        </section>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800">
+                  <thead className="bg-gray-50 dark:bg-gray-800">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                        Employee
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                        Type
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                        Rate
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                        Hours / Units
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                        Amount
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                        Notes
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 bg-white dark:divide-gray-800 dark:bg-gray-900">
+                    {employees.map(employee => {
+                      const entry = entries[employee.id] || { hours: '', units: '', notes: '' }
+                      const error = getValidationError(employee)
+                      const amount = calculateAmount(employee)
+                      const rate = employee.compensation_type === 'hourly'
+                        ? (employee.hourly_rate || 0)
+                        : (employee.piece_rate || 0)
 
-        <div className="flex justify-end">
+                      return (
+                        <tr key={employee.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                          <td className="px-6 py-4">
+                            <div className="text-sm font-medium text-gray-900 dark:text-white">
+                              {employee.full_name}
+                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              {employee.employee_code}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                                employee.compensation_type === 'hourly'
+                                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                                  : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                              }`}
+                            >
+                              {employee.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right text-sm tabular-nums text-gray-900 dark:text-white">
+                            {formatCurrency(rate)}
+                          </td>
+                          <td className="px-6 py-4">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step={employee.compensation_type === 'hourly' ? '0.25' : '1'}
+                              min="0"
+                              max={employee.compensation_type === 'hourly' ? '80' : undefined}
+                              placeholder={employee.compensation_type === 'hourly' ? 'Hours' : 'Units'}
+                              value={employee.compensation_type === 'hourly' ? entry.hours : entry.units}
+                              onChange={e => updateEntry(
+                                employee.id,
+                                employee.compensation_type === 'hourly' ? 'hours' : 'units',
+                                e.target.value
+                              )}
+                              className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
+                                error
+                                  ? 'border-red-300 focus:border-red-500 focus:ring-red-200 dark:border-red-700 dark:bg-gray-800'
+                                  : 'border-gray-300 focus:border-blue-500 focus:ring-blue-200 dark:border-gray-700 dark:bg-gray-800 dark:text-white'
+                              }`}
+                            />
+                            {error && (
+                              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-right text-sm font-semibold tabular-nums text-gray-900 dark:text-white">
+                            {formatCurrency(amount)}
+                          </td>
+                          <td className="px-6 py-4">
+                            <input
+                              type="text"
+                              placeholder="Optional"
+                              value={entry.notes}
+                              onChange={e => updateEntry(employee.id, 'notes', e.target.value)}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Footer with Total */}
+              <div className="border-t border-gray-200 bg-gray-50 px-6 py-4 dark:border-gray-800 dark:bg-gray-800">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {totals.employeeCount} {totals.employeeCount === 1 ? 'employee' : 'employees'} entered
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-500">
+                      Press Ctrl+Enter to submit quickly
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Total Amount</p>
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {formatCurrency(totals.totalAmount)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Submit Button */}
+        <div className="mt-6 flex justify-end">
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || totals.employeeCount === 0}
-            className={clsx(
-              "inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-blue-300",
-              "hover:bg-blue-700"
-            )}
+            disabled={isSubmitting || totals.employeeCount === 0}
+            className={`inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-semibold text-white shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+              isSubmitting || totals.employeeCount === 0
+                ? 'cursor-not-allowed bg-gray-400 dark:bg-gray-700'
+                : 'bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600'
+            }`}
           >
-            {submitting ? "Submitting..." : "Submit Payroll"}
+            {isSubmitting ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-solid border-white border-r-transparent"></div>
+                Submitting...
+              </>
+            ) : (
+              <>
+                Submit Payroll
+                {totals.employeeCount > 0 && (
+                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">
+                    {totals.employeeCount}
+                  </span>
+                )}
+              </>
+            )}
           </button>
         </div>
       </div>
     </div>
-  );
+  )
 }
