@@ -86,7 +86,14 @@ export default function PayrollSubmitPage() {
           return;
         }
 
-        if (!userRecord || userRecord.role !== "employee") {
+        const allowedRoles = new Set([
+          "employee",
+          "admin",
+          "owner",
+          "super_admin",
+        ]);
+
+        if (!userRecord || !allowedRoles.has(userRecord.role)) {
           router.replace("/dashboard");
           return;
         }
