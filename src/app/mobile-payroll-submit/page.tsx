@@ -76,41 +76,58 @@ export default function MobilePayrollSubmit() {
       const { data: { user }, error: authError } = await platformClient.auth.getUser()
 
       if (authError || !user) {
+        console.log('❌ Mobile Payroll: No user found')
         router.replace('/login')
         return
       }
 
       setUserId(user.id)
+      console.log('✅ Mobile Payroll: User authenticated:', user.email)
 
+      // Query platform Supabase for user role and location
       const { data: userRecord, error: userError } = await platformClient
         .from('users')
-        .select('role, full_name, location_id, locations(name)')
+        .select('role, full_name, location_id')
         .eq('id', user.id)
         .single()
 
       if (userError || !userRecord) {
+        console.error('❌ Mobile Payroll: Failed to load user record:', userError)
         router.replace('/login')
         return
       }
 
       const role = userRecord.role as string
       const locId = userRecord.location_id as string
-      const locName = (userRecord as any).locations?.name || 'Unknown Location'
+
+      console.log('✅ Mobile Payroll: User role:', role, 'Location ID:', locId)
 
       setUserRole(role)
       setUserName(userRecord.full_name || user.email || 'User')
       setLocationId(locId)
-      setLocationName(locName)
 
+      // Allow employees, admins, owners, and super_admins to access this page
       if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
+        console.log('❌ Mobile Payroll: Access denied for role:', role)
         router.replace('/dashboard')
         return
       }
+      
+      console.log('✅ Mobile Payroll: Access granted for role:', role)
+
+      // Now get location name from client data Supabase
+      const { data: locationData } = await dataSupabase
+        .from('locations')
+        .select('name')
+        .eq('id', locId)
+        .single()
+
+      setLocationName(locationData?.name || 'Unknown Location')
 
       setIsInitializing(false)
       await loadEmployees(locId)
     } catch (error) {
-      console.error('Auth error:', error)
+      console.error('❌ Mobile Payroll: Auth error:', error)
       router.replace('/login')
     }
   }
