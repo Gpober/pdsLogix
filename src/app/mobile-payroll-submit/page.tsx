@@ -244,7 +244,8 @@ export default function MobilePayrollSubmit() {
       setUserName(userRecord.full_name || user.email || 'User')
       setLocationId(locId)
 
-      if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
+      const allowedRoles = ['employee', 'member', 'admin', 'owner', 'super_admin']
+      if (!allowedRoles.includes(role)) {
         console.log('❌ Mobile Payroll: Access denied for role:', role)
         router.replace('/dashboard')
         return

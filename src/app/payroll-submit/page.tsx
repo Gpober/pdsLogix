@@ -175,7 +175,8 @@ export default function PayrollSubmit() {
       const locId = userRecord.location_id as string
       setUserRole(role)
       setLocationId(locId)
-      if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') { router.replace('/dashboard'); return }
+      const allowedRoles = ['employee', 'member', 'admin', 'owner', 'super_admin']
+      if (!allowedRoles.includes(role)) { router.replace('/dashboard'); return }
       try {
         const { data: locationData } = await dataSupabase.from('locations').select('name').eq('id', locId).single()
         setLocationName(locationData?.name || 'Unknown Location')
