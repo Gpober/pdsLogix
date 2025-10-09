@@ -79,7 +79,7 @@ function calculatePayrollInfo(payDateStr: string): {
   const referenceDate = new Date(2025, 0, 3) // January 3, 2025 = Group A
   const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
   const weeksDifference = Math.floor(daysDifference / 7)
-  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'A' : 'B'
+  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'B' : 'A'
   
   // Format dates as YYYY-MM-DD in local timezone
   const formatDate = (date: Date) => {
