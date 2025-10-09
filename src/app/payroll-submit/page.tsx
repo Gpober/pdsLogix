@@ -32,24 +32,29 @@ type Alert = { type: 'success' | 'error'; message: string }
 // PAYROLL PERIOD CALCULATION FROM SELECTED PAY DATE
 // ============================================================================
 
+function createLocalDateFromInput(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return new Date(year, month - 1, day, 12, 0, 0)
+}
+
 function calculatePayrollInfo(payDateStr: string): {
   payrollGroup: PayrollGroup
   periodStart: string
   periodEnd: string
 } {
   console.log('🔍 Input payDateStr:', payDateStr)
-  
+
   // Parse date in local timezone to avoid timezone issues
   const [year, month, day] = payDateStr.split('-').map(Number)
   console.log('📅 Parsed:', { year, month, day })
-  
-  const payDate = new Date(year, month - 1, day, 12, 0, 0) // Set to noon to avoid DST issues
+
+  const payDate = createLocalDateFromInput(payDateStr) // Set to noon to avoid DST issues
   console.log('📅 Pay Date object:', payDate.toString())
-  
+
   // Period END is the Wednesday 9 days before pay date
   const periodEnd = new Date(year, month - 1, day - 9, 12, 0, 0)
   console.log('📅 Period End object:', periodEnd.toString())
-  
+
   // Period START is 2 weeks (14 days) before period end
   const periodStart = new Date(year, month - 1, day - 9 - 13, 12, 0, 0)
   console.log('📅 Period Start object:', periodStart.toString())
@@ -95,8 +100,8 @@ function getNextFriday(): string {
 }
 
 function formatDateRange(startDate: string, endDate: string) {
-  const start = new Date(startDate)
-  const end = new Date(endDate)
+  const start = createLocalDateFromInput(startDate)
+  const end = createLocalDateFromInput(endDate)
   const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
   return `${startFormatted} - ${endFormatted}`
@@ -420,7 +425,7 @@ export default function PayrollSubmit() {
             </div>
             <div className="text-right">
               <h2 className="text-sm font-medium text-blue-100 mb-1">Pay Date</h2>
-              <p className="text-2xl font-bold">{payDate ? new Date(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
+              <p className="text-2xl font-bold">{payDate ? createLocalDateFromInput(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
             </div>
           </div>
         </div>
