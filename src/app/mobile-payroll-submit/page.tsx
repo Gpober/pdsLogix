@@ -6,6 +6,21 @@ import { createClient } from '@/lib/supabase/client'
 import { supabase as dataSupabase } from '@/lib/supabaseClient'
 import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar } from 'lucide-react'
 
+const BRAND_COLORS = {
+  primary: '#56B6E9',
+  secondary: '#3A9BD1',
+  tertiary: '#7CC4ED',
+  accent: '#2E86C1',
+  success: '#27AE60',
+  warning: '#F39C12',
+  danger: '#E74C3C',
+  gray: {
+    50: '#F8FAFC',
+    100: '#F1F5F9',
+    200: '#E2E8F0',
+  },
+} as const
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -473,10 +488,23 @@ export default function MobilePayrollSubmit() {
 
   if (isInitializing) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400"></div>
-          <p className="mt-4 text-blue-100">Loading...</p>
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{
+          background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary})`,
+        }}
+      >
+        <div className="text-center text-white">
+          <div
+            className="inline-block animate-spin rounded-full h-12 w-12 border-b-2"
+            style={{
+              borderColor: 'rgba(255,255,255,0.6)',
+              borderBottomColor: 'transparent',
+            }}
+          ></div>
+          <p className="mt-4 text-sm font-medium" style={{ color: 'rgba(255,255,255,0.9)' }}>
+            Loading...
+          </p>
         </div>
       </div>
     )
@@ -485,12 +513,18 @@ export default function MobilePayrollSubmit() {
   // Employee Detail Modal
   if (selectedEmployee) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
+      <div
+        className="min-h-screen p-4"
+        style={{
+          background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary}, ${BRAND_COLORS.accent})`,
+        }}
+      >
         <div className="max-w-lg mx-auto pt-6">
           <div className="flex items-center justify-between mb-6">
             <button
               onClick={() => setSelectedEmployee(null)}
-              className="text-blue-100 text-sm font-medium"
+              className="text-sm font-medium"
+              style={{ color: 'rgba(255,255,255,0.85)' }}
             >
               ← Back
             </button>
@@ -498,41 +532,69 @@ export default function MobilePayrollSubmit() {
             <div className="w-12" />
           </div>
 
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
+          <div
+            className="backdrop-blur-md rounded-2xl p-6 mb-6"
+            style={{
+              background: 'rgba(255,255,255,0.12)',
+              border: '1px solid rgba(255,255,255,0.25)',
+              boxShadow: `0 12px 32px ${BRAND_COLORS.primary}40`,
+            }}
+          >
             <div className="flex items-start justify-between mb-4">
               <div>
                 <h3 className="text-white text-xl font-bold">
                   {selectedEmployee.first_name} {selectedEmployee.last_name}
                 </h3>
-                <p className="text-blue-200 text-sm">{selectedEmployee.employee_code}</p>
+                <p className="text-sm" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                  {selectedEmployee.employee_code}
+                </p>
               </div>
               <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  selectedEmployee.compensation_type === 'hourly'
-                    ? 'bg-blue-500/20 text-blue-200'
-                    : 'bg-purple-500/20 text-purple-200'
-                }`}
+                className="px-3 py-1 rounded-full text-xs font-semibold"
+                style={{
+                  background:
+                    selectedEmployee.compensation_type === 'hourly'
+                      ? `${BRAND_COLORS.primary}30`
+                      : `${BRAND_COLORS.tertiary}30`,
+                  color: 'white',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                }}
               >
                 {selectedEmployee.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
               </span>
             </div>
 
-            <div className="bg-white/5 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">Rate</p>
+            <div
+              className="rounded-xl p-4"
+              style={{
+                background: 'rgba(15,23,42,0.35)',
+                border: '1px solid rgba(255,255,255,0.12)',
+              }}
+            >
+              <p className="text-sm mb-1" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Rate
+              </p>
               <p className="text-white text-2xl font-bold">
                 ${selectedEmployee.compensation_type === 'hourly'
                   ? selectedEmployee.hourly_rate?.toFixed(2)
                   : selectedEmployee.piece_rate?.toFixed(2)}
-                <span className="text-blue-200 text-sm font-normal ml-2">
+                <span className="text-sm font-normal ml-2" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
                   {selectedEmployee.compensation_type === 'hourly' ? '/ hour' : '/ unit'}
                 </span>
               </p>
             </div>
           </div>
 
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
+          <div
+            className="backdrop-blur-md rounded-2xl p-6 mb-6"
+            style={{
+              background: 'rgba(255,255,255,0.12)',
+              border: '1px solid rgba(255,255,255,0.25)',
+              boxShadow: `0 12px 32px ${BRAND_COLORS.secondary}35`,
+            }}
+          >
             <label className="block mb-4">
-              <span className="text-blue-200 text-sm font-medium mb-2 block">
+              <span className="text-sm font-medium mb-2 block" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
                 {selectedEmployee.compensation_type === 'hourly' ? 'Hours Worked' : 'Units Produced'}
               </span>
               <input
@@ -545,24 +607,45 @@ export default function MobilePayrollSubmit() {
                     e.target.value
                   )
                 }
-                className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                className="w-full px-4 py-4 text-2xl font-bold rounded-xl text-white focus:outline-none transition"
+                style={{
+                  background: 'rgba(15,23,42,0.45)',
+                  border: `2px solid ${BRAND_COLORS.primary}40`,
+                  boxShadow: `0 8px 24px ${BRAND_COLORS.primary}30`,
+                }}
                 placeholder="0"
               />
             </label>
 
             <label className="block mb-6">
-              <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
+              <span className="text-sm font-medium mb-2 block" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Notes (optional)
+              </span>
               <textarea
                 value={selectedEmployee.notes}
                 onChange={(e) => handleInputChange('notes', e.target.value)}
                 rows={3}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
+                className="w-full px-4 py-3 rounded-xl text-white focus:outline-none transition resize-none"
+                style={{
+                  background: 'rgba(15,23,42,0.45)',
+                  border: `2px solid ${BRAND_COLORS.accent}33`,
+                  boxShadow: `0 8px 24px ${BRAND_COLORS.accent}22`,
+                }}
                 placeholder="Add any notes..."
               />
             </label>
 
-            <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">Total Amount</p>
+            <div
+              className="rounded-xl p-4"
+              style={{
+                background: `linear-gradient(135deg, ${BRAND_COLORS.primary}30, ${BRAND_COLORS.tertiary}25)`,
+                border: `1px solid ${BRAND_COLORS.primary}40`,
+                boxShadow: `0 12px 32px ${BRAND_COLORS.primary}30`,
+              }}
+            >
+              <p className="text-sm mb-1" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Total Amount
+              </p>
               <p className="text-white text-3xl font-bold">
                 ${selectedEmployee.amount.toFixed(2)}
               </p>
@@ -571,7 +654,12 @@ export default function MobilePayrollSubmit() {
 
           <button
             onClick={handleSaveEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
+            className="w-full text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
+            style={{
+              background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.accent})`,
+              boxShadow: `0 12px 32px ${BRAND_COLORS.primary}40`,
+              border: `1px solid ${BRAND_COLORS.primary}60`,
+            }}
           >
             Save & Continue
           </button>
@@ -582,19 +670,33 @@ export default function MobilePayrollSubmit() {
 
   // Main List View
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-      <div className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
+    <div
+      className="min-h-screen"
+      style={{
+        background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.secondary}, ${BRAND_COLORS.accent})`,
+      }}
+    >
+      <div
+        className="backdrop-blur-md border-b sticky top-0 z-50"
+        style={{
+          background: 'rgba(15,23,42,0.55)',
+          borderColor: 'rgba(255,255,255,0.18)',
+          boxShadow: `0 12px 32px ${BRAND_COLORS.primary}30`,
+        }}
+      >
         <div className="max-w-lg mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-white text-xl font-bold">Payroll Submit</h1>
-              <p className="text-blue-200 text-sm">{locationName}</p>
+              <p className="text-sm" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                {locationName}
+              </p>
             </div>
             <button
               onClick={handleSignOut}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
             >
-              <LogOut className="w-5 h-5 text-blue-200" />
+              <LogOut className="w-5 h-5" style={{ color: `${BRAND_COLORS.gray[100]}` }} />
             </button>
           </div>
         </div>
@@ -603,85 +705,160 @@ export default function MobilePayrollSubmit() {
       <div className="max-w-lg mx-auto p-4 pb-32">
         {alert && (
           <div
-            className={`mb-4 p-4 rounded-xl flex items-start gap-3 ${
-              alert.type === 'success'
-                ? 'bg-green-500/20 border border-green-400/30'
-                : 'bg-red-500/20 border border-red-400/30'
-            }`}
+            className="mb-4 p-4 rounded-xl flex items-start gap-3"
+            style={{
+              background:
+                alert.type === 'success'
+                  ? `${BRAND_COLORS.success}15`
+                  : `${BRAND_COLORS.danger}15`,
+              border: `1px solid ${
+                alert.type === 'success' ? `${BRAND_COLORS.success}40` : `${BRAND_COLORS.danger}40`
+              }`,
+              boxShadow: `0 8px 24px ${
+                alert.type === 'success' ? `${BRAND_COLORS.success}25` : `${BRAND_COLORS.danger}25`
+              }`,
+            }}
           >
             {alert.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-green-300 flex-shrink-0 mt-0.5" />
+              <CheckCircle2
+                className="w-5 h-5 flex-shrink-0 mt-0.5"
+                style={{ color: `${BRAND_COLORS.success}` }}
+              />
             ) : (
-              <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
+              <AlertCircle
+                className="w-5 h-5 flex-shrink-0 mt-0.5"
+                style={{ color: `${BRAND_COLORS.danger}` }}
+              />
             )}
-            <p className={`flex-1 text-sm ${alert.type === 'success' ? 'text-green-100' : 'text-red-100'}`}>
+            <p
+              className="flex-1 text-sm"
+              style={{ color: alert.type === 'success' ? `${BRAND_COLORS.success}` : `${BRAND_COLORS.danger}` }}
+            >
               {alert.message}
             </p>
             <button onClick={() => setAlert(null)}>
-              <X className={`w-5 h-5 ${alert.type === 'success' ? 'text-green-300' : 'text-red-300'}`} />
+              <X
+                className="w-5 h-5"
+                style={{ color: alert.type === 'success' ? `${BRAND_COLORS.success}` : `${BRAND_COLORS.danger}` }}
+              />
             </button>
           </div>
         )}
 
         {/* Pay Date Selector */}
-        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 mb-4 border border-white/20">
+        <div
+          className="backdrop-blur-md rounded-2xl p-4 mb-4"
+          style={{
+            background: 'rgba(255,255,255,0.12)',
+            border: '1px solid rgba(255,255,255,0.25)',
+            boxShadow: `0 12px 32px ${BRAND_COLORS.secondary}35`,
+          }}
+        >
           <label className="block mb-4">
             <div className="flex items-center gap-2 mb-2">
-              <Calendar className="w-4 h-4 text-blue-300" />
-              <span className="text-blue-200 text-sm font-medium">Select Pay Date (Friday)</span>
+              <Calendar className="w-4 h-4" style={{ color: `${BRAND_COLORS.tertiary}` }} />
+              <span className="text-sm font-medium" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Select Pay Date (Friday)
+              </span>
             </div>
             <input
               type="date"
               value={payDate}
               onChange={(e) => handlePayDateChange(e.target.value)}
-              className="w-full px-4 py-3 text-lg font-semibold bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              className="w-full px-4 py-3 text-lg font-semibold rounded-xl text-white focus:outline-none transition"
+              style={{
+                background: 'rgba(15,23,42,0.45)',
+                border: `2px solid ${BRAND_COLORS.primary}40`,
+                boxShadow: `0 8px 24px ${BRAND_COLORS.primary}30`,
+              }}
             />
           </label>
 
-          <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4 mb-4">
+          <div
+            className="rounded-xl p-4 mb-4"
+            style={{
+              background: `linear-gradient(135deg, ${BRAND_COLORS.primary}30, ${BRAND_COLORS.tertiary}25)`,
+              border: `1px solid ${BRAND_COLORS.primary}40`,
+              boxShadow: `0 12px 32px ${BRAND_COLORS.primary}30`,
+            }}
+          >
             <div className="flex items-center justify-between mb-2">
               <div>
-                <p className="text-blue-200 text-xs font-medium mb-1">Pay Period</p>
+                <p className="text-xs font-medium mb-1" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                  Pay Period
+                </p>
                 <p className="text-white text-lg font-bold">
                   {periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-blue-200 text-xs font-medium mb-1">Pay Date</p>
+                <p className="text-xs font-medium mb-1" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                  Pay Date
+                </p>
                 <p className="text-white text-lg font-bold">
                   {payDate ? formatDisplayDate(payDate, { month: 'short', day: 'numeric' }) : '-'}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                payrollGroup === 'A' 
-                  ? 'bg-blue-500/30 text-blue-100' 
-                  : 'bg-purple-500/30 text-purple-100'
-              }`}>
+              <span
+                className="px-3 py-1 rounded-full text-sm font-semibold"
+                style={{
+                  background: payrollGroup === 'A' ? `${BRAND_COLORS.primary}30` : `${BRAND_COLORS.tertiary}30`,
+                  color: 'white',
+                  border: '1px solid rgba(255,255,255,0.25)',
+                }}
+              >
                 Payroll Group {payrollGroup}
               </span>
-              <span className="text-blue-200 text-xs">
+              <span className="text-xs" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
                 Auto-calculated
               </span>
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <Users className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{
+                background: 'rgba(15,23,42,0.45)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                boxShadow: `0 10px 28px ${BRAND_COLORS.primary}25`,
+              }}
+            >
+              <Users className="w-4 h-4 mx-auto mb-1" style={{ color: `${BRAND_COLORS.tertiary}` }} />
               <p className="text-white text-lg font-bold">{totals.employees}</p>
-              <p className="text-blue-200 text-xs">Employees</p>
+              <p className="text-xs" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Employees
+              </p>
             </div>
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <Clock className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{
+                background: 'rgba(15,23,42,0.45)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                boxShadow: `0 10px 28px ${BRAND_COLORS.primary}25`,
+              }}
+            >
+              <Clock className="w-4 h-4 mx-auto mb-1" style={{ color: `${BRAND_COLORS.tertiary}` }} />
               <p className="text-white text-lg font-bold">{totals.totalHours.toFixed(1)}</p>
-              <p className="text-blue-200 text-xs">Hours</p>
+              <p className="text-xs" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Hours
+              </p>
             </div>
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <DollarSign className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+            <div
+              className="rounded-lg p-3 text-center"
+              style={{
+                background: 'rgba(15,23,42,0.45)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                boxShadow: `0 10px 28px ${BRAND_COLORS.primary}25`,
+              }}
+            >
+              <DollarSign className="w-4 h-4 mx-auto mb-1" style={{ color: `${BRAND_COLORS.tertiary}` }} />
               <p className="text-white text-lg font-bold">${totals.totalAmount.toFixed(0)}</p>
-              <p className="text-blue-200 text-xs">Total</p>
+              <p className="text-xs" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Total
+              </p>
             </div>
           </div>
         </div>
@@ -689,34 +866,58 @@ export default function MobilePayrollSubmit() {
         <div className="space-y-3">
           {isLoading ? (
             <div className="text-center py-12">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
-              <p className="mt-4 text-blue-200 text-sm">Loading employees...</p>
+              <div
+                className="inline-block animate-spin rounded-full h-8 w-8 border-b-2"
+                style={{
+                  borderColor: `${BRAND_COLORS.tertiary}80`,
+                  borderBottomColor: 'transparent',
+                }}
+              ></div>
+              <p className="mt-4 text-sm" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                Loading employees...
+              </p>
             </div>
           ) : filteredEmployees.length === 0 ? (
             <div className="text-center py-12">
-              <Users className="w-12 h-12 text-blue-300/50 mx-auto mb-4" />
-              <p className="text-blue-200">No employees in Group {payrollGroup}</p>
+              <Users
+                className="w-12 h-12 mx-auto mb-4"
+                style={{ color: `${BRAND_COLORS.gray[100]}80` }}
+              />
+              <p style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                No employees in Group {payrollGroup}
+              </p>
             </div>
           ) : (
             filteredEmployees.map((emp) => (
               <button
                 key={emp.id}
                 onClick={() => handleEmployeeSelect(emp)}
-                className="w-full bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 hover:bg-white/15 transition text-left"
+                className="w-full backdrop-blur-md rounded-xl p-4 text-left transition"
+                style={{
+                  background: 'rgba(255,255,255,0.12)',
+                  border: '1px solid rgba(255,255,255,0.2)',
+                  boxShadow: `0 10px 28px ${BRAND_COLORS.secondary}30`,
+                }}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1">
                     <h3 className="text-white font-semibold">
                       {emp.first_name} {emp.last_name}
                     </h3>
-                    <p className="text-blue-200 text-sm">{emp.employee_code}</p>
+                    <p className="text-sm" style={{ color: `${BRAND_COLORS.gray[100]}` }}>
+                      {emp.employee_code}
+                    </p>
                   </div>
                   <span
-                    className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                      emp.compensation_type === 'hourly'
-                        ? 'bg-blue-500/20 text-blue-200'
-                        : 'bg-purple-500/20 text-purple-200'
-                    }`}
+                    className="px-2 py-1 rounded-full text-xs font-semibold"
+                    style={{
+                      background:
+                        emp.compensation_type === 'hourly'
+                          ? `${BRAND_COLORS.primary}30`
+                          : `${BRAND_COLORS.tertiary}30`,
+                      color: 'white',
+                      border: '1px solid rgba(255,255,255,0.25)',
+                    }}
                   >
                     {emp.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
                   </span>
@@ -724,7 +925,7 @@ export default function MobilePayrollSubmit() {
 
                 <div className="flex items-center justify-between">
                   <div className="text-sm">
-                    <span className="text-blue-200">
+                    <span style={{ color: `${BRAND_COLORS.gray[100]}` }}>
                       {emp.compensation_type === 'hourly' ? 'Hours: ' : 'Units: '}
                     </span>
                     <span className="text-white font-semibold">
@@ -743,16 +944,34 @@ export default function MobilePayrollSubmit() {
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent p-4 border-t border-white/10">
+      <div
+        className="fixed bottom-0 left-0 right-0 p-4 border-t"
+        style={{
+          background: `linear-gradient(180deg, rgba(15,23,42,0.92), rgba(15,23,42,0.45), transparent)`,
+          borderColor: 'rgba(255,255,255,0.15)',
+          backdropFilter: 'blur(16px)',
+        }}
+      >
         <div className="max-w-lg mx-auto">
           <button
             onClick={handleSubmit}
             disabled={isSubmitting || totals.employees === 0}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              background: `linear-gradient(135deg, ${BRAND_COLORS.primary}, ${BRAND_COLORS.accent})`,
+              boxShadow: `0 10px 30px ${BRAND_COLORS.primary}40`,
+              border: `1px solid ${BRAND_COLORS.primary}60`,
+            }}
           >
             {isSubmitting ? (
               <span className="flex items-center justify-center gap-2">
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <div
+                  className="animate-spin rounded-full h-5 w-5 border-b-2"
+                  style={{
+                    borderColor: 'rgba(255,255,255,0.7)',
+                    borderBottomColor: 'transparent',
+                  }}
+                ></div>
                 Submitting...
               </span>
             ) : (
