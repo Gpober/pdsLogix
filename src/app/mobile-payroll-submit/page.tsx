@@ -50,6 +50,13 @@ function parseLocalDate(dateStr: string): Date | null {
   return new Date(year, month - 1, day)
 }
 
+function formatInputDate(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 function formatDisplayDate(dateStr: string, options?: Intl.DateTimeFormatOptions): string {
   const date = parseLocalDate(dateStr)
   if (!date) {
@@ -90,17 +97,10 @@ function calculatePayrollInfo(payDateStr: string): {
   const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'B' : 'A'
   
   // Format dates as YYYY-MM-DD in local timezone
-  const formatDate = (date: Date) => {
-    const y = date.getFullYear()
-    const m = String(date.getMonth() + 1).padStart(2, '0')
-    const d = String(date.getDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }
-  
   return {
     payrollGroup,
-    periodStart: formatDate(periodStart),
-    periodEnd: formatDate(periodEnd),
+    periodStart: formatInputDate(periodStart),
+    periodEnd: formatInputDate(periodEnd),
   }
 }
 
@@ -110,11 +110,8 @@ function getNextFriday(): string {
   const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 6
   const nextFriday = new Date(today)
   nextFriday.setDate(today.getDate() + daysUntilFriday)
-  
-  const y = nextFriday.getFullYear()
-  const m = String(nextFriday.getMonth() + 1).padStart(2, '0')
-  const d = String(nextFriday.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+
+  return formatInputDate(nextFriday)
 }
 
 function formatDateRange(startDate: string, endDate: string): string {
@@ -135,6 +132,34 @@ function formatDateRange(startDate: string, endDate: string): string {
   } else {
     return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
   }
+}
+
+function generateFridayOptions(pastCount = 6, futureCount = 12) {
+  const today = new Date()
+  const dayOfWeek = today.getDay()
+  const daysUntilNextFriday = (5 - dayOfWeek + 7) % 7
+  const nextFriday = new Date(today)
+  nextFriday.setDate(today.getDate() + daysUntilNextFriday)
+
+  const startDate = new Date(nextFriday)
+  startDate.setDate(nextFriday.getDate() - pastCount * 7)
+
+  const options: { value: string; label: string }[] = []
+  for (let i = 0; i <= pastCount + futureCount; i++) {
+    const optionDate = new Date(startDate)
+    optionDate.setDate(startDate.getDate() + i * 7)
+    options.push({
+      value: formatInputDate(optionDate),
+      label: optionDate.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+    })
+  }
+
+  return options
 }
 
 // ============================================================================
@@ -163,19 +188,30 @@ export default function MobilePayrollSubmit() {
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
   const [alert, setAlert] = useState<Alert | null>(null)
 
+  const fridayOptions = useMemo(() => generateFridayOptions(), [])
+
   // ============================================================================
   // INITIALIZE WITH NEXT FRIDAY
   // ============================================================================
 
   useEffect(() => {
+    if (fridayOptions.length === 0) {
+      return
+    }
+
     const nextFriday = getNextFriday()
-    setPayDate(nextFriday)
-    const info = calculatePayrollInfo(nextFriday)
+    const defaultDate =
+      fridayOptions.find((option) => option.value === nextFriday)?.value ??
+      fridayOptions[fridayOptions.length - 1]?.value ??
+      nextFriday
+
+    setPayDate(defaultDate)
+    const info = calculatePayrollInfo(defaultDate)
     setPayrollGroup(info.payrollGroup)
     setPeriodStart(info.periodStart)
     setPeriodEnd(info.periodEnd)
-    console.log('📅 Initial Payroll Info:', { payDate: nextFriday, ...info })
-  }, [])
+    console.log('📅 Initial Payroll Info:', { payDate: defaultDate, ...info })
+  }, [fridayOptions])
 
   // ============================================================================
   // RECALCULATE WHEN PAY DATE CHANGES
@@ -625,63 +661,61 @@ export default function MobilePayrollSubmit() {
 
         {/* Pay Date Selector */}
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 mb-4 border border-white/20">
-          <label className="block mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Calendar className="w-4 h-4 text-blue-300" />
-              <span className="text-blue-200 text-sm font-medium">Select Pay Date (Friday)</span>
+          <div className="max-w-xs w-full mx-auto">
+            <div className="mb-4">
+              <div className="flex items-center gap-2 mb-2 justify-center">
+                <Calendar className="w-4 h-4 text-blue-300" />
+                <span className="text-blue-200 text-sm font-medium">Select Pay Date (Friday)</span>
+              </div>
+              <select
+                value={payDate}
+                onChange={(e) => handlePayDateChange(e.target.value)}
+                className="w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              >
+                {fridayOptions.map((option) => (
+                  <option key={option.value} value={option.value} className="bg-slate-900 text-white">
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
-            <input
-              type="date"
-              value={payDate}
-              onChange={(e) => handlePayDateChange(e.target.value)}
-              className="w-full px-4 py-3 text-lg font-semibold bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-            />
-          </label>
 
-          <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4 mb-4">
-            <div className="flex items-center justify-between mb-2">
+            <div className="space-y-3 mb-4">
               <div>
-                <p className="text-blue-200 text-xs font-medium mb-1">Pay Period</p>
-                <p className="text-white text-lg font-bold">
+                <span className="text-blue-200 text-xs font-medium uppercase tracking-wide block text-center">
+                  Payroll Type
+                </span>
+                <div className="mt-1 w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white text-center">
+                  Payroll Group {payrollGroup}
+                </div>
+                <p className="text-blue-200 text-xs mt-1 text-center">Auto-calculated from pay date</p>
+              </div>
+              <div>
+                <span className="text-blue-200 text-xs font-medium uppercase tracking-wide block text-center">
+                  Payroll Period
+                </span>
+                <div className="mt-1 w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white text-center">
                   {periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-blue-200 text-xs font-medium mb-1">Pay Date</p>
-                <p className="text-white text-lg font-bold">
-                  {payDate ? formatDisplayDate(payDate, { month: 'short', day: 'numeric' }) : '-'}
-                </p>
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                payrollGroup === 'A' 
-                  ? 'bg-blue-500/30 text-blue-100' 
-                  : 'bg-purple-500/30 text-purple-100'
-              }`}>
-                Payroll Group {payrollGroup}
-              </span>
-              <span className="text-blue-200 text-xs">
-                Auto-calculated
-              </span>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <Users className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-              <p className="text-white text-lg font-bold">{totals.employees}</p>
-              <p className="text-blue-200 text-xs">Employees</p>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <Clock className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-              <p className="text-white text-lg font-bold">{totals.totalHours.toFixed(1)}</p>
-              <p className="text-blue-200 text-xs">Hours</p>
-            </div>
-            <div className="bg-white/5 rounded-lg p-3 text-center">
-              <DollarSign className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-              <p className="text-white text-lg font-bold">${totals.totalAmount.toFixed(0)}</p>
-              <p className="text-blue-200 text-xs">Total</p>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <Users className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+                <p className="text-white text-lg font-bold">{totals.employees}</p>
+                <p className="text-blue-200 text-xs">Employees</p>
+              </div>
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <Clock className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+                <p className="text-white text-lg font-bold">{totals.totalHours.toFixed(1)}</p>
+                <p className="text-blue-200 text-xs">Hours</p>
+              </div>
+              <div className="bg-white/5 rounded-lg p-3 text-center">
+                <DollarSign className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+                <p className="text-white text-lg font-bold">${totals.totalAmount.toFixed(0)}</p>
+                <p className="text-blue-200 text-xs">Total</p>
+              </div>
             </div>
           </div>
         </div>
