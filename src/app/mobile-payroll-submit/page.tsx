@@ -473,10 +473,10 @@ export default function MobilePayrollSubmit() {
 
   if (isInitializing) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-[#031225] via-[#0B2742] to-[#031225] flex items-center justify-center">
         <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400"></div>
-          <p className="mt-4 text-blue-100">Loading...</p>
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-[#56B6E9]"></div>
+          <p className="mt-4 text-[#D7F1FF]">Loading...</p>
         </div>
       </div>
     )
@@ -485,12 +485,12 @@ export default function MobilePayrollSubmit() {
   // Employee Detail Modal
   if (selectedEmployee) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
+      <div className="min-h-screen bg-gradient-to-br from-[#031225] via-[#0B2742] to-[#031225] p-4">
         <div className="max-w-lg mx-auto pt-6">
           <div className="flex items-center justify-between mb-6">
             <button
               onClick={() => setSelectedEmployee(null)}
-              className="text-blue-100 text-sm font-medium"
+              className="text-[#D7F1FF] text-sm font-medium"
             >
               ← Back
             </button>
@@ -504,13 +504,13 @@ export default function MobilePayrollSubmit() {
                 <h3 className="text-white text-xl font-bold">
                   {selectedEmployee.first_name} {selectedEmployee.last_name}
                 </h3>
-                <p className="text-blue-200 text-sm">{selectedEmployee.employee_code}</p>
+                <p className="text-[#A8DAF6] text-sm">{selectedEmployee.employee_code}</p>
               </div>
               <span
                 className={`px-3 py-1 rounded-full text-xs font-semibold ${
                   selectedEmployee.compensation_type === 'hourly'
-                    ? 'bg-blue-500/20 text-blue-200'
-                    : 'bg-purple-500/20 text-purple-200'
+                    ? 'bg-[#56B6E9]/20 text-[#A8DAF6]'
+                    : 'bg-[#2E86C1]/20 text-[#9FD5FF]'
                 }`}
               >
                 {selectedEmployee.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
@@ -518,12 +518,12 @@ export default function MobilePayrollSubmit() {
             </div>
 
             <div className="bg-white/5 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">Rate</p>
+              <p className="text-[#A8DAF6] text-sm mb-1">Rate</p>
               <p className="text-white text-2xl font-bold">
                 ${selectedEmployee.compensation_type === 'hourly'
                   ? selectedEmployee.hourly_rate?.toFixed(2)
                   : selectedEmployee.piece_rate?.toFixed(2)}
-                <span className="text-blue-200 text-sm font-normal ml-2">
+                <span className="text-[#A8DAF6] text-sm font-normal ml-2">
                   {selectedEmployee.compensation_type === 'hourly' ? '/ hour' : '/ unit'}
                 </span>
               </p>
@@ -532,7 +532,7 @@ export default function MobilePayrollSubmit() {
 
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
             <label className="block mb-4">
-              <span className="text-blue-200 text-sm font-medium mb-2 block">
+              <span className="text-[#A8DAF6] text-sm font-medium mb-2 block">
                 {selectedEmployee.compensation_type === 'hourly' ? 'Hours Worked' : 'Units Produced'}
               </span>
               <input
@@ -545,24 +545,24 @@ export default function MobilePayrollSubmit() {
                     e.target.value
                   )
                 }
-                className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder:text-[#7CC4ED]/50 focus:outline-none focus:border-[#56B6E9] focus:bg-white/10 transition"
                 placeholder="0"
               />
             </label>
 
             <label className="block mb-6">
-              <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
+              <span className="text-[#A8DAF6] text-sm font-medium mb-2 block">Notes (optional)</span>
               <textarea
                 value={selectedEmployee.notes}
                 onChange={(e) => handleInputChange('notes', e.target.value)}
                 rows={3}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder:text-[#7CC4ED]/50 focus:outline-none focus:border-[#56B6E9] focus:bg-white/10 transition resize-none"
                 placeholder="Add any notes..."
               />
             </label>
 
-            <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">Total Amount</p>
+            <div className="bg-gradient-to-r from-[#56B6E9]/15 to-[#2E86C1]/15 rounded-xl p-4">
+              <p className="text-[#A8DAF6] text-sm mb-1">Total Amount</p>
               <p className="text-white text-3xl font-bold">
                 ${selectedEmployee.amount.toFixed(2)}
               </p>
@@ -571,7 +571,7 @@ export default function MobilePayrollSubmit() {
 
           <button
             onClick={handleSaveEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
+            className="w-full bg-gradient-to-r from-[#56B6E9] to-[#3A9BD1] text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
           >
             Save & Continue
           </button>
@@ -582,19 +582,19 @@ export default function MobilePayrollSubmit() {
 
   // Main List View
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-[#031225] via-[#0B2742] to-[#031225]">
       <div className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
         <div className="max-w-lg mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-white text-xl font-bold">Payroll Submit</h1>
-              <p className="text-blue-200 text-sm">{locationName}</p>
+              <p className="text-[#A8DAF6] text-sm">{locationName}</p>
             </div>
             <button
               onClick={handleSignOut}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
             >
-              <LogOut className="w-5 h-5 text-blue-200" />
+              <LogOut className="w-5 h-5 text-[#A8DAF6]" />
             </button>
           </div>
         </div>
@@ -627,27 +627,27 @@ export default function MobilePayrollSubmit() {
         <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 mb-4 border border-white/20">
           <label className="block mb-4">
             <div className="flex items-center gap-2 mb-2">
-              <Calendar className="w-4 h-4 text-blue-300" />
-              <span className="text-blue-200 text-sm font-medium">Select Pay Date (Friday)</span>
+              <Calendar className="w-4 h-4 text-[#7CC4ED]" />
+              <span className="text-[#A8DAF6] text-sm font-medium">Select Pay Date (Friday)</span>
             </div>
             <input
               type="date"
               value={payDate}
               onChange={(e) => handlePayDateChange(e.target.value)}
-              className="w-full px-4 py-3 text-lg font-semibold bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              className="w-full px-4 py-3 text-lg font-semibold bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-[#56B6E9] focus:bg-white/10 transition"
             />
           </label>
 
-          <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4 mb-4">
+          <div className="bg-gradient-to-r from-[#56B6E9]/15 to-[#2E86C1]/15 rounded-xl p-4 mb-4">
             <div className="flex items-center justify-between mb-2">
               <div>
-                <p className="text-blue-200 text-xs font-medium mb-1">Pay Period</p>
+                <p className="text-[#A8DAF6] text-xs font-medium mb-1">Pay Period</p>
                 <p className="text-white text-lg font-bold">
                   {periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-blue-200 text-xs font-medium mb-1">Pay Date</p>
+                <p className="text-[#A8DAF6] text-xs font-medium mb-1">Pay Date</p>
                 <p className="text-white text-lg font-bold">
                   {payDate ? formatDisplayDate(payDate, { month: 'short', day: 'numeric' }) : '-'}
                 </p>
@@ -655,13 +655,13 @@ export default function MobilePayrollSubmit() {
             </div>
             <div className="flex items-center gap-2">
               <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                payrollGroup === 'A' 
-                  ? 'bg-blue-500/30 text-blue-100' 
-                  : 'bg-purple-500/30 text-purple-100'
+                payrollGroup === 'A'
+                  ? 'bg-[#56B6E9]/25 text-[#D7F1FF]'
+                  : 'bg-[#2E86C1]/25 text-[#CCE8FF]'
               }`}>
                 Payroll Group {payrollGroup}
               </span>
-              <span className="text-blue-200 text-xs">
+              <span className="text-[#A8DAF6] text-xs">
                 Auto-calculated
               </span>
             </div>
@@ -669,19 +669,19 @@ export default function MobilePayrollSubmit() {
 
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-white/5 rounded-lg p-3 text-center">
-              <Users className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+              <Users className="w-4 h-4 text-[#7CC4ED] mx-auto mb-1" />
               <p className="text-white text-lg font-bold">{totals.employees}</p>
-              <p className="text-blue-200 text-xs">Employees</p>
+              <p className="text-[#A8DAF6] text-xs">Employees</p>
             </div>
             <div className="bg-white/5 rounded-lg p-3 text-center">
-              <Clock className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+              <Clock className="w-4 h-4 text-[#7CC4ED] mx-auto mb-1" />
               <p className="text-white text-lg font-bold">{totals.totalHours.toFixed(1)}</p>
-              <p className="text-blue-200 text-xs">Hours</p>
+              <p className="text-[#A8DAF6] text-xs">Hours</p>
             </div>
             <div className="bg-white/5 rounded-lg p-3 text-center">
-              <DollarSign className="w-4 h-4 text-blue-300 mx-auto mb-1" />
+              <DollarSign className="w-4 h-4 text-[#7CC4ED] mx-auto mb-1" />
               <p className="text-white text-lg font-bold">${totals.totalAmount.toFixed(0)}</p>
-              <p className="text-blue-200 text-xs">Total</p>
+              <p className="text-[#A8DAF6] text-xs">Total</p>
             </div>
           </div>
         </div>
@@ -689,13 +689,13 @@ export default function MobilePayrollSubmit() {
         <div className="space-y-3">
           {isLoading ? (
             <div className="text-center py-12">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
-              <p className="mt-4 text-blue-200 text-sm">Loading employees...</p>
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#56B6E9]"></div>
+              <p className="mt-4 text-[#A8DAF6] text-sm">Loading employees...</p>
             </div>
           ) : filteredEmployees.length === 0 ? (
             <div className="text-center py-12">
-              <Users className="w-12 h-12 text-blue-300/50 mx-auto mb-4" />
-              <p className="text-blue-200">No employees in Group {payrollGroup}</p>
+              <Users className="w-12 h-12 text-[#7CC4ED]/50 mx-auto mb-4" />
+              <p className="text-[#A8DAF6]">No employees in Group {payrollGroup}</p>
             </div>
           ) : (
             filteredEmployees.map((emp) => (
@@ -709,13 +709,13 @@ export default function MobilePayrollSubmit() {
                     <h3 className="text-white font-semibold">
                       {emp.first_name} {emp.last_name}
                     </h3>
-                    <p className="text-blue-200 text-sm">{emp.employee_code}</p>
+                    <p className="text-[#A8DAF6] text-sm">{emp.employee_code}</p>
                   </div>
                   <span
                     className={`px-2 py-1 rounded-full text-xs font-semibold ${
                       emp.compensation_type === 'hourly'
-                        ? 'bg-blue-500/20 text-blue-200'
-                        : 'bg-purple-500/20 text-purple-200'
+                        ? 'bg-[#56B6E9]/20 text-[#A8DAF6]'
+                        : 'bg-[#2E86C1]/20 text-[#9FD5FF]'
                     }`}
                   >
                     {emp.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
@@ -724,7 +724,7 @@ export default function MobilePayrollSubmit() {
 
                 <div className="flex items-center justify-between">
                   <div className="text-sm">
-                    <span className="text-blue-200">
+                    <span className="text-[#A8DAF6]">
                       {emp.compensation_type === 'hourly' ? 'Hours: ' : 'Units: '}
                     </span>
                     <span className="text-white font-semibold">
@@ -743,12 +743,12 @@ export default function MobilePayrollSubmit() {
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent p-4 border-t border-white/10">
+      <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#031225] via-[#031225]/95 to-transparent p-4 border-t border-white/10">
         <div className="max-w-lg mx-auto">
           <button
             onClick={handleSubmit}
             disabled={isSubmitting || totals.employees === 0}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-gradient-to-r from-[#56B6E9] to-[#3A9BD1] disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSubmitting ? (
               <span className="flex items-center justify-center gap-2">
