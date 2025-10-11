@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronRight, TrendingUp, TrendingDown } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
 import { supabase } from '@/lib/supabaseClient'
 import ReportHeader from '@/components/mobile-dashboard/ReportHeader'
 
@@ -26,6 +27,17 @@ const BRAND_COLORS = {
   }
 }
 
+interface PLAccount {
+  account: string
+  parent_account: string
+  sub_account: string | null
+  is_sub_account: boolean
+  amount: number
+  category: 'INCOME' | 'EXPENSES'
+  account_type: string
+  transactions: any[]
+}
+
 interface CustomerPL {
   customer_id: string
   customer_name: string
@@ -35,10 +47,129 @@ interface CustomerPL {
   gross_margin: number
 }
 
+// Date utilities
+const getDateParts = (dateString: string) => {
+  const dateOnly = dateString.split('T')[0]
+  const [year, month, day] = dateOnly.split('-').map(Number)
+  return { year, month, day, dateOnly }
+}
+
+const isDateInRange = (dateString: string, startDate: string, endDate: string): boolean => {
+  const { dateOnly } = getDateParts(dateString)
+  return dateOnly >= startDate && dateOnly <= endDate
+}
+
+// P&L Classification
+const classifyPLAccount = (accountType: string, accountName: string, reportCategory: string) => {
+  const typeLower = accountType?.toLowerCase() || ''
+  const nameLower = accountName?.toLowerCase() || ''
+  const categoryLower = reportCategory?.toLowerCase() || ''
+
+  const isTransfer = categoryLower === 'transfer' || nameLower.includes('transfer')
+  const isCashAccount = typeLower.includes('bank') || typeLower.includes('cash') || 
+    nameLower.includes('checking') || nameLower.includes('savings') || nameLower.includes('cash')
+
+  if (isCashAccount || isTransfer) return null
+
+  const isIncomeAccount = typeLower === 'income' || typeLower === 'other income' || 
+    typeLower.includes('income') || typeLower.includes('revenue')
+
+  const isExpenseAccount = typeLower === 'expenses' || typeLower === 'other expense' || 
+    typeLower === 'cost of goods sold' || typeLower.includes('expense')
+
+  if (isIncomeAccount) return 'INCOME'
+  if (isExpenseAccount) return 'EXPENSES'
+
+  return null
+}
+
+// Process P&L Transactions
+const processPLTransactions = async (transactions: any[]): Promise<PLAccount[]> => {
+  const accountMap = new Map<string, PLAccount>()
+
+  const accountGroups = new Map<string, any[]>()
+  transactions.forEach((tx) => {
+    const account = tx.account
+    if (!accountGroups.has(account)) {
+      accountGroups.set(account, [])
+    }
+    accountGroups.get(account)!.push(tx)
+  })
+
+  for (const [account, txList] of accountGroups.entries()) {
+    const sampleTx = txList[0]
+    const accountType = sampleTx.account_type
+    const reportCategory = sampleTx.report_category
+
+    let totalCredits = 0
+    let totalDebits = 0
+
+    txList.forEach((tx) => {
+      const debitValue = tx.debit ? parseFloat(tx.debit.toString()) : 0
+      const creditValue = tx.credit ? parseFloat(tx.credit.toString()) : 0
+
+      if (!isNaN(debitValue) && debitValue > 0) {
+        totalDebits += debitValue
+      }
+      if (!isNaN(creditValue) && creditValue > 0) {
+        totalCredits += creditValue
+      }
+    })
+
+    const classification = classifyPLAccount(accountType, account, reportCategory)
+    if (!classification) continue
+
+    let amount: number
+    if (classification === 'INCOME') {
+      amount = totalCredits - totalDebits
+    } else {
+      amount = totalDebits - totalCredits
+    }
+
+    if (Math.abs(amount) <= 0.01) continue
+
+    let parentAccount: string
+    let subAccount: string | null
+    let isSubAccount: boolean
+
+    if (account.includes(':')) {
+      const parts = account.split(':')
+      parentAccount = parts[0].trim()
+      subAccount = parts[1]?.trim() || null
+      isSubAccount = true
+    } else {
+      parentAccount = account
+      subAccount = null
+      isSubAccount = false
+    }
+
+    accountMap.set(account, {
+      account,
+      parent_account: parentAccount,
+      sub_account: subAccount,
+      is_sub_account: isSubAccount,
+      amount,
+      category: classification,
+      account_type: accountType,
+      transactions: txList
+    })
+  }
+
+  const accounts = Array.from(accountMap.values())
+  accounts.sort((a, b) => {
+    if (a.category !== b.category) {
+      return a.category === 'INCOME' ? -1 : 1
+    }
+    return a.account.localeCompare(b.account)
+  })
+
+  return accounts
+}
+
 export default function MobilePLPage() {
   const router = useRouter()
-  const [customers, setCustomers] = useState<CustomerPL[]>([])
   const [loading, setLoading] = useState(true)
+  const [customers, setCustomers] = useState<CustomerPL[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerPL | null>(null)
   
   // Filter states
@@ -49,33 +180,10 @@ export default function MobilePLPage() {
   const [customEnd, setCustomEnd] = useState('')
 
   useEffect(() => {
-    loadPLData()
-  }, [reportPeriod, month, year, customStart, customEnd])
-
-  const loadPLData = async () => {
-    try {
-      setLoading(true)
-      
-      // Get date range based on report period
-      const { startDate, endDate } = getDateRange()
-      
-      // Fetch P&L data
-      const { data, error } = await supabase
-        .rpc('get_customer_pl_summary', {
-          start_date: startDate,
-          end_date: endDate
-        })
-
-      if (error) throw error
-      
-      setCustomers(data || [])
-    } catch (error) {
-      console.error('Error loading P&L data:', error)
-      setCustomers([])
-    } finally {
-      setLoading(false)
+    if (!selectedCustomer) {
+      loadPLData()
     }
-  }
+  }, [reportPeriod, month, year, customStart, customEnd])
 
   const getDateRange = () => {
     const now = new Date()
@@ -103,8 +211,9 @@ export default function MobilePLPage() {
       case 'quarterly':
         const quarter = Math.floor((month - 1) / 3)
         const qStartMonth = quarter * 3 + 1
-        const qEndMonth = qStartMonth + 2
         startDate = `${year}-${String(qStartMonth).padStart(2, '0')}-01`
+
+        const qEndMonth = qStartMonth + 2
         const qLastDay = new Date(year, qEndMonth, 0).getDate()
         endDate = `${year}-${String(qEndMonth).padStart(2, '0')}-${qLastDay}`
         break
@@ -116,6 +225,125 @@ export default function MobilePLPage() {
     }
 
     return { startDate, endDate }
+  }
+
+  const loadPLData = async () => {
+    try {
+      setLoading(true)
+
+      // Get auth user
+      const authClient = createClient()
+      const { data: { user }, error: authError } = await authClient.auth.getUser()
+      
+      if (authError || !user) {
+        console.error('Auth error:', authError)
+        router.push('/login')
+        return
+      }
+
+      // Get company_id
+      const { data: userAccount, error: accountError } = await supabase
+        .from('user_accounts')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .single()
+
+      if (accountError || !userAccount) {
+        console.error('Company lookup error:', accountError)
+        return
+      }
+
+      const { startDate, endDate } = getDateRange()
+
+      // Fetch journal entry lines (same as desktop)
+      const { data: allTransactions, error } = await supabase
+        .from('journal_entry_lines')
+        .select(`
+          entry_number, 
+          class, 
+          date, 
+          account, 
+          account_type, 
+          debit, 
+          credit, 
+          memo, 
+          customer, 
+          vendor, 
+          name, 
+          entry_bank_account, 
+          normal_balance, 
+          report_category,
+          is_cash_account,
+          detail_type,
+          account_behavior
+        `)
+        .eq('company_id', userAccount.company_id)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: true })
+
+      if (error) throw error
+
+      // Filter transactions using timezone-independent date comparison
+      const filteredTransactions = allTransactions.filter((tx) => {
+        return isDateInRange(tx.date, startDate, endDate)
+      })
+
+      // Filter for P&L accounts
+      const plTransactions = filteredTransactions.filter((tx) => {
+        const classification = classifyPLAccount(tx.account_type, tx.account, tx.report_category)
+        return classification !== null
+      })
+
+      // Process transactions to get accounts
+      const processedAccounts = await processPLTransactions(plTransactions)
+
+      // Group by customer
+      const customerMap = new Map<string, CustomerPL>()
+
+      processedAccounts.forEach((account) => {
+        account.transactions.forEach((tx) => {
+          const customerId = tx.customer || 'No Customer'
+          const customerName = tx.customer || 'No Customer'
+
+          if (!customerMap.has(customerId)) {
+            customerMap.set(customerId, {
+              customer_id: customerId,
+              customer_name: customerName,
+              revenue: 0,
+              cogs: 0,
+              gross_profit: 0,
+              gross_margin: 0
+            })
+          }
+
+          const customer = customerMap.get(customerId)!
+          const debitValue = tx.debit ? parseFloat(tx.debit.toString()) : 0
+          const creditValue = tx.credit ? parseFloat(tx.credit.toString()) : 0
+
+          if (account.category === 'INCOME') {
+            customer.revenue += (creditValue - debitValue)
+          } else if (account.account_type?.toLowerCase().includes('cost of goods sold')) {
+            customer.cogs += (debitValue - creditValue)
+          }
+        })
+      })
+
+      // Calculate gross profit and margin
+      const customerList = Array.from(customerMap.values()).map(customer => {
+        customer.gross_profit = customer.revenue - customer.cogs
+        customer.gross_margin = customer.revenue !== 0 ? customer.gross_profit / customer.revenue : 0
+        return customer
+      }).filter(customer => Math.abs(customer.revenue) > 0.01 || Math.abs(customer.cogs) > 0.01)
+
+      setCustomers(customerList.sort((a, b) => b.revenue - a.revenue))
+
+    } catch (error) {
+      console.error('Error loading P&L data:', error)
+      setCustomers([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleFiltersChange = (filters: any) => {
