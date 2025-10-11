@@ -1,9 +1,11 @@
 'use client'
-import { useEffect, useState } from 'react'
+
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { ChevronRight, AlertTriangle, DollarSign, Clock, TrendingDown } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { supabase as dataSupabase } from '@/lib/supabaseClient'
-import { ChevronLeft, AlertTriangle, DollarSign, Clock, TrendingDown } from 'lucide-react'
+import { supabase } from '@/lib/supabaseClient'
+import ReportHeader from '@/components/mobile-dashboard/ReportHeader'
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -12,19 +14,16 @@ const BRAND_COLORS = {
   tertiary: '#7CC4ED',
   accent: '#2E86C1',
   success: '#27AE60',
-  warning: '#F39C12',
   danger: '#E74C3C',
+  warning: '#F39C12',
   gray: {
-    50: '#F8FAFC',
-    100: '#F1F5F9',
-    200: '#E2E8F0',
-    300: '#CBD5E1',
-    400: '#94A3B8',
-    500: '#64748B',
-    600: '#475569',
-    700: '#334155',
-    800: '#1E293B',
-    900: '#0F172A'
+    50: '#F9FAFB',
+    100: '#F3F4F6',
+    200: '#E5E7EB',
+    300: '#D1D5DB',
+    700: '#374151',
+    800: '#1F2937',
+    900: '#111827'
   }
 }
 
@@ -50,58 +49,59 @@ interface APDetail {
 export default function MobileAPAgingPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<'overview' | 'detail'>('overview')
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null)
   const [apDetails, setAPDetails] = useState<APDetail[]>([])
+  
   const [totalAP, setTotalAP] = useState(0)
   const [totalCurrent, setTotalCurrent] = useState(0)
   const [totalOverdue, setTotalOverdue] = useState(0)
 
   useEffect(() => {
-    if (view === 'overview') {
-      loadAPOverview()
+    if (!selectedVendor) {
+      loadAPData()
     }
-  }, [view])
+  }, [])
 
-  const loadAPOverview = async () => {
+  const loadAPData = async () => {
     try {
       setLoading(true)
-      console.log('📊 Loading A/P aging overview...')
 
-      const supabase = createClient()
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      // Get auth user
+      const authClient = createClient()
+      const { data: { user }, error: authError } = await authClient.auth.getUser()
       
       if (authError || !user) {
-        console.error('❌ Auth error:', authError)
+        console.error('Auth error:', authError)
         router.push('/login')
         return
       }
 
-      const { data: userAccount, error: accountError } = await dataSupabase
+      // Get company_id
+      const { data: userAccount, error: accountError } = await supabase
         .from('user_accounts')
         .select('company_id')
         .eq('user_id', user.id)
         .single()
 
       if (accountError || !userAccount) {
-        console.error('❌ Company lookup error:', accountError)
+        console.error('Company lookup error:', accountError)
         return
       }
 
-      const { data: apData, error: apError } = await dataSupabase
+      // Get A/P data
+      const { data: apData, error: apError } = await supabase
         .from('ap_aging')
         .select('*')
         .eq('company_id', userAccount.company_id)
         .order('vendor_name', { ascending: true })
 
       if (apError) {
-        console.error('❌ A/P error:', apError)
+        console.error('A/P error:', apError)
         return
       }
 
-      console.log('✅ A/P data:', apData)
-
+      // Aggregate by vendor
       const vendorMap = new Map<string, Vendor>()
       let totalAPAmount = 0
       let totalCurrentAmount = 0
@@ -149,7 +149,8 @@ export default function MobileAPAgingPage() {
       setVendors(Array.from(vendorMap.values()).sort((a, b) => b.total - a.total))
 
     } catch (error) {
-      console.error('❌ Error loading A/P:', error)
+      console.error('Error loading A/P:', error)
+      setVendors([])
     } finally {
       setLoading(false)
     }
@@ -158,13 +159,12 @@ export default function MobileAPAgingPage() {
   const loadVendorDetail = async (vendor: Vendor) => {
     try {
       setLoading(true)
-      console.log('📊 Loading vendor A/P detail...')
 
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
+      const authClient = createClient()
+      const { data: { user } } = await authClient.auth.getUser()
       if (!user) return
 
-      const { data: userAccount } = await dataSupabase
+      const { data: userAccount } = await supabase
         .from('user_accounts')
         .select('company_id')
         .eq('user_id', user.id)
@@ -172,7 +172,7 @@ export default function MobileAPAgingPage() {
 
       if (!userAccount) return
 
-      const { data: apData, error } = await dataSupabase
+      const { data: apData, error } = await supabase
         .from('ap_aging')
         .select('*')
         .eq('company_id', userAccount.company_id)
@@ -180,7 +180,7 @@ export default function MobileAPAgingPage() {
         .order('bill_date', { ascending: false })
 
       if (error) {
-        console.error('❌ Error loading detail:', error)
+        console.error('Error loading detail:', error)
         return
       }
 
@@ -213,21 +213,11 @@ export default function MobileAPAgingPage() {
 
       setAPDetails(details)
       setSelectedVendor(vendor)
-      setView('detail')
 
     } catch (error) {
-      console.error('❌ Error loading vendor detail:', error)
+      console.error('Error loading vendor detail:', error)
     } finally {
       setLoading(false)
-    }
-  }
-
-  const handleBack = () => {
-    if (view === 'detail') {
-      setView('overview')
-      setSelectedVendor(null)
-    } else {
-      router.push('/mobile-dashboard')
     }
   }
 
@@ -247,356 +237,74 @@ export default function MobileAPAgingPage() {
       case '31-60 Days': return BRAND_COLORS.warning
       case '61-90 Days': return '#FF6B35'
       case '90+ Days': return BRAND_COLORS.danger
-      default: return BRAND_COLORS.gray[500]
+      default: return BRAND_COLORS.gray[700]
     }
   }
 
-  if (loading) {
+  if (selectedVendor) {
     return (
       <div style={{
         minHeight: '100vh',
         background: `linear-gradient(135deg, ${BRAND_COLORS.primary} 0%, ${BRAND_COLORS.secondary} 100%)`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
+        padding: '20px'
       }}>
         <div style={{
           background: 'white',
           borderRadius: '16px',
-          padding: '32px',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
-        }}>
-          <div style={{
-            width: '48px',
-            height: '48px',
-            border: `4px solid ${BRAND_COLORS.primary}`,
-            borderTopColor: 'transparent',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite'
-          }} />
-          <style jsx>{`
-            @keyframes spin {
-              to { transform: rotate(360deg); }
-            }
-          `}</style>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{
-      minHeight: '100vh',
-      background: `linear-gradient(135deg, ${BRAND_COLORS.primary} 0%, ${BRAND_COLORS.secondary} 100%)`,
-      paddingBottom: '32px'
-    }}>
-      {/* Header */}
-      <div style={{
-        background: 'rgba(255, 255, 255, 0.98)',
-        backdropFilter: 'blur(10px)',
-        borderBottom: `3px solid ${BRAND_COLORS.primary}`,
-        padding: '20px',
-        position: 'sticky',
-        top: 0,
-        zIndex: 10,
-        boxShadow: '0 2px 20px rgba(0,0,0,0.1)'
-      }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '16px'
+          padding: '24px',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
         }}>
           <button
-            onClick={handleBack}
+            onClick={() => setSelectedVendor(null)}
             style={{
-              background: BRAND_COLORS.primary,
-              border: 'none',
-              borderRadius: '12px',
-              width: '44px',
-              height: '44px',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: '8px',
+              padding: '8px 16px',
+              background: BRAND_COLORS.gray[100],
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: BRAND_COLORS.gray[700],
               cursor: 'pointer',
-              boxShadow: '0 4px 12px rgba(86, 182, 233, 0.3)',
-              transition: 'all 0.2s ease'
+              marginBottom: '24px'
             }}
           >
-            <ChevronLeft size={24} color="white" />
+            ← Back to Vendors
           </button>
-          <div style={{ flex: 1 }}>
-            <h1 style={{
-              margin: 0,
-              fontSize: '24px',
-              fontWeight: 'bold',
-              color: BRAND_COLORS.gray[900]
-            }}>
-              {view === 'detail' ? selectedVendor?.name : 'A/P Aging'}
-            </h1>
-            <p style={{
-              margin: 0,
-              fontSize: '14px',
-              color: BRAND_COLORS.gray[600]
-            }}>
-              {view === 'detail' ? 'Bill Details' : 'Outstanding Payables'}
-            </p>
-          </div>
-        </div>
-      </div>
 
-      {/* Content */}
-      <div style={{ padding: '20px' }}>
-        {view === 'overview' ? (
-          <>
-            {/* Summary Cards */}
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr',
-              gap: '16px',
-              marginBottom: '24px'
-            }}>
-              {/* Total A/P */}
-              <div style={{
-                background: 'white',
-                borderRadius: '16px',
-                padding: '20px',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.08)'
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  marginBottom: '8px'
-                }}>
-                  <div style={{
-                    background: `${BRAND_COLORS.primary}20`,
-                    borderRadius: '12px',
-                    padding: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <DollarSign size={20} color={BRAND_COLORS.primary} />
-                  </div>
-                  <span style={{
-                    fontSize: '14px',
-                    color: BRAND_COLORS.gray[600],
-                    fontWeight: '500'
-                  }}>Total Outstanding</span>
-                </div>
-                <div style={{
-                  fontSize: '28px',
-                  fontWeight: 'bold',
-                  color: BRAND_COLORS.primary
-                }}>
-                  {formatCurrency(totalAP)}
-                </div>
-              </div>
+          <h2 style={{
+            fontSize: '24px',
+            fontWeight: '700',
+            color: BRAND_COLORS.gray[900],
+            marginBottom: '8px'
+          }}>
+            {selectedVendor.name}
+          </h2>
 
-              {/* Current */}
-              <div style={{
-                background: 'white',
-                borderRadius: '16px',
-                padding: '20px',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.08)'
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  marginBottom: '8px'
-                }}>
-                  <div style={{
-                    background: `${BRAND_COLORS.success}20`,
-                    borderRadius: '12px',
-                    padding: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <TrendingDown size={20} color={BRAND_COLORS.success} />
-                  </div>
-                  <span style={{
-                    fontSize: '14px',
-                    color: BRAND_COLORS.gray[600],
-                    fontWeight: '500'
-                  }}>Current (0-30 Days)</span>
-                </div>
-                <div style={{
-                  fontSize: '28px',
-                  fontWeight: 'bold',
-                  color: BRAND_COLORS.success
-                }}>
-                  {formatCurrency(totalCurrent)}
-                </div>
-              </div>
+          <p style={{
+            fontSize: '14px',
+            color: BRAND_COLORS.gray[700],
+            marginBottom: '24px'
+          }}>
+            Bill Details
+          </p>
 
-              {/* Overdue */}
-              <div style={{
-                background: 'white',
-                borderRadius: '16px',
-                padding: '20px',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
-                border: `2px solid ${BRAND_COLORS.danger}`
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  marginBottom: '8px'
-                }}>
-                  <div style={{
-                    background: `${BRAND_COLORS.danger}20`,
-                    borderRadius: '12px',
-                    padding: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <AlertTriangle size={20} color={BRAND_COLORS.danger} />
-                  </div>
-                  <span style={{
-                    fontSize: '14px',
-                    color: BRAND_COLORS.gray[600],
-                    fontWeight: '500'
-                  }}>Overdue (30+ Days)</span>
-                </div>
-                <div style={{
-                  fontSize: '28px',
-                  fontWeight: 'bold',
-                  color: BRAND_COLORS.danger
-                }}>
-                  {formatCurrency(totalOverdue)}
-                </div>
-              </div>
-            </div>
-
-            {/* Vendor List */}
-            <h2 style={{
-              fontSize: '18px',
-              fontWeight: 'bold',
-              color: 'white',
-              marginBottom: '16px',
-              textShadow: '0 2px 4px rgba(0,0,0,0.2)'
-            }}>
-              By Vendor
-            </h2>
-
+          {loading ? (
             <div style={{
               display: 'flex',
-              flexDirection: 'column',
-              gap: '12px'
+              justifyContent: 'center',
+              padding: '40px'
             }}>
-              {vendors.map(vendor => (
-                <button
-                  key={vendor.id}
-                  onClick={() => loadVendorDetail(vendor)}
-                  style={{
-                    background: 'white',
-                    border: 'none',
-                    borderRadius: '16px',
-                    padding: '20px',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
-                    transition: 'all 0.2s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-4px)'
-                    e.currentTarget.style.boxShadow = '0 8px 30px rgba(0,0,0,0.15)'
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0)'
-                    e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,0.08)'
-                  }}
-                >
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: '16px'
-                  }}>
-                    <div style={{
-                      fontSize: '16px',
-                      fontWeight: '600',
-                      color: BRAND_COLORS.gray[900]
-                    }}>
-                      {vendor.name}
-                    </div>
-                    <div style={{
-                      fontSize: '18px',
-                      fontWeight: 'bold',
-                      color: BRAND_COLORS.primary
-                    }}>
-                      {formatCurrency(vendor.total)}
-                    </div>
-                  </div>
-
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '8px',
-                    fontSize: '12px'
-                  }}>
-                    <div style={{
-                      background: `${BRAND_COLORS.success}10`,
-                      padding: '8px',
-                      borderRadius: '8px'
-                    }}>
-                      <div style={{ color: BRAND_COLORS.gray[600], marginBottom: '2px' }}>
-                        Current
-                      </div>
-                      <div style={{ color: BRAND_COLORS.success, fontWeight: '600' }}>
-                        {formatCurrency(vendor.current)}
-                      </div>
-                    </div>
-
-                    <div style={{
-                      background: `${BRAND_COLORS.primary}10`,
-                      padding: '8px',
-                      borderRadius: '8px'
-                    }}>
-                      <div style={{ color: BRAND_COLORS.gray[600], marginBottom: '2px' }}>
-                        1-30 Days
-                      </div>
-                      <div style={{ color: BRAND_COLORS.primary, fontWeight: '600' }}>
-                        {formatCurrency(vendor.days_30)}
-                      </div>
-                    </div>
-
-                    <div style={{
-                      background: `${BRAND_COLORS.warning}10`,
-                      padding: '8px',
-                      borderRadius: '8px'
-                    }}>
-                      <div style={{ color: BRAND_COLORS.gray[600], marginBottom: '2px' }}>
-                        31-60 Days
-                      </div>
-                      <div style={{ color: BRAND_COLORS.warning, fontWeight: '600' }}>
-                        {formatCurrency(vendor.days_60)}
-                      </div>
-                    </div>
-
-                    <div style={{
-                      background: `${BRAND_COLORS.danger}10`,
-                      padding: '8px',
-                      borderRadius: '8px'
-                    }}>
-                      <div style={{ color: BRAND_COLORS.gray[600], marginBottom: '2px' }}>
-                        60+ Days
-                      </div>
-                      <div style={{ color: BRAND_COLORS.danger, fontWeight: '600' }}>
-                        {formatCurrency(vendor.days_90 + vendor.over_90)}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              ))}
+              <div style={{
+                fontSize: '16px',
+                color: BRAND_COLORS.gray[700]
+              }}>
+                Loading details...
+              </div>
             </div>
-          </>
-        ) : (
-          <>
-            {/* Detail View */}
+          ) : (
             <div style={{
               display: 'flex',
               flexDirection: 'column',
@@ -606,10 +314,9 @@ export default function MobileAPAgingPage() {
                 <div
                   key={index}
                   style={{
-                    background: 'white',
-                    borderRadius: '16px',
-                    padding: '20px',
-                    boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
+                    padding: '16px',
+                    background: BRAND_COLORS.gray[50],
+                    borderRadius: '12px',
                     borderLeft: `4px solid ${getAgingColor(detail.aging_bucket)}`
                   }}
                 >
@@ -630,15 +337,15 @@ export default function MobileAPAgingPage() {
                       </div>
                       <div style={{
                         fontSize: '12px',
-                        color: BRAND_COLORS.gray[600]
+                        color: BRAND_COLORS.gray[700]
                       }}>
                         {detail.bill_date}
                       </div>
                     </div>
                     <div style={{
                       fontSize: '18px',
-                      fontWeight: 'bold',
-                      color: BRAND_COLORS.primary
+                      fontWeight: '700',
+                      color: BRAND_COLORS.danger
                     }}>
                       {formatCurrency(detail.amount)}
                     </div>
@@ -663,9 +370,341 @@ export default function MobileAPAgingPage() {
                 </div>
               ))}
             </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <ReportHeader
+        title="A/P Aging"
+        subtitle="Outstanding Payables"
+        showDateFilter={false}
+      />
+
+      <div style={{
+        minHeight: '100vh',
+        background: `linear-gradient(135deg, ${BRAND_COLORS.primary} 0%, ${BRAND_COLORS.secondary} 100%)`,
+        padding: '20px',
+        paddingTop: '80px'
+      }}>
+        {loading ? (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: '50vh'
+          }}>
+            <div style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              color: 'white'
+            }}>
+              Loading A/P data...
+            </div>
+          </div>
+        ) : vendors.length === 0 ? (
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '40px',
+            textAlign: 'center',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+          }}>
+            <div style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              color: BRAND_COLORS.gray[700],
+              marginBottom: '8px'
+            }}>
+              No A/P Data Found
+            </div>
+            <div style={{
+              fontSize: '14px',
+              color: BRAND_COLORS.gray[700]
+            }}>
+              No outstanding payables at this time
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Summary Cards */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr',
+              gap: '12px',
+              marginBottom: '24px'
+            }}>
+              {/* Total A/P */}
+              <div style={{
+                background: 'white',
+                borderRadius: '16px',
+                padding: '20px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  marginBottom: '8px'
+                }}>
+                  <div style={{
+                    background: `${BRAND_COLORS.danger}20`,
+                    borderRadius: '12px',
+                    padding: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <DollarSign size={20} color={BRAND_COLORS.danger} />
+                  </div>
+                  <span style={{
+                    fontSize: '14px',
+                    color: BRAND_COLORS.gray[700],
+                    fontWeight: '500'
+                  }}>
+                    Total Outstanding
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: '28px',
+                  fontWeight: '700',
+                  color: BRAND_COLORS.danger
+                }}>
+                  {formatCurrency(totalAP)}
+                </div>
+              </div>
+
+              {/* Current */}
+              <div style={{
+                background: 'white',
+                borderRadius: '16px',
+                padding: '20px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  marginBottom: '8px'
+                }}>
+                  <div style={{
+                    background: `${BRAND_COLORS.success}20`,
+                    borderRadius: '12px',
+                    padding: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <TrendingDown size={20} color={BRAND_COLORS.success} />
+                  </div>
+                  <span style={{
+                    fontSize: '14px',
+                    color: BRAND_COLORS.gray[700],
+                    fontWeight: '500'
+                  }}>
+                    Current (0-30 Days)
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: '28px',
+                  fontWeight: '700',
+                  color: BRAND_COLORS.success
+                }}>
+                  {formatCurrency(totalCurrent)}
+                </div>
+              </div>
+
+              {/* Overdue */}
+              <div style={{
+                background: 'white',
+                borderRadius: '16px',
+                padding: '20px',
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                border: `2px solid ${BRAND_COLORS.warning}`
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  marginBottom: '8px'
+                }}>
+                  <div style={{
+                    background: `${BRAND_COLORS.warning}20`,
+                    borderRadius: '12px',
+                    padding: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <AlertTriangle size={20} color={BRAND_COLORS.warning} />
+                  </div>
+                  <span style={{
+                    fontSize: '14px',
+                    color: BRAND_COLORS.gray[700],
+                    fontWeight: '500'
+                  }}>
+                    Overdue (30+ Days)
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: '28px',
+                  fontWeight: '700',
+                  color: BRAND_COLORS.warning
+                }}>
+                  {formatCurrency(totalOverdue)}
+                </div>
+              </div>
+            </div>
+
+            {/* Vendor List */}
+            <h2 style={{
+              fontSize: '18px',
+              fontWeight: '700',
+              color: 'white',
+              marginBottom: '16px',
+              textShadow: '0 2px 4px rgba(0,0,0,0.2)'
+            }}>
+              By Vendor
+            </h2>
+
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px'
+            }}>
+              {vendors.map(vendor => (
+                <div
+                  key={vendor.id}
+                  onClick={() => loadVendorDetail(vendor)}
+                  style={{
+                    background: 'white',
+                    borderRadius: '16px',
+                    padding: '20px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                  }}
+                >
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '16px'
+                  }}>
+                    <div style={{
+                      fontSize: '16px',
+                      fontWeight: '600',
+                      color: BRAND_COLORS.gray[900]
+                    }}>
+                      {vendor.name}
+                    </div>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <div style={{
+                        fontSize: '18px',
+                        fontWeight: '700',
+                        color: BRAND_COLORS.danger
+                      }}>
+                        {formatCurrency(vendor.total)}
+                      </div>
+                      <ChevronRight size={20} color={BRAND_COLORS.primary} />
+                    </div>
+                  </div>
+
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '8px',
+                    fontSize: '12px'
+                  }}>
+                    <div style={{
+                      background: `${BRAND_COLORS.success}10`,
+                      padding: '8px',
+                      borderRadius: '8px'
+                    }}>
+                      <div style={{
+                        color: BRAND_COLORS.gray[700],
+                        marginBottom: '2px'
+                      }}>
+                        Current
+                      </div>
+                      <div style={{
+                        color: BRAND_COLORS.success,
+                        fontWeight: '600'
+                      }}>
+                        {formatCurrency(vendor.current)}
+                      </div>
+                    </div>
+
+                    <div style={{
+                      background: `${BRAND_COLORS.primary}10`,
+                      padding: '8px',
+                      borderRadius: '8px'
+                    }}>
+                      <div style={{
+                        color: BRAND_COLORS.gray[700],
+                        marginBottom: '2px'
+                      }}>
+                        1-30 Days
+                      </div>
+                      <div style={{
+                        color: BRAND_COLORS.primary,
+                        fontWeight: '600'
+                      }}>
+                        {formatCurrency(vendor.days_30)}
+                      </div>
+                    </div>
+
+                    <div style={{
+                      background: `${BRAND_COLORS.warning}10`,
+                      padding: '8px',
+                      borderRadius: '8px'
+                    }}>
+                      <div style={{
+                        color: BRAND_COLORS.gray[700],
+                        marginBottom: '2px'
+                      }}>
+                        31-60 Days
+                      </div>
+                      <div style={{
+                        color: BRAND_COLORS.warning,
+                        fontWeight: '600'
+                      }}>
+                        {formatCurrency(vendor.days_60)}
+                      </div>
+                    </div>
+
+                    <div style={{
+                      background: `${BRAND_COLORS.danger}10`,
+                      padding: '8px',
+                      borderRadius: '8px'
+                    }}>
+                      <div style={{
+                        color: BRAND_COLORS.gray[700],
+                        marginBottom: '2px'
+                      }}>
+                        60+ Days
+                      </div>
+                      <div style={{
+                        color: BRAND_COLORS.danger,
+                        fontWeight: '600'
+                      }}>
+                        {formatCurrency(vendor.days_90 + vendor.over_90)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </>
         )}
       </div>
-    </div>
+    </>
   )
 }
