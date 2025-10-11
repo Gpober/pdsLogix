@@ -27,150 +27,28 @@ const BRAND_COLORS = {
   }
 }
 
-interface PLAccount {
-  account: string
-  parent_account: string
-  sub_account: string | null
-  is_sub_account: boolean
-  amount: number
-  category: 'INCOME' | 'EXPENSES'
-  account_type: string
-  transactions: any[]
-}
-
-interface CustomerPL {
-  customer_id: string
-  customer_name: string
+interface PropertySummary {
+  name: string
   revenue: number
   cogs: number
-  gross_profit: number
-  gross_margin: number
+  expenses: number
+  netIncome: number
 }
 
-// Date utilities
-const getDateParts = (dateString: string) => {
-  const dateOnly = dateString.split('T')[0]
-  const [year, month, day] = dateOnly.split('-').map(Number)
-  return { year, month, day, dateOnly }
-}
-
-const isDateInRange = (dateString: string, startDate: string, endDate: string): boolean => {
-  const { dateOnly } = getDateParts(dateString)
-  return dateOnly >= startDate && dateOnly <= endDate
-}
-
-// P&L Classification
-const classifyPLAccount = (accountType: string, accountName: string, reportCategory: string) => {
-  const typeLower = accountType?.toLowerCase() || ''
-  const nameLower = accountName?.toLowerCase() || ''
-  const categoryLower = reportCategory?.toLowerCase() || ''
-
-  const isTransfer = categoryLower === 'transfer' || nameLower.includes('transfer')
-  const isCashAccount = typeLower.includes('bank') || typeLower.includes('cash') || 
-    nameLower.includes('checking') || nameLower.includes('savings') || nameLower.includes('cash')
-
-  if (isCashAccount || isTransfer) return null
-
-  const isIncomeAccount = typeLower === 'income' || typeLower === 'other income' || 
-    typeLower.includes('income') || typeLower.includes('revenue')
-
-  const isExpenseAccount = typeLower === 'expenses' || typeLower === 'other expense' || 
-    typeLower === 'cost of goods sold' || typeLower.includes('expense')
-
-  if (isIncomeAccount) return 'INCOME'
-  if (isExpenseAccount) return 'EXPENSES'
-
-  return null
-}
-
-// Process P&L Transactions
-const processPLTransactions = async (transactions: any[]): Promise<PLAccount[]> => {
-  const accountMap = new Map<string, PLAccount>()
-
-  const accountGroups = new Map<string, any[]>()
-  transactions.forEach((tx) => {
-    const account = tx.account
-    if (!accountGroups.has(account)) {
-      accountGroups.set(account, [])
-    }
-    accountGroups.get(account)!.push(tx)
-  })
-
-  for (const [account, txList] of accountGroups.entries()) {
-    const sampleTx = txList[0]
-    const accountType = sampleTx.account_type
-    const reportCategory = sampleTx.report_category
-
-    let totalCredits = 0
-    let totalDebits = 0
-
-    txList.forEach((tx) => {
-      const debitValue = tx.debit ? parseFloat(tx.debit.toString()) : 0
-      const creditValue = tx.credit ? parseFloat(tx.credit.toString()) : 0
-
-      if (!isNaN(debitValue) && debitValue > 0) {
-        totalDebits += debitValue
-      }
-      if (!isNaN(creditValue) && creditValue > 0) {
-        totalCredits += creditValue
-      }
-    })
-
-    const classification = classifyPLAccount(accountType, account, reportCategory)
-    if (!classification) continue
-
-    let amount: number
-    if (classification === 'INCOME') {
-      amount = totalCredits - totalDebits
-    } else {
-      amount = totalDebits - totalCredits
-    }
-
-    if (Math.abs(amount) <= 0.01) continue
-
-    let parentAccount: string
-    let subAccount: string | null
-    let isSubAccount: boolean
-
-    if (account.includes(':')) {
-      const parts = account.split(':')
-      parentAccount = parts[0].trim()
-      subAccount = parts[1]?.trim() || null
-      isSubAccount = true
-    } else {
-      parentAccount = account
-      subAccount = null
-      isSubAccount = false
-    }
-
-    accountMap.set(account, {
-      account,
-      parent_account: parentAccount,
-      sub_account: subAccount,
-      is_sub_account: isSubAccount,
-      amount,
-      category: classification,
-      account_type: accountType,
-      transactions: txList
-    })
-  }
-
-  const accounts = Array.from(accountMap.values())
-  accounts.sort((a, b) => {
-    if (a.category !== b.category) {
-      return a.category === 'INCOME' ? -1 : 1
-    }
-    return a.account.localeCompare(b.account)
-  })
-
-  return accounts
+interface JournalRow {
+  account: string
+  account_type: string | null
+  debit: number | null
+  credit: number | null
+  customer: string | null
+  date: string
 }
 
 export default function MobilePLPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
-  const [customers, setCustomers] = useState<CustomerPL[]>([])
-  const [selectedCustomer, setSelectedCustomer] = useState<CustomerPL | null>(null)
+  const [properties, setProperties] = useState<PropertySummary[]>([])
+  const [selectedProperty, setSelectedProperty] = useState<PropertySummary | null>(null)
   
   // Filter states
   const [reportPeriod, setReportPeriod] = useState<'monthly' | 'custom' | 'ytd' | 'trailing12' | 'quarterly'>('monthly')
@@ -179,168 +57,128 @@ export default function MobilePLPage() {
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
 
-  useEffect(() => {
-    if (!selectedCustomer) {
-      loadPLData()
-    }
-  }, [reportPeriod, month, year, customStart, customEnd])
-
   const getDateRange = () => {
-    const now = new Date()
-    let startDate = ''
-    let endDate = ''
+    const makeUTCDate = (y: number, m: number, d: number) =>
+      new Date(Date.UTC(y, m, d))
+    const y = year
+    const m = month
 
-    switch (reportPeriod) {
-      case 'monthly':
-        startDate = `${year}-${String(month).padStart(2, '0')}-01`
-        const lastDay = new Date(year, month, 0).getDate()
-        endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`
-        break
-      
-      case 'ytd':
-        startDate = `${year}-01-01`
-        endDate = `${year}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-        break
-      
-      case 'trailing12':
-        const trailing = new Date(now.getFullYear(), now.getMonth() - 12, 1)
-        startDate = `${trailing.getFullYear()}-${String(trailing.getMonth() + 1).padStart(2, '0')}-01`
-        endDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-        break
-      
-      case 'quarterly':
-        const quarter = Math.floor((month - 1) / 3)
-        const qStartMonth = quarter * 3 + 1
-        startDate = `${year}-${String(qStartMonth).padStart(2, '0')}-01`
-
-        const qEndMonth = qStartMonth + 2
-        const qLastDay = new Date(year, qEndMonth, 0).getDate()
-        endDate = `${year}-${String(qEndMonth).padStart(2, '0')}-${qLastDay}`
-        break
-      
-      case 'custom':
-        startDate = customStart
-        endDate = customEnd
-        break
+    if (reportPeriod === 'custom' && customStart && customEnd) {
+      return { start: customStart, end: customEnd }
     }
-
-    return { startDate, endDate }
+    if (reportPeriod === 'monthly') {
+      const startDate = makeUTCDate(y, m - 1, 1)
+      const endDate = makeUTCDate(y, m, 0)
+      return {
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0]
+      }
+    }
+    if (reportPeriod === 'quarterly') {
+      const qStart = Math.floor((m - 1) / 3) * 3
+      const startDate = makeUTCDate(y, qStart, 1)
+      const endDate = makeUTCDate(y, qStart + 3, 0)
+      return {
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0]
+      }
+    }
+    if (reportPeriod === 'ytd') {
+      const startDate = makeUTCDate(y, 0, 1)
+      const endDate = makeUTCDate(y, m, 0)
+      return {
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0]
+      }
+    }
+    if (reportPeriod === 'trailing12') {
+      const endDate = makeUTCDate(y, m, 0)
+      const startDate = makeUTCDate(y, m - 11, 1)
+      return {
+        start: startDate.toISOString().split('T')[0],
+        end: endDate.toISOString().split('T')[0]
+      }
+    }
+    return { start: `${y}-01-01`, end: `${y}-12-31` }
   }
+
+  useEffect(() => {
+    loadPLData()
+  }, [reportPeriod, month, year, customStart, customEnd])
 
   const loadPLData = async () => {
     try {
       setLoading(true)
+      console.log('📊 Loading P&L data...')
 
-      // Get auth user
-      const authClient = createClient()
-      const { data: { user }, error: authError } = await authClient.auth.getUser()
-      
-      if (authError || !user) {
-        console.error('Auth error:', authError)
-        router.push('/login')
-        return
-      }
+      const { start, end } = getDateRange()
+      console.log('📅 Date range:', start, 'to', end)
 
-      // Get company_id
-      const { data: userAccount, error: accountError } = await supabase
-        .from('user_accounts')
-        .select('company_id')
-        .eq('user_id', user.id)
-        .single()
+      // Use exact same query as working mobile dashboard
+      const selectColumns = 'account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account'
 
-      if (accountError || !userAccount) {
-        console.error('Company lookup error:', accountError)
-        return
-      }
-
-      const { startDate, endDate } = getDateRange()
-
-      // Fetch journal entry lines (same as desktop)
-      const { data: allTransactions, error } = await supabase
+      const { data, error } = await supabase
         .from('journal_entry_lines')
-        .select(`
-          entry_number, 
-          class, 
-          date, 
-          account, 
-          account_type, 
-          debit, 
-          credit, 
-          memo, 
-          customer, 
-          vendor, 
-          name, 
-          entry_bank_account, 
-          normal_balance, 
-          report_category,
-          is_cash_account,
-          detail_type,
-          account_behavior
-        `)
-        .eq('company_id', userAccount.company_id)
-        .gte('date', startDate)
-        .lte('date', endDate)
-        .order('date', { ascending: true })
+        .select(selectColumns)
+        .gte('date', start)
+        .lte('date', end)
 
-      if (error) throw error
+      if (error) {
+        console.error('❌ Query error:', error)
+        throw error
+      }
 
-      // Filter transactions using timezone-independent date comparison
-      const filteredTransactions = allTransactions.filter((tx) => {
-        return isDateInRange(tx.date, startDate, endDate)
-      })
+      console.log('✅ Fetched transactions:', data?.length || 0)
 
-      // Filter for P&L accounts
-      const plTransactions = filteredTransactions.filter((tx) => {
-        const classification = classifyPLAccount(tx.account_type, tx.account, tx.report_category)
-        return classification !== null
-      })
+      const map: Record<string, PropertySummary> = {}
 
-      // Process transactions to get accounts
-      const processedAccounts = await processPLTransactions(plTransactions)
-
-      // Group by customer
-      const customerMap = new Map<string, CustomerPL>()
-
-      processedAccounts.forEach((account) => {
-        account.transactions.forEach((tx) => {
-          const customerId = tx.customer || 'No Customer'
-          const customerName = tx.customer || 'No Customer'
-
-          if (!customerMap.has(customerId)) {
-            customerMap.set(customerId, {
-              customer_id: customerId,
-              customer_name: customerName,
-              revenue: 0,
-              cogs: 0,
-              gross_profit: 0,
-              gross_margin: 0
-            })
+      // Use exact same logic as working mobile dashboard
+      ;((data as JournalRow[]) || []).forEach((row) => {
+        const customer = row.customer || 'General'
+        if (!map[customer]) {
+          map[customer] = {
+            name: customer,
+            revenue: 0,
+            cogs: 0,
+            expenses: 0,
+            netIncome: 0
           }
+        }
 
-          const customer = customerMap.get(customerId)!
-          const debitValue = tx.debit ? parseFloat(tx.debit.toString()) : 0
-          const creditValue = tx.credit ? parseFloat(tx.credit.toString()) : 0
+        const debit = Number(row.debit) || 0
+        const credit = Number(row.credit) || 0
 
-          if (account.category === 'INCOME') {
-            customer.revenue += (creditValue - debitValue)
-          } else if (account.account_type?.toLowerCase().includes('cost of goods sold')) {
-            customer.cogs += (debitValue - creditValue)
-          }
-        })
+        const t = (row.account_type || '').toLowerCase()
+        if (t.includes('income') || t.includes('revenue')) {
+          map[customer].revenue = (map[customer].revenue || 0) + (credit - debit)
+        } else if (t.includes('cost of goods sold') || t.includes('cogs')) {
+          const amt = debit - credit
+          map[customer].cogs = (map[customer].cogs || 0) + amt
+        } else if (t.includes('expense')) {
+          const amt = debit - credit
+          map[customer].expenses = (map[customer].expenses || 0) + amt
+        }
+        map[customer].netIncome = (map[customer].revenue || 0) - (map[customer].cogs || 0) - (map[customer].expenses || 0)
       })
 
-      // Calculate gross profit and margin
-      const customerList = Array.from(customerMap.values()).map(customer => {
-        customer.gross_profit = customer.revenue - customer.cogs
-        customer.gross_margin = customer.revenue !== 0 ? customer.gross_profit / customer.revenue : 0
-        return customer
-      }).filter(customer => Math.abs(customer.revenue) > 0.01 || Math.abs(customer.cogs) > 0.01)
+      // Filter out customers with no activity
+      const list = Object.values(map).filter((p) => {
+        return (p.revenue || 0) !== 0 || (p.cogs || 0) !== 0 || (p.expenses || 0) !== 0 || (p.netIncome || 0) !== 0
+      })
 
-      setCustomers(customerList.sort((a, b) => b.revenue - a.revenue))
+      // Add "General" if it exists but wasn't included
+      const finalList = map['General'] && !list.find((p) => p.name === 'General')
+        ? [...list, map['General']]
+        : list
+
+      console.log('✅ Final customer list:', finalList.length)
+      console.log('📊 Sample customer:', finalList[0])
+
+      setProperties(finalList.sort((a, b) => b.revenue - a.revenue))
 
     } catch (error) {
-      console.error('Error loading P&L data:', error)
-      setCustomers([])
+      console.error('❌ Error loading P&L data:', error)
+      setProperties([])
     } finally {
       setLoading(false)
     }
@@ -367,7 +205,7 @@ export default function MobilePLPage() {
     return `${(value * 100).toFixed(1)}%`
   }
 
-  if (selectedCustomer) {
+  if (selectedProperty) {
     return (
       <div style={{
         minHeight: '100vh',
@@ -381,7 +219,7 @@ export default function MobilePLPage() {
           boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
         }}>
           <button
-            onClick={() => setSelectedCustomer(null)}
+            onClick={() => setSelectedProperty(null)}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -406,7 +244,7 @@ export default function MobilePLPage() {
             color: BRAND_COLORS.gray[900],
             marginBottom: '8px'
           }}>
-            {selectedCustomer.customer_name}
+            {selectedProperty.name}
           </h2>
 
           <p style={{
@@ -441,7 +279,7 @@ export default function MobilePLPage() {
                 fontWeight: '700',
                 color: BRAND_COLORS.success
               }}>
-                {formatCurrency(selectedCustomer.revenue)}
+                {formatCurrency(selectedProperty.revenue)}
               </div>
             </div>
 
@@ -464,11 +302,34 @@ export default function MobilePLPage() {
                 fontWeight: '700',
                 color: BRAND_COLORS.danger
               }}>
-                {formatCurrency(selectedCustomer.cogs)}
+                {formatCurrency(selectedProperty.cogs)}
               </div>
             </div>
 
-            {/* Gross Profit */}
+            {/* Expenses */}
+            <div style={{
+              padding: '16px',
+              background: BRAND_COLORS.gray[50],
+              borderRadius: '12px'
+            }}>
+              <div style={{
+                fontSize: '14px',
+                fontWeight: '500',
+                color: BRAND_COLORS.gray[700],
+                marginBottom: '8px'
+              }}>
+                Expenses
+              </div>
+              <div style={{
+                fontSize: '24px',
+                fontWeight: '700',
+                color: BRAND_COLORS.warning
+              }}>
+                {formatCurrency(selectedProperty.expenses)}
+              </div>
+            </div>
+
+            {/* Net Income */}
             <div style={{
               padding: '16px',
               background: `linear-gradient(135deg, ${BRAND_COLORS.primary}15 0%, ${BRAND_COLORS.secondary}15 100%)`,
@@ -481,14 +342,14 @@ export default function MobilePLPage() {
                 color: BRAND_COLORS.gray[700],
                 marginBottom: '8px'
               }}>
-                Gross Profit
+                Net Income
               </div>
               <div style={{
                 fontSize: '28px',
                 fontWeight: '700',
-                color: BRAND_COLORS.primary
+                color: selectedProperty.netIncome >= 0 ? BRAND_COLORS.primary : BRAND_COLORS.danger
               }}>
-                {formatCurrency(selectedCustomer.gross_profit)}
+                {formatCurrency(selectedProperty.netIncome)}
               </div>
               <div style={{
                 fontSize: '16px',
@@ -496,7 +357,7 @@ export default function MobilePLPage() {
                 color: BRAND_COLORS.secondary,
                 marginTop: '8px'
               }}>
-                {formatPercent(selectedCustomer.gross_margin)} margin
+                {formatPercent(selectedProperty.revenue !== 0 ? selectedProperty.netIncome / selectedProperty.revenue : 0)} margin
               </div>
             </div>
           </div>
@@ -540,7 +401,7 @@ export default function MobilePLPage() {
               Loading P&L data...
             </div>
           </div>
-        ) : customers.length === 0 ? (
+        ) : properties.length === 0 ? (
           <div style={{
             background: 'white',
             borderRadius: '16px',
@@ -569,10 +430,10 @@ export default function MobilePLPage() {
             flexDirection: 'column',
             gap: '12px'
           }}>
-            {customers.map((customer) => (
+            {properties.map((customer) => (
               <div
-                key={customer.customer_id}
-                onClick={() => setSelectedCustomer(customer)}
+                key={customer.name}
+                onClick={() => setSelectedProperty(customer)}
                 style={{
                   background: 'white',
                   borderRadius: '16px',
@@ -595,14 +456,14 @@ export default function MobilePLPage() {
                       color: BRAND_COLORS.gray[900],
                       marginBottom: '4px'
                     }}>
-                      {customer.customer_name}
+                      {customer.name}
                     </h3>
                     <div style={{
                       fontSize: '14px',
                       fontWeight: '600',
-                      color: customer.gross_profit >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
+                      color: customer.netIncome >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger
                     }}>
-                      {formatPercent(customer.gross_margin)} margin
+                      {formatPercent(customer.revenue !== 0 ? customer.netIncome / customer.revenue : 0)} margin
                     </div>
                   </div>
                   <ChevronRight size={24} color={BRAND_COLORS.primary} />
@@ -638,14 +499,14 @@ export default function MobilePLPage() {
                       color: BRAND_COLORS.gray[700],
                       marginBottom: '4px'
                     }}>
-                      Gross Profit
+                      Net Income
                     </div>
                     <div style={{
                       fontSize: '16px',
                       fontWeight: '700',
-                      color: customer.gross_profit >= 0 ? BRAND_COLORS.primary : BRAND_COLORS.danger
+                      color: customer.netIncome >= 0 ? BRAND_COLORS.primary : BRAND_COLORS.danger
                     }}>
-                      {formatCurrency(customer.gross_profit)}
+                      {formatCurrency(customer.netIncome)}
                     </div>
                   </div>
                 </div>
