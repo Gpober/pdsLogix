@@ -74,23 +74,22 @@ export default function DashboardLayout({
         // Check current path
         const currentPath = window.location.pathname
 
-        // If employee is NOT on a payroll page, redirect them
-        const isOnPayrollPage = currentPath.includes('/payroll-submit') || 
-                                currentPath.includes('/mobile-payroll-submit')
+        // If employee is NOT on a payroll submit page, redirect them
+        const isOnPayrollPage = currentPath.includes('/payroll') && currentPath.includes('/submit')
         
         if (!isOnPayrollPage) {
           if (isMobile) {
-            console.log('📱 Employee detected - redirecting to mobile payroll')
-            router.push('/mobile-payroll-submit')
+            console.log('📱 Employee detected - redirecting to mobile payroll submit')
+            router.push('/mobile-dashboard/payroll/submit')
           } else {
-            console.log('💻 Employee detected - redirecting to desktop payroll')
+            console.log('💻 Employee detected - redirecting to desktop payroll submit')
             router.push('/payroll-submit')
           }
           return
         }
 
         // Employee is on correct page - allow access
-        console.log('✅ Employee on payroll page - access granted')
+        console.log('✅ Employee on payroll submit page - access granted')
         setLoading(false)
         return
       }
@@ -125,8 +124,8 @@ export default function DashboardLayout({
         if (isMobile) {
           const currentPath = window.location.pathname
           
-          // Don't redirect if they're on payroll or other specific pages
-          if (!currentPath.includes('/payroll-submit') && 
+          // Don't redirect if they're already on mobile-dashboard or payroll pages
+          if (!currentPath.includes('/payroll') && 
               !currentPath.includes('/mobile-dashboard') &&
               currentPath === '/dashboard') {
             console.log('📱 Admin/Owner mobile - redirecting to mobile dashboard')
