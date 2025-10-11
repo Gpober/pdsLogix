@@ -28,14 +28,13 @@ const BRAND_COLORS = {
 interface ReportHeaderProps {
   title: string
   subtitle: string
-  reportType?: "pl" | "cf" | "ar" | "ap"
+  showDateFilter?: boolean
   reportPeriod?: "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
   month?: number
   year?: number
   customStart?: string
   customEnd?: string
   onFiltersChange?: (filters: {
-    reportType: "pl" | "cf" | "ar" | "ap"
     reportPeriod: "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
     month: number
     year: number
@@ -47,7 +46,7 @@ interface ReportHeaderProps {
 export default function ReportHeader({
   title,
   subtitle,
-  reportType = "pl",
+  showDateFilter = true,
   reportPeriod = "Monthly",
   month = new Date().getMonth() + 1,
   year = new Date().getFullYear(),
@@ -57,7 +56,6 @@ export default function ReportHeader({
 }: ReportHeaderProps) {
   const router = useRouter()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const [tempReportType, setTempReportType] = useState(reportType)
   const [tempReportPeriod, setTempReportPeriod] = useState(reportPeriod)
   const [tempMonth, setTempMonth] = useState(month)
   const [tempYear, setTempYear] = useState(year)
@@ -71,7 +69,6 @@ export default function ReportHeader({
   const handleApplyFilters = () => {
     if (onFiltersChange) {
       onFiltersChange({
-        reportType: tempReportType,
         reportPeriod: tempReportPeriod,
         month: tempMonth,
         year: tempYear,
@@ -79,11 +76,6 @@ export default function ReportHeader({
         customEnd: tempCustomEnd
       })
     }
-    
-    if (tempReportType === 'pl') router.push('/mobile-dashboard/pl')
-    else if (tempReportType === 'cf') router.push('/mobile-dashboard/cash-flow')
-    else if (tempReportType === 'ar') router.push('/mobile-dashboard/ar')
-    else if (tempReportType === 'ap') router.push('/mobile-dashboard/ap')
     
     setIsMenuOpen(false)
   }
@@ -143,24 +135,26 @@ export default function ReportHeader({
             </p>
           </div>
 
-          <button
-            onClick={() => setIsMenuOpen(true)}
-            style={{
-              background: BRAND_COLORS.gray[100],
-              border: 'none',
-              borderRadius: '12px',
-              width: '44px',
-              height: '44px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              flexShrink: 0
-            }}
-          >
-            <Menu size={24} color={BRAND_COLORS.gray[700]} />
-          </button>
+          {showDateFilter && (
+            <button
+              onClick={() => setIsMenuOpen(true)}
+              style={{
+                background: BRAND_COLORS.gray[100],
+                border: 'none',
+                borderRadius: '12px',
+                width: '44px',
+                height: '44px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                flexShrink: 0
+              }}
+            >
+              <Menu size={24} color={BRAND_COLORS.gray[700]} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -212,7 +206,7 @@ export default function ReportHeader({
                 fontWeight: 'bold',
                 color: BRAND_COLORS.gray[900]
               }}>
-                Filter Options
+                Date Filters
               </h2>
               <button
                 onClick={() => setIsMenuOpen(false)}
@@ -234,7 +228,7 @@ export default function ReportHeader({
             }}>
               <div style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-                  Report Type
+                  Report Period
                 </label>
                 <select
                   style={{
@@ -245,21 +239,60 @@ export default function ReportHeader({
                     fontSize: '16px',
                     outline: 'none'
                   }}
-                  value={tempReportType}
-                  onChange={(e) => setTempReportType(e.target.value as "pl" | "cf" | "ar" | "ap")}
+                  value={tempReportPeriod}
+                  onChange={(e) =>
+                    setTempReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
+                  }
                 >
-                  <option value="pl">P&L Statement</option>
-                  <option value="cf">Cash Flow Statement</option>
-                  <option value="ar">A/R Aging Report</option>
-                  <option value="ap">A/P Aging Report</option>
+                  <option value="Monthly">Monthly</option>
+                  <option value="Custom">Custom Range</option>
+                  <option value="Year to Date">Year to Date</option>
+                  <option value="Trailing 12">Trailing 12 Months</option>
+                  <option value="Quarterly">Quarterly</option>
                 </select>
               </div>
 
-              {tempReportType !== "ar" && tempReportType !== "ap" && (
-                <>
-                  <div style={{ marginBottom: '16px' }}>
-                    <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-                      Report Period
+              {tempReportPeriod === "Custom" ? (
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={tempCustomStart}
+                    onChange={(e) => setTempCustomStart(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      outline: 'none',
+                      marginBottom: '12px'
+                    }}
+                  />
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    value={tempCustomEnd}
+                    onChange={(e) => setTempCustomEnd(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
+                      Month
                     </label>
                     <select
                       style={{
@@ -270,109 +303,43 @@ export default function ReportHeader({
                         fontSize: '16px',
                         outline: 'none'
                       }}
-                      value={tempReportPeriod}
-                      onChange={(e) =>
-                        setTempReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
-                      }
+                      value={tempMonth}
+                      onChange={(e) => setTempMonth(Number(e.target.value))}
                     >
-                      <option value="Monthly">Monthly</option>
-                      <option value="Custom">Custom Range</option>
-                      <option value="Year to Date">Year to Date</option>
-                      <option value="Trailing 12">Trailing 12 Months</option>
-                      <option value="Quarterly">Quarterly</option>
+                      {Array.from({ length: 12 }, (_, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          {new Date(0, i).toLocaleString("en", { month: "long" })}
+                        </option>
+                      ))}
                     </select>
                   </div>
-
-                  {tempReportPeriod === "Custom" ? (
-                    <div style={{ marginBottom: '16px' }}>
-                      <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
-                        Start Date
-                      </label>
-                      <input
-                        type="date"
-                        value={tempCustomStart}
-                        onChange={(e) => setTempCustomStart(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '12px',
-                          border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          outline: 'none',
-                          marginBottom: '12px'
-                        }}
-                      />
-                      <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
-                        End Date
-                      </label>
-                      <input
-                        type="date"
-                        value={tempCustomEnd}
-                        onChange={(e) => setTempCustomEnd(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '12px',
-                          border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          outline: 'none'
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
-                          Month
-                        </label>
-                        <select
-                          style={{
-                            width: '100%',
-                            padding: '12px',
-                            border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                            borderRadius: '8px',
-                            fontSize: '16px',
-                            outline: 'none'
-                          }}
-                          value={tempMonth}
-                          onChange={(e) => setTempMonth(Number(e.target.value))}
-                        >
-                          {Array.from({ length: 12 }, (_, i) => (
-                            <option key={i + 1} value={i + 1}>
-                              {new Date(0, i).toLocaleString("en", { month: "long" })}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
-                          Year
-                        </label>
-                        <select
-                          style={{
-                            width: '100%',
-                            padding: '12px',
-                            border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                            borderRadius: '8px',
-                            fontSize: '16px',
-                            outline: 'none'
-                          }}
-                          value={tempYear}
-                          onChange={(e) => setTempYear(Number(e.target.value))}
-                        >
-                          {Array.from({ length: 5 }, (_, i) => {
-                            const y = new Date().getFullYear() - 2 + i
-                            return (
-                              <option key={y} value={y}>
-                                {y}
-                              </option>
-                            )
-                          })}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-                </>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: BRAND_COLORS.gray[700], marginBottom: '8px' }}>
+                      Year
+                    </label>
+                    <select
+                      style={{
+                        width: '100%',
+                        padding: '12px',
+                        border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                        borderRadius: '8px',
+                        fontSize: '16px',
+                        outline: 'none'
+                      }}
+                      value={tempYear}
+                      onChange={(e) => setTempYear(Number(e.target.value))}
+                    >
+                      {Array.from({ length: 5 }, (_, i) => {
+                        const y = new Date().getFullYear() - 2 + i
+                        return (
+                          <option key={y} value={y}>
+                            {y}
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </div>
+                </div>
               )}
             </div>
 
