@@ -1,2467 +1,4 @@
-"use client";
-
-import {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-} from "react";
-import {
-  Menu,
-  X,
-  ChevronLeft,
-  TrendingUp,
-  Award,
-  AlertTriangle,
-  CheckCircle,
-  Target,
-  Home,
-} from "lucide-react";
-import { useRouter } from "next/navigation";
-
-import { supabase } from "@/lib/supabaseClient";
-
-// I AM CFO Brand Colors
-const BRAND_COLORS = {
-  primary: '#56B6E9',
-  secondary: '#3A9BD1', 
-  tertiary: '#7CC4ED',
-  accent: '#2E86C1',
-  success: '#27AE60',
-  warning: '#F39C12',
-  danger: '#E74C3C',
-  gray: {
-    50: '#F8FAFC',
-    100: '#F1F5F9',
-    200: '#E2E8F0'
-  }
-};
-
-interface PropertySummary {
-  name: string;
-  operating?: number;
-  financing?: number;
-  investing?: number;
-}
-
-interface Category {
-  name: string;
-  total: number;
-}
-
-interface Transaction {
-  date: string;
-  amount: number;
-  running: number;
-  payee?: string | null;
-  memo?: string | null;
-  customer?: string | null;
-  entryNumber?: string;
-  invoiceNumber?: string | null;
-}
-
-interface JournalRow {
-  account: string;
-  account_type: string | null;
-  debit: number | null;
-  credit: number | null;
-  customer: string | null;
-  report_category?: string | null;
-  normal_balance?: number | null;
-  date: string;
-  memo?: string | null;
-  vendor?: string | null;
-  name?: string | null;
-  entry_number?: string;
-  number?: string | null;
-  entry_bank_account?: string | null;
-  is_cash_account?: boolean;
-}
-
-interface JournalEntryLine {
-  date: string;
-  account: string;
-  memo: string | null;
-  customer: string | null;
-  debit: number | null;
-  credit: number | null;
-}
-
-type RankingMetric = "operating" | "netCash" | "investing" | "stability";
-
-const getMonthName = (m: number) =>
-  new Date(0, m - 1).toLocaleString("en-US", { month: "long" });
-
-const formatDate = (date: string) =>
-  new Date(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-
-const insights = [
-  {
-    title: "Strong operating cash",
-    message: "Operating activities generated positive cash flow.",
-    icon: TrendingUp,
-    type: "success" as const,
-  },
-  {
-    title: "Investment activity",
-    message: "Significant investing cash flow this period.",
-    icon: AlertTriangle,
-    type: "warning" as const,
-  },
-  {
-    title: "Stable financing",
-    message: "Financing activities remain consistent.",
-    icon: CheckCircle,
-    type: "info" as const,
-  },
-];
-
-// Enhanced classification function to mirror cash flow component
-const classifyTransaction = (
-  accountType: string | null,
-  reportCategory: string | null,
-) => {
-  const typeLower = accountType?.toLowerCase() || "";
-  
-  if (reportCategory === "transfer") {
-    return "transfer";
-  }
-
-  // Operating activities - Income and Expenses (mirroring cash flow logic)
-  const isReceivable = typeLower.includes("accounts receivable") || typeLower.includes("a/r");
-  const isPayable = typeLower.includes("accounts payable") || typeLower.includes("a/p");
-
-  if (
-    typeLower === "income" ||
-    typeLower === "other income" ||
-    typeLower === "expenses" ||
-    typeLower === "expense" ||
-    typeLower === "cost of goods sold" ||
-    isReceivable ||
-    isPayable
-  ) {
-    return "operating";
-  }
-
-  // Investing activities - Fixed Assets and Other Assets
-  if (
-    typeLower === "fixed assets" || 
-    typeLower === "other assets" || 
-    typeLower === "property, plant & equipment"
-  ) {
-    return "investing";
-  }
-
-  // Financing activities - Liabilities, Equity, Credit Cards
-  if (
-    typeLower === "long term liabilities" ||
-    typeLower === "equity" ||
-    typeLower === "credit card" ||
-    typeLower === "other current liabilities" ||
-    typeLower === "line of credit"
-  ) {
-    return "financing";
-  }
-
-  return "other";
-};
-
-export default function CashFlowMobileDashboard() {
-  const router = useRouter();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [reportPeriod, setReportPeriod] = useState<
-    "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
-  >("Monthly");
-  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
-  const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
-  const [view, setView] = useState<"overview" | "summary" | "report" | "detail">("overview");
-  const [properties, setProperties] = useState<PropertySummary[]>([]);
-  const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
-  const [cfData, setCfData] = useState<{
-    operating: Category[];
-    financing: Category[];
-    investing: Category[];
-    totals: {
-      debits: number;
-      credits: number;
-      net: number;
-    };
-  }>({
-    operating: [],
-    financing: [],
-    investing: [],
-    totals: {
-      debits: 0,
-      credits: 0,
-      net: 0,
-    },
-  });
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
-  const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
-  const [showJournalModal, setShowJournalModal] = useState(false);
-  const [journalTitle, setJournalTitle] = useState("");
-
-  const transactionTotal = useMemo(
-    () => transactions.reduce((sum, t) => sum + t.amount, 0),
-    [transactions],
-  );
-
-  const cfTotals = useMemo(() => {
-    const operating = cfData.operating.reduce((sum, c) => sum + c.total, 0);
-    const financing = cfData.financing.reduce((sum, c) => sum + c.total, 0);
-    const investing = cfData.investing.reduce((sum, c) => sum + c.total, 0);
-    const net = cfData.totals?.net ?? operating + financing + investing;
-    return {
-      operating,
-      financing,
-      investing,
-      net,
-    };
-  }, [cfData]);
-
-  const getDateRange = useCallback(() => {
-    const makeUTCDate = (y: number, m: number, d: number) =>
-      new Date(Date.UTC(y, m, d));
-    const y = year;
-    const m = month;
-    if (reportPeriod === "Custom" && customStart && customEnd) {
-      return { start: customStart, end: customEnd };
-    }
-    if (reportPeriod === "Monthly") {
-      const startDate = makeUTCDate(y, m - 1, 1);
-      const endDate = makeUTCDate(y, m, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Quarterly") {
-      const qStart = Math.floor((m - 1) / 3) * 3;
-      const startDate = makeUTCDate(y, qStart, 1);
-      const endDate = makeUTCDate(y, qStart + 3, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Year to Date") {
-      const startDate = makeUTCDate(y, 0, 1);
-      const endDate = makeUTCDate(y, m, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Trailing 12") {
-      const endDate = makeUTCDate(y, m, 0);
-      const startDate = makeUTCDate(y, m - 11, 1);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    return { start: `${y}-01-01`, end: `${y}-12-31` };
-  }, [reportPeriod, month, year, customStart, customEnd]);
-
-  // Load properties data from Supabase
-  useEffect(() => {
-    const load = async () => {
-      const { start, end } = getDateRange();
-
-      const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
-
-      let query = supabase
-        .from("journal_entry_lines")
-        .select(selectColumns)
-        .gte("date", start)
-        .lte("date", end)
-        .not("entry_bank_account", "is", null)
-        .eq("is_cash_account", false)
-        .neq("report_category", "transfer");
-
-      const { data } = await query;
-      const map: Record<string, PropertySummary> = {};
-
-      ((data as JournalRow[]) || []).forEach((row) => {
-        const customer = row.customer || "General";
-        if (!map[customer]) {
-          map[customer] = {
-            name: customer,
-            operating: 0,
-            financing: 0,
-            investing: 0,
-          };
-        }
-
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-
-        const classification = classifyTransaction(row.account_type, row.report_category);
-
-        if (classification !== "other" && classification !== "transfer") {
-          const cashImpact = row.report_category === "transfer"
-            ? debit - credit
-            : row.normal_balance || credit - debit;
-
-          if (classification === "operating") {
-            map[customer].operating = (map[customer].operating || 0) + cashImpact;
-          } else if (classification === "financing") {
-            map[customer].financing = (map[customer].financing || 0) + cashImpact;
-          } else if (classification === "investing") {
-            map[customer].investing = (map[customer].investing || 0) + cashImpact;
-          }
-        }
-      });
-
-      const list = Object.values(map).filter((p) => {
-        return (p.operating || 0) !== 0 || (p.financing || 0) !== 0 || (p.investing || 0) !== 0;
-      });
-
-      const finalList =
-        map["General"] && !list.find((p) => p.name === "General")
-          ? [...list, map["General"]]
-          : list;
-
-      setProperties(finalList);
-    };
-    load();
-  }, [reportPeriod, month, year, customStart, customEnd, getDateRange]);
-
-  const cashKing = useMemo(() => {
-    if (!properties.length) return null;
-    return properties.reduce((max, p) =>
-      (p.operating || 0) > (max.operating || 0) ? p : max,
-    properties[0]).name;
-  }, [properties]);
-
-  const flowMaster = useMemo(() => {
-    if (!properties.length) return null;
-    return properties.reduce((max, p) => {
-      const netP = (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      const netM = (max.operating || 0) + (max.financing || 0) + (max.investing || 0);
-      return netP > netM ? p : max;
-    }, properties[0]).name;
-  }, [properties]);
-
-  const companyTotals = properties.reduce(
-    (acc, p) => {
-      acc.operating += p.operating || 0;
-      acc.financing += p.financing || 0;
-      acc.investing += p.investing || 0;
-      acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      return acc;
-    },
-    { operating: 0, financing: 0, investing: 0, net: 0 }
-  );
-
-  const formatCurrency = (n: number) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(n);
-
-  const formatCompactCurrency = (n: number) => {
-    if (Math.abs(n) >= 1000000) {
-      return `${(n / 1000000).toFixed(1)}M`;
-    } else if (Math.abs(n) >= 1000) {
-      return `${(n / 1000).toFixed(1)}K`;
-    }
-    return formatCurrency(n);
-  };
-
-  const rankingLabels: Record<RankingMetric, string> = {
-    operating: "Operating Cash",
-    netCash: "Net Cash",
-    investing: "Investing",
-    stability: "Net Cash",
-  };
-
-  const rankedProperties = useMemo(() => {
-    if (!rankingMetric) return [];
-    const arr = [...properties];
-    switch (rankingMetric) {
-      case "operating":
-        return arr.sort((a, b) => (b.operating || 0) - (a.operating || 0));
-      case "netCash":
-        return arr.sort(
-          (a, b) =>
-            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
-            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
-        );
-      case "investing":
-        return arr.sort((a, b) => (a.investing || 0) - (b.investing || 0));
-      case "stability":
-        return arr.sort(
-          (a, b) =>
-            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
-            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
-        );
-      default:
-        return arr;
-    }
-  }, [properties, rankingMetric]);
-
-  const formatRankingValue = (p: PropertySummary) => {
-    switch (rankingMetric) {
-      case "netCash":
-      case "stability":
-        return formatCompactCurrency(
-          (p.operating || 0) + (p.financing || 0) + (p.investing || 0),
-        );
-      case "operating":
-        return formatCompactCurrency(p.operating || 0);
-      case "investing":
-        return formatCompactCurrency(p.investing || 0);
-      default:
-        return formatCompactCurrency(0);
-    }
-  };
-
-  const showRanking = (metric: RankingMetric) => {
-    setRankingMetric(metric);
-    setView("summary");
-  };
-
-  const handlePropertySelect = async (name: string | null) => {
-    setSelectedProperty(name);
-    await loadCF(name);
-    setView("report");
-  };
-
-  const loadCF = async (propertyName: string | null = selectedProperty) => {
-    const { start, end } = getDateRange();
-    
-    // Enhanced query mirroring cash flow component
-    const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
-    
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(selectColumns)
-      .gte("date", start)
-      .lte("date", end)
-      .not("entry_bank_account", "is", null)
-      .neq("report_category", "transfer");
-
-    if (propertyName) {
-      query =
-        propertyName === "General"
-          ? query.is("customer", null)
-          : query.eq("customer", propertyName);
-    }
-    
-    const { data } = await query;
-    let totalDebits = 0;
-    let totalCredits = 0;
-    const op: Record<string, number> = {};
-    const fin: Record<string, number> = {};
-    const inv: Record<string, number> = {};
-    
-    ((data as JournalRow[]) || []).forEach((row) => {
-      const debitRaw = Number(row.debit ?? 0);
-      const creditRaw = Number(row.credit ?? 0);
-      const debit = Number.isNaN(debitRaw) ? 0 : debitRaw;
-      const credit = Number.isNaN(creditRaw) ? 0 : creditRaw;
-
-      if (row.entry_bank_account && row.is_cash_account) {
-        totalDebits += debit;
-        totalCredits += credit;
-      }
-
-      if (row.is_cash_account) {
-        return;
-      }
-
-      // Enhanced cash impact calculation mirroring cash flow component
-      const classification = classifyTransaction(
-        row.account_type,
-        row.report_category,
-      );
-
-      if (classification !== "other" && classification !== "transfer") {
-        const cashImpact = debit - credit;
-
-        if (classification === "operating") {
-          op[row.account] = (op[row.account] || 0) + cashImpact;
-        } else if (classification === "financing") {
-          fin[row.account] = (fin[row.account] || 0) + cashImpact;
-        } else if (classification === "investing") {
-          inv[row.account] = (inv[row.account] || 0) + cashImpact;
-        }
-      }
-    });
-    
-    const operatingArr = Object.entries(op)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-    const financingArr = Object.entries(fin)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-    const investingArr = Object.entries(inv)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-      
-    setCfData({
-      operating: operatingArr,
-      financing: financingArr,
-      investing: investingArr,
-      totals: {
-        debits: totalDebits,
-        credits: totalCredits,
-        net: totalDebits - totalCredits,
-      },
-    });
-  };
-
-  const handleCategory = async (account: string, type: "operating" | "financing" | "investing") => {
-    const { start, end } = getDateRange();
-    
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(
-        "date, debit, credit, account, customer, report_category, normal_balance, memo, vendor, name, entry_number, number",
-      )
-      .eq("account", account)
-      .gte("date", start)
-      .lte("date", end)
-      .not("entry_bank_account", "is", null)
-      .eq("is_cash_account", false)
-      .neq("report_category", "transfer");
-
-    if (selectedProperty) {
-      query =
-        selectedProperty === "General"
-          ? query.is("customer", null)
-          : query.eq("customer", selectedProperty);
-    }
-    
-    const { data } = await query;
-    const list: Transaction[] = ((data as JournalRow[]) || [])
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => {
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-        
-        // Enhanced cash flow calculation for transactions
-        const amount = row.report_category === "transfer" 
-          ? debit - credit
-          : row.normal_balance || credit - debit;
-        
-        return {
-          date: row.date,
-          amount,
-          running: 0,
-          payee: row.vendor || row.name,
-          memo: row.memo,
-          customer: row.customer,
-          entryNumber: row.entry_number,
-        };
-      });
-      
-    let run = 0;
-    list.forEach((t) => {
-      run += t.amount;
-      t.running = run;
-    });
-    
-    setTransactions(list);
-    setSelectedCategory(account);
-    setView("detail");
-  };
-
-  const openJournalEntry = async (entryNumber?: string) => {
-    if (!entryNumber) return;
-    
-    const { data, error } = await supabase
-      .from("journal_entry_lines")
-      .select("date, account, memo, customer, debit, credit")
-      .eq("entry_number", entryNumber)
-      .order("line_sequence");
-      
-    if (error) {
-      console.error("Error fetching journal entry lines:", error);
-      return;
-    }
-
-    setJournalEntryLines(data || []);
-    setJournalTitle(`Journal Entry ${entryNumber}`);
-    setShowJournalModal(true);
-  };
-
-  const back = () => {
-    if (view === "detail") setView("report");
-    else if (view === "report") setView("overview");
-    else if (view === "summary") {
-      setRankingMetric(null);
-      setView("overview");
-    }
-  };
-
-  return (
-    <div style={{ 
-      minHeight: '100vh',
-      background: BRAND_COLORS.gray[50],
-      padding: '16px',
-      position: 'relative'
-    }}>
-      <style jsx>{`
-        @keyframes slideDown {
-          0% {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.05); }
-        }
-      `}</style>
-
-      {/* Enhanced Header */}
-      <header style={{
-        background: `linear-gradient(135deg, ${BRAND_COLORS.success}, #2ECC71)`,
-        borderRadius: '16px',
-        padding: '20px',
-        marginBottom: '24px',
-        color: 'white',
-        boxShadow: `0 8px 32px ${BRAND_COLORS.success}33`
-      }}>
-        <div className="relative flex items-center justify-center mb-4">
-          <button
-            onClick={() => router.push('/mobile-dashboard')}
-            className="absolute left-0"
-            style={{
-              background: 'rgba(255, 255, 255, 0.2)',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px',
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            <Home size={20} />
-          </button>
-          <button
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="absolute right-0"
-            style={{
-              background: 'rgba(255, 255, 255, 0.2)',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px',
-              color: 'white'
-            }}
-          >
-            {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-          <span
-            onClick={() => handlePropertySelect(null)}
-            style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
-          >
-            I AM CFO
-          </span>
-        </div>
-
-        {/* Dashboard Summary */}
-        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-            Cash Flow Dashboard
-          </h1>
-          <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {getMonthName(month)} {year} • {properties.length} Customers
-          </p>
-        </div>
-
-        {/* Company Total */}
-        <div
-          onClick={() => handlePropertySelect(null)}
-          style={{
-            background: 'rgba(255, 255, 255, 0.15)',
-            borderRadius: '12px',
-            padding: '20px',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease'
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)';
-            e.currentTarget.style.transform = 'translateY(-2px)';
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-            e.currentTarget.style.transform = 'translateY(0)';
-          }}
-        >
-          <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-            <span style={{ fontSize: '14px', opacity: 0.9 }}>Company Total</span>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', margin: '8px 0' }}>
-              {formatCompactCurrency(companyTotals.net)}
-            </div>
-          </div>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.operating)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Operating</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.financing)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Financing</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.investing)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Investing</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.net)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Hamburger Dropdown Menu */}
-      {menuOpen && (
-        <div style={{
-          position: 'absolute',
-          top: '80px',
-          left: '16px',
-          right: '16px',
-          background: 'white',
-          borderRadius: '12px',
-          padding: '20px',
-          boxShadow: '0 8px 40px rgba(0, 0, 0, 0.15)',
-          border: `2px solid ${BRAND_COLORS.gray[200]}`,
-          zIndex: 1000,
-          animation: 'slideDown 0.3s ease-out'
-        }}>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-              Report Period
-            </label>
-            <select
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                borderRadius: '8px',
-                fontSize: '16px'
-              }}
-              value={reportPeriod}
-              onChange={(e) =>
-                setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
-              }
-            >
-              <option value="Monthly">Monthly</option>
-              <option value="Custom">Custom Range</option>
-              <option value="Year to Date">Year to Date</option>
-              <option value="Trailing 12">Trailing 12 Months</option>
-              <option value="Quarterly">Quarterly</option>
-            </select>
-          </div>
-          {reportPeriod === "Custom" ? (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
-              />
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
-              />
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <select
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8
-                    "use client";
-
-import {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-} from "react";
-import {
-  Menu,
-  X,
-  ChevronLeft,
-  TrendingUp,
-  Award,
-  AlertTriangle,
-  CheckCircle,
-  Target,
-  Home,
-} from "lucide-react";
-import { useRouter } from "next/navigation";
-
-import { supabase } from "@/lib/supabaseClient";
-
-// I AM CFO Brand Colors
-const BRAND_COLORS = {
-  primary: '#56B6E9',
-  secondary: '#3A9BD1', 
-  tertiary: '#7CC4ED',
-  accent: '#2E86C1',
-  success: '#27AE60',
-  warning: '#F39C12',
-  danger: '#E74C3C',
-  gray: {
-    50: '#F8FAFC',
-    100: '#F1F5F9',
-    200: '#E2E8F0'
-  }
-};
-
-interface PropertySummary {
-  name: string;
-  operating?: number;
-  financing?: number;
-  investing?: number;
-}
-
-interface Category {
-  name: string;
-  total: number;
-}
-
-interface Transaction {
-  date: string;
-  amount: number;
-  running: number;
-  payee?: string | null;
-  memo?: string | null;
-  customer?: string | null;
-  entryNumber?: string;
-  invoiceNumber?: string | null;
-}
-
-interface JournalRow {
-  account: string;
-  account_type: string | null;
-  debit: number | null;
-  credit: number | null;
-  customer: string | null;
-  report_category?: string | null;
-  normal_balance?: number | null;
-  date: string;
-  memo?: string | null;
-  vendor?: string | null;
-  name?: string | null;
-  entry_number?: string;
-  number?: string | null;
-  entry_bank_account?: string | null;
-  is_cash_account?: boolean;
-}
-
-interface JournalEntryLine {
-  date: string;
-  account: string;
-  memo: string | null;
-  customer: string | null;
-  debit: number | null;
-  credit: number | null;
-}
-
-type RankingMetric = "operating" | "netCash" | "investing" | "stability";
-
-const getMonthName = (m: number) =>
-  new Date(0, m - 1).toLocaleString("en-US", { month: "long" });
-
-const formatDate = (date: string) =>
-  new Date(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-
-const insights = [
-  {
-    title: "Strong operating cash",
-    message: "Operating activities generated positive cash flow.",
-    icon: TrendingUp,
-    type: "success" as const,
-  },
-  {
-    title: "Investment activity",
-    message: "Significant investing cash flow this period.",
-    icon: AlertTriangle,
-    type: "warning" as const,
-  },
-  {
-    title: "Stable financing",
-    message: "Financing activities remain consistent.",
-    icon: CheckCircle,
-    type: "info" as const,
-  },
-];
-
-// Enhanced classification function to mirror cash flow component
-const classifyTransaction = (
-  accountType: string | null,
-  reportCategory: string | null,
-) => {
-  const typeLower = accountType?.toLowerCase() || "";
-  
-  if (reportCategory === "transfer") {
-    return "transfer";
-  }
-
-  // Operating activities - Income and Expenses (mirroring cash flow logic)
-  const isReceivable = typeLower.includes("accounts receivable") || typeLower.includes("a/r");
-  const isPayable = typeLower.includes("accounts payable") || typeLower.includes("a/p");
-
-  if (
-    typeLower === "income" ||
-    typeLower === "other income" ||
-    typeLower === "expenses" ||
-    typeLower === "expense" ||
-    typeLower === "cost of goods sold" ||
-    isReceivable ||
-    isPayable
-  ) {
-    return "operating";
-  }
-
-  // Investing activities - Fixed Assets and Other Assets
-  if (
-    typeLower === "fixed assets" || 
-    typeLower === "other assets" || 
-    typeLower === "property, plant & equipment"
-  ) {
-    return "investing";
-  }
-
-  // Financing activities - Liabilities, Equity, Credit Cards
-  if (
-    typeLower === "long term liabilities" ||
-    typeLower === "equity" ||
-    typeLower === "credit card" ||
-    typeLower === "other current liabilities" ||
-    typeLower === "line of credit"
-  ) {
-    return "financing";
-  }
-
-  return "other";
-};
-
-export default function CashFlowMobileDashboard() {
-  const router = useRouter();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [reportPeriod, setReportPeriod] = useState<
-    "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
-  >("Monthly");
-  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
-  const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
-  const [view, setView] = useState<"overview" | "summary" | "report" | "detail">("overview");
-  const [properties, setProperties] = useState<PropertySummary[]>([]);
-  const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
-  const [cfData, setCfData] = useState<{
-    operating: Category[];
-    financing: Category[];
-    investing: Category[];
-    totals: {
-      debits: number;
-      credits: number;
-      net: number;
-    };
-  }>({
-    operating: [],
-    financing: [],
-    investing: [],
-    totals: {
-      debits: 0,
-      credits: 0,
-      net: 0,
-    },
-  });
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
-  const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
-  const [showJournalModal, setShowJournalModal] = useState(false);
-  const [journalTitle, setJournalTitle] = useState("");
-
-  const transactionTotal = useMemo(
-    () => transactions.reduce((sum, t) => sum + t.amount, 0),
-    [transactions],
-  );
-
-  const cfTotals = useMemo(() => {
-    const operating = cfData.operating.reduce((sum, c) => sum + c.total, 0);
-    const financing = cfData.financing.reduce((sum, c) => sum + c.total, 0);
-    const investing = cfData.investing.reduce((sum, c) => sum + c.total, 0);
-    const net = cfData.totals?.net ?? operating + financing + investing;
-    return {
-      operating,
-      financing,
-      investing,
-      net,
-    };
-  }, [cfData]);
-
-  const getDateRange = useCallback(() => {
-    const makeUTCDate = (y: number, m: number, d: number) =>
-      new Date(Date.UTC(y, m, d));
-    const y = year;
-    const m = month;
-    if (reportPeriod === "Custom" && customStart && customEnd) {
-      return { start: customStart, end: customEnd };
-    }
-    if (reportPeriod === "Monthly") {
-      const startDate = makeUTCDate(y, m - 1, 1);
-      const endDate = makeUTCDate(y, m, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Quarterly") {
-      const qStart = Math.floor((m - 1) / 3) * 3;
-      const startDate = makeUTCDate(y, qStart, 1);
-      const endDate = makeUTCDate(y, qStart + 3, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Year to Date") {
-      const startDate = makeUTCDate(y, 0, 1);
-      const endDate = makeUTCDate(y, m, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Trailing 12") {
-      const endDate = makeUTCDate(y, m, 0);
-      const startDate = makeUTCDate(y, m - 11, 1);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    return { start: `${y}-01-01`, end: `${y}-12-31` };
-  }, [reportPeriod, month, year, customStart, customEnd]);
-
-  // Load properties data from Supabase
-  useEffect(() => {
-    const load = async () => {
-      const { start, end } = getDateRange();
-
-      const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
-
-      let query = supabase
-        .from("journal_entry_lines")
-        .select(selectColumns)
-        .gte("date", start)
-        .lte("date", end)
-        .not("entry_bank_account", "is", null)
-        .eq("is_cash_account", false)
-        .neq("report_category", "transfer");
-
-      const { data } = await query;
-      const map: Record<string, PropertySummary> = {};
-
-      ((data as JournalRow[]) || []).forEach((row) => {
-        const customer = row.customer || "General";
-        if (!map[customer]) {
-          map[customer] = {
-            name: customer,
-            operating: 0,
-            financing: 0,
-            investing: 0,
-          };
-        }
-
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-
-        const classification = classifyTransaction(row.account_type, row.report_category);
-
-        if (classification !== "other" && classification !== "transfer") {
-          const cashImpact = row.report_category === "transfer"
-            ? debit - credit
-            : row.normal_balance || credit - debit;
-
-          if (classification === "operating") {
-            map[customer].operating = (map[customer].operating || 0) + cashImpact;
-          } else if (classification === "financing") {
-            map[customer].financing = (map[customer].financing || 0) + cashImpact;
-          } else if (classification === "investing") {
-            map[customer].investing = (map[customer].investing || 0) + cashImpact;
-          }
-        }
-      });
-
-      const list = Object.values(map).filter((p) => {
-        return (p.operating || 0) !== 0 || (p.financing || 0) !== 0 || (p.investing || 0) !== 0;
-      });
-
-      const finalList =
-        map["General"] && !list.find((p) => p.name === "General")
-          ? [...list, map["General"]]
-          : list;
-
-      setProperties(finalList);
-    };
-    load();
-  }, [reportPeriod, month, year, customStart, customEnd, getDateRange]);
-
-  const cashKing = useMemo(() => {
-    if (!properties.length) return null;
-    return properties.reduce((max, p) =>
-      (p.operating || 0) > (max.operating || 0) ? p : max,
-    properties[0]).name;
-  }, [properties]);
-
-  const flowMaster = useMemo(() => {
-    if (!properties.length) return null;
-    return properties.reduce((max, p) => {
-      const netP = (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      const netM = (max.operating || 0) + (max.financing || 0) + (max.investing || 0);
-      return netP > netM ? p : max;
-    }, properties[0]).name;
-  }, [properties]);
-
-  const companyTotals = properties.reduce(
-    (acc, p) => {
-      acc.operating += p.operating || 0;
-      acc.financing += p.financing || 0;
-      acc.investing += p.investing || 0;
-      acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      return acc;
-    },
-    { operating: 0, financing: 0, investing: 0, net: 0 }
-  );
-
-  const formatCurrency = (n: number) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(n);
-
-  const formatCompactCurrency = (n: number) => {
-    if (Math.abs(n) >= 1000000) {
-      return `${(n / 1000000).toFixed(1)}M`;
-    } else if (Math.abs(n) >= 1000) {
-      return `${(n / 1000).toFixed(1)}K`;
-    }
-    return formatCurrency(n);
-  };
-
-  const rankingLabels: Record<RankingMetric, string> = {
-    operating: "Operating Cash",
-    netCash: "Net Cash",
-    investing: "Investing",
-    stability: "Net Cash",
-  };
-
-  const rankedProperties = useMemo(() => {
-    if (!rankingMetric) return [];
-    const arr = [...properties];
-    switch (rankingMetric) {
-      case "operating":
-        return arr.sort((a, b) => (b.operating || 0) - (a.operating || 0));
-      case "netCash":
-        return arr.sort(
-          (a, b) =>
-            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
-            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
-        );
-      case "investing":
-        return arr.sort((a, b) => (a.investing || 0) - (b.investing || 0));
-      case "stability":
-        return arr.sort(
-          (a, b) =>
-            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
-            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
-        );
-      default:
-        return arr;
-    }
-  }, [properties, rankingMetric]);
-
-  const formatRankingValue = (p: PropertySummary) => {
-    switch (rankingMetric) {
-      case "netCash":
-      case "stability":
-        return formatCompactCurrency(
-          (p.operating || 0) + (p.financing || 0) + (p.investing || 0),
-        );
-      case "operating":
-        return formatCompactCurrency(p.operating || 0);
-      case "investing":
-        return formatCompactCurrency(p.investing || 0);
-      default:
-        return formatCompactCurrency(0);
-    }
-  };
-
-  const showRanking = (metric: RankingMetric) => {
-    setRankingMetric(metric);
-    setView("summary");
-  };
-
-  const handlePropertySelect = async (name: string | null) => {
-    setSelectedProperty(name);
-    await loadCF(name);
-    setView("report");
-  };
-
-  const loadCF = async (propertyName: string | null = selectedProperty) => {
-    const { start, end } = getDateRange();
-    
-    // Enhanced query mirroring cash flow component
-    const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
-    
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(selectColumns)
-      .gte("date", start)
-      .lte("date", end)
-      .not("entry_bank_account", "is", null)
-      .neq("report_category", "transfer");
-
-    if (propertyName) {
-      query =
-        propertyName === "General"
-          ? query.is("customer", null)
-          : query.eq("customer", propertyName);
-    }
-    
-    const { data } = await query;
-    let totalDebits = 0;
-    let totalCredits = 0;
-    const op: Record<string, number> = {};
-    const fin: Record<string, number> = {};
-    const inv: Record<string, number> = {};
-    
-    ((data as JournalRow[]) || []).forEach((row) => {
-      const debitRaw = Number(row.debit ?? 0);
-      const creditRaw = Number(row.credit ?? 0);
-      const debit = Number.isNaN(debitRaw) ? 0 : debitRaw;
-      const credit = Number.isNaN(creditRaw) ? 0 : creditRaw;
-
-      if (row.entry_bank_account && row.is_cash_account) {
-        totalDebits += debit;
-        totalCredits += credit;
-      }
-
-      if (row.is_cash_account) {
-        return;
-      }
-
-      // Enhanced cash impact calculation mirroring cash flow component
-      const classification = classifyTransaction(
-        row.account_type,
-        row.report_category,
-      );
-
-      if (classification !== "other" && classification !== "transfer") {
-        const cashImpact = debit - credit;
-
-        if (classification === "operating") {
-          op[row.account] = (op[row.account] || 0) + cashImpact;
-        } else if (classification === "financing") {
-          fin[row.account] = (fin[row.account] || 0) + cashImpact;
-        } else if (classification === "investing") {
-          inv[row.account] = (inv[row.account] || 0) + cashImpact;
-        }
-      }
-    });
-    
-    const operatingArr = Object.entries(op)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-    const financingArr = Object.entries(fin)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-    const investingArr = Object.entries(inv)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-      
-    setCfData({
-      operating: operatingArr,
-      financing: financingArr,
-      investing: investingArr,
-      totals: {
-        debits: totalDebits,
-        credits: totalCredits,
-        net: totalDebits - totalCredits,
-      },
-    });
-  };
-
-  const handleCategory = async (account: string, type: "operating" | "financing" | "investing") => {
-    const { start, end } = getDateRange();
-    
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(
-        "date, debit, credit, account, customer, report_category, normal_balance, memo, vendor, name, entry_number, number",
-      )
-      .eq("account", account)
-      .gte("date", start)
-      .lte("date", end)
-      .not("entry_bank_account", "is", null)
-      .eq("is_cash_account", false)
-      .neq("report_category", "transfer");
-
-    if (selectedProperty) {
-      query =
-        selectedProperty === "General"
-          ? query.is("customer", null)
-          : query.eq("customer", selectedProperty);
-    }
-    
-    const { data } = await query;
-    const list: Transaction[] = ((data as JournalRow[]) || [])
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => {
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-        
-        // Enhanced cash flow calculation for transactions
-        const amount = row.report_category === "transfer" 
-          ? debit - credit
-          : row.normal_balance || credit - debit;
-        
-        return {
-          date: row.date,
-          amount,
-          running: 0,
-          payee: row.vendor || row.name,
-          memo: row.memo,
-          customer: row.customer,
-          entryNumber: row.entry_number,
-        };
-      });
-      
-    let run = 0;
-    list.forEach((t) => {
-      run += t.amount;
-      t.running = run;
-    });
-    
-    setTransactions(list);
-    setSelectedCategory(account);
-    setView("detail");
-  };
-
-  const openJournalEntry = async (entryNumber?: string) => {
-    if (!entryNumber) return;
-    
-    const { data, error } = await supabase
-      .from("journal_entry_lines")
-      .select("date, account, memo, customer, debit, credit")
-      .eq("entry_number", entryNumber)
-      .order("line_sequence");
-      
-    if (error) {
-      console.error("Error fetching journal entry lines:", error);
-      return;
-    }
-
-    setJournalEntryLines(data || []);
-    setJournalTitle(`Journal Entry ${entryNumber}`);
-    setShowJournalModal(true);
-  };
-
-  const back = () => {
-    if (view === "detail") setView("report");
-    else if (view === "report") setView("overview");
-    else if (view === "summary") {
-      setRankingMetric(null);
-      setView("overview");
-    }
-  };
-
-  return (
-    <div style={{ 
-      minHeight: '100vh',
-      background: BRAND_COLORS.gray[50],
-      padding: '16px',
-      position: 'relative'
-    }}>
-      <style jsx>{`
-        @keyframes slideDown {
-          0% {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.05); }
-        }
-      `}</style>
-
-      {/* Enhanced Header */}
-      <header style={{
-        background: `linear-gradient(135deg, ${BRAND_COLORS.success}, #2ECC71)`,
-        borderRadius: '16px',
-        padding: '20px',
-        marginBottom: '24px',
-        color: 'white',
-        boxShadow: `0 8px 32px ${BRAND_COLORS.success}33`
-      }}>
-        <div className="relative flex items-center justify-center mb-4">
-          <button
-            onClick={() => router.push('/mobile-dashboard')}
-            className="absolute left-0"
-            style={{
-              background: 'rgba(255, 255, 255, 0.2)',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px',
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            <Home size={20} />
-          </button>
-          <button
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="absolute right-0"
-            style={{
-              background: 'rgba(255, 255, 255, 0.2)',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px',
-              color: 'white'
-            }}
-          >
-            {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-          <span
-            onClick={() => handlePropertySelect(null)}
-            style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
-          >
-            I AM CFO
-          </span>
-        </div>
-
-        {/* Dashboard Summary */}
-        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-            Cash Flow Dashboard
-          </h1>
-          <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {getMonthName(month)} {year} • {properties.length} Customers
-          </p>
-        </div>
-
-        {/* Company Total */}
-        <div
-          onClick={() => handlePropertySelect(null)}
-          style={{
-            background: 'rgba(255, 255, 255, 0.15)',
-            borderRadius: '12px',
-            padding: '20px',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease'
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)';
-            e.currentTarget.style.transform = 'translateY(-2px)';
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-            e.currentTarget.style.transform = 'translateY(0)';
-          }}
-        >
-          <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-            <span style={{ fontSize: '14px', opacity: 0.9 }}>Company Total</span>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', margin: '8px 0' }}>
-              {formatCompactCurrency(companyTotals.net)}
-            </div>
-          </div>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.operating)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Operating</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.financing)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Financing</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.investing)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Investing</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.net)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Hamburger Dropdown Menu */}
-      {menuOpen && (
-        <div style={{
-          position: 'absolute',
-          top: '80px',
-          left: '16px',
-          right: '16px',
-          background: 'white',
-          borderRadius: '12px',
-          padding: '20px',
-          boxShadow: '0 8px 40px rgba(0, 0, 0, 0.15)',
-          border: `2px solid ${BRAND_COLORS.gray[200]}`,
-          zIndex: 1000,
-          animation: 'slideDown 0.3s ease-out'
-        }}>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-              Report Period
-            </label>
-            <select
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                borderRadius: '8px',
-                fontSize: '16px'
-              }}
-              value={reportPeriod}
-              onChange={(e) =>
-                setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
-              }
-            >
-              <option value="Monthly">Monthly</option>
-              <option value="Custom">Custom Range</option>
-              <option value="Year to Date">Year to Date</option>
-              <option value="Trailing 12">Trailing 12 Months</option>
-              <option value="Quarterly">Quarterly</option>
-            </select>
-          </div>
-          {reportPeriod === "Custom" ? (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
-              />
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
-              />
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <select
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8
-                    "use client";
-
-import {
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-} from "react";
-import {
-  Menu,
-  X,
-  ChevronLeft,
-  TrendingUp,
-  Award,
-  AlertTriangle,
-  CheckCircle,
-  Target,
-  Home,
-} from "lucide-react";
-import { useRouter } from "next/navigation";
-
-import { supabase } from "@/lib/supabaseClient";
-
-// I AM CFO Brand Colors
-const BRAND_COLORS = {
-  primary: '#56B6E9',
-  secondary: '#3A9BD1', 
-  tertiary: '#7CC4ED',
-  accent: '#2E86C1',
-  success: '#27AE60',
-  warning: '#F39C12',
-  danger: '#E74C3C',
-  gray: {
-    50: '#F8FAFC',
-    100: '#F1F5F9',
-    200: '#E2E8F0'
-  }
-};
-
-interface PropertySummary {
-  name: string;
-  operating?: number;
-  financing?: number;
-  investing?: number;
-}
-
-interface Category {
-  name: string;
-  total: number;
-}
-
-interface Transaction {
-  date: string;
-  amount: number;
-  running: number;
-  payee?: string | null;
-  memo?: string | null;
-  customer?: string | null;
-  entryNumber?: string;
-  invoiceNumber?: string | null;
-}
-
-interface JournalRow {
-  account: string;
-  account_type: string | null;
-  debit: number | null;
-  credit: number | null;
-  customer: string | null;
-  report_category?: string | null;
-  normal_balance?: number | null;
-  date: string;
-  memo?: string | null;
-  vendor?: string | null;
-  name?: string | null;
-  entry_number?: string;
-  number?: string | null;
-  entry_bank_account?: string | null;
-  is_cash_account?: boolean;
-}
-
-interface JournalEntryLine {
-  date: string;
-  account: string;
-  memo: string | null;
-  customer: string | null;
-  debit: number | null;
-  credit: number | null;
-}
-
-type RankingMetric = "operating" | "netCash" | "investing" | "stability";
-
-const getMonthName = (m: number) =>
-  new Date(0, m - 1).toLocaleString("en-US", { month: "long" });
-
-const formatDate = (date: string) =>
-  new Date(date).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-
-const insights = [
-  {
-    title: "Strong operating cash",
-    message: "Operating activities generated positive cash flow.",
-    icon: TrendingUp,
-    type: "success" as const,
-  },
-  {
-    title: "Investment activity",
-    message: "Significant investing cash flow this period.",
-    icon: AlertTriangle,
-    type: "warning" as const,
-  },
-  {
-    title: "Stable financing",
-    message: "Financing activities remain consistent.",
-    icon: CheckCircle,
-    type: "info" as const,
-  },
-];
-
-// Enhanced classification function to mirror cash flow component
-const classifyTransaction = (
-  accountType: string | null,
-  reportCategory: string | null,
-) => {
-  const typeLower = accountType?.toLowerCase() || "";
-  
-  if (reportCategory === "transfer") {
-    return "transfer";
-  }
-
-  // Operating activities - Income and Expenses (mirroring cash flow logic)
-  const isReceivable = typeLower.includes("accounts receivable") || typeLower.includes("a/r");
-  const isPayable = typeLower.includes("accounts payable") || typeLower.includes("a/p");
-
-  if (
-    typeLower === "income" ||
-    typeLower === "other income" ||
-    typeLower === "expenses" ||
-    typeLower === "expense" ||
-    typeLower === "cost of goods sold" ||
-    isReceivable ||
-    isPayable
-  ) {
-    return "operating";
-  }
-
-  // Investing activities - Fixed Assets and Other Assets
-  if (
-    typeLower === "fixed assets" || 
-    typeLower === "other assets" || 
-    typeLower === "property, plant & equipment"
-  ) {
-    return "investing";
-  }
-
-  // Financing activities - Liabilities, Equity, Credit Cards
-  if (
-    typeLower === "long term liabilities" ||
-    typeLower === "equity" ||
-    typeLower === "credit card" ||
-    typeLower === "other current liabilities" ||
-    typeLower === "line of credit"
-  ) {
-    return "financing";
-  }
-
-  return "other";
-};
-
-export default function CashFlowMobileDashboard() {
-  const router = useRouter();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [reportPeriod, setReportPeriod] = useState<
-    "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
-  >("Monthly");
-  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
-  const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd] = useState("");
-  const [view, setView] = useState<"overview" | "summary" | "report" | "detail">("overview");
-  const [properties, setProperties] = useState<PropertySummary[]>([]);
-  const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
-  const [cfData, setCfData] = useState<{
-    operating: Category[];
-    financing: Category[];
-    investing: Category[];
-    totals: {
-      debits: number;
-      credits: number;
-      net: number;
-    };
-  }>({
-    operating: [],
-    financing: [],
-    investing: [],
-    totals: {
-      debits: 0,
-      credits: 0,
-      net: 0,
-    },
-  });
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
-  const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
-  const [showJournalModal, setShowJournalModal] = useState(false);
-  const [journalTitle, setJournalTitle] = useState("");
-
-  const transactionTotal = useMemo(
-    () => transactions.reduce((sum, t) => sum + t.amount, 0),
-    [transactions],
-  );
-
-  const cfTotals = useMemo(() => {
-    const operating = cfData.operating.reduce((sum, c) => sum + c.total, 0);
-    const financing = cfData.financing.reduce((sum, c) => sum + c.total, 0);
-    const investing = cfData.investing.reduce((sum, c) => sum + c.total, 0);
-    const net = cfData.totals?.net ?? operating + financing + investing;
-    return {
-      operating,
-      financing,
-      investing,
-      net,
-    };
-  }, [cfData]);
-
-  const getDateRange = useCallback(() => {
-    const makeUTCDate = (y: number, m: number, d: number) =>
-      new Date(Date.UTC(y, m, d));
-    const y = year;
-    const m = month;
-    if (reportPeriod === "Custom" && customStart && customEnd) {
-      return { start: customStart, end: customEnd };
-    }
-    if (reportPeriod === "Monthly") {
-      const startDate = makeUTCDate(y, m - 1, 1);
-      const endDate = makeUTCDate(y, m, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Quarterly") {
-      const qStart = Math.floor((m - 1) / 3) * 3;
-      const startDate = makeUTCDate(y, qStart, 1);
-      const endDate = makeUTCDate(y, qStart + 3, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Year to Date") {
-      const startDate = makeUTCDate(y, 0, 1);
-      const endDate = makeUTCDate(y, m, 0);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    if (reportPeriod === "Trailing 12") {
-      const endDate = makeUTCDate(y, m, 0);
-      const startDate = makeUTCDate(y, m - 11, 1);
-      return {
-        start: startDate.toISOString().split("T")[0],
-        end: endDate.toISOString().split("T")[0],
-      };
-    }
-    return { start: `${y}-01-01`, end: `${y}-12-31` };
-  }, [reportPeriod, month, year, customStart, customEnd]);
-
-  // Load properties data from Supabase
-  useEffect(() => {
-    const load = async () => {
-      const { start, end } = getDateRange();
-
-      const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
-
-      let query = supabase
-        .from("journal_entry_lines")
-        .select(selectColumns)
-        .gte("date", start)
-        .lte("date", end)
-        .not("entry_bank_account", "is", null)
-        .eq("is_cash_account", false)
-        .neq("report_category", "transfer");
-
-      const { data } = await query;
-      const map: Record<string, PropertySummary> = {};
-
-      ((data as JournalRow[]) || []).forEach((row) => {
-        const customer = row.customer || "General";
-        if (!map[customer]) {
-          map[customer] = {
-            name: customer,
-            operating: 0,
-            financing: 0,
-            investing: 0,
-          };
-        }
-
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-
-        const classification = classifyTransaction(row.account_type, row.report_category);
-
-        if (classification !== "other" && classification !== "transfer") {
-          const cashImpact = row.report_category === "transfer"
-            ? debit - credit
-            : row.normal_balance || credit - debit;
-
-          if (classification === "operating") {
-            map[customer].operating = (map[customer].operating || 0) + cashImpact;
-          } else if (classification === "financing") {
-            map[customer].financing = (map[customer].financing || 0) + cashImpact;
-          } else if (classification === "investing") {
-            map[customer].investing = (map[customer].investing || 0) + cashImpact;
-          }
-        }
-      });
-
-      const list = Object.values(map).filter((p) => {
-        return (p.operating || 0) !== 0 || (p.financing || 0) !== 0 || (p.investing || 0) !== 0;
-      });
-
-      const finalList =
-        map["General"] && !list.find((p) => p.name === "General")
-          ? [...list, map["General"]]
-          : list;
-
-      setProperties(finalList);
-    };
-    load();
-  }, [reportPeriod, month, year, customStart, customEnd, getDateRange]);
-
-  const cashKing = useMemo(() => {
-    if (!properties.length) return null;
-    return properties.reduce((max, p) =>
-      (p.operating || 0) > (max.operating || 0) ? p : max,
-    properties[0]).name;
-  }, [properties]);
-
-  const flowMaster = useMemo(() => {
-    if (!properties.length) return null;
-    return properties.reduce((max, p) => {
-      const netP = (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      const netM = (max.operating || 0) + (max.financing || 0) + (max.investing || 0);
-      return netP > netM ? p : max;
-    }, properties[0]).name;
-  }, [properties]);
-
-  const companyTotals = properties.reduce(
-    (acc, p) => {
-      acc.operating += p.operating || 0;
-      acc.financing += p.financing || 0;
-      acc.investing += p.investing || 0;
-      acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
-      return acc;
-    },
-    { operating: 0, financing: 0, investing: 0, net: 0 }
-  );
-
-  const formatCurrency = (n: number) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    }).format(n);
-
-  const formatCompactCurrency = (n: number) => {
-    if (Math.abs(n) >= 1000000) {
-      return `${(n / 1000000).toFixed(1)}M`;
-    } else if (Math.abs(n) >= 1000) {
-      return `${(n / 1000).toFixed(1)}K`;
-    }
-    return formatCurrency(n);
-  };
-
-  const rankingLabels: Record<RankingMetric, string> = {
-    operating: "Operating Cash",
-    netCash: "Net Cash",
-    investing: "Investing",
-    stability: "Net Cash",
-  };
-
-  const rankedProperties = useMemo(() => {
-    if (!rankingMetric) return [];
-    const arr = [...properties];
-    switch (rankingMetric) {
-      case "operating":
-        return arr.sort((a, b) => (b.operating || 0) - (a.operating || 0));
-      case "netCash":
-        return arr.sort(
-          (a, b) =>
-            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
-            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
-        );
-      case "investing":
-        return arr.sort((a, b) => (a.investing || 0) - (b.investing || 0));
-      case "stability":
-        return arr.sort(
-          (a, b) =>
-            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
-            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
-        );
-      default:
-        return arr;
-    }
-  }, [properties, rankingMetric]);
-
-  const formatRankingValue = (p: PropertySummary) => {
-    switch (rankingMetric) {
-      case "netCash":
-      case "stability":
-        return formatCompactCurrency(
-          (p.operating || 0) + (p.financing || 0) + (p.investing || 0),
-        );
-      case "operating":
-        return formatCompactCurrency(p.operating || 0);
-      case "investing":
-        return formatCompactCurrency(p.investing || 0);
-      default:
-        return formatCompactCurrency(0);
-    }
-  };
-
-  const showRanking = (metric: RankingMetric) => {
-    setRankingMetric(metric);
-    setView("summary");
-  };
-
-  const handlePropertySelect = async (name: string | null) => {
-    setSelectedProperty(name);
-    await loadCF(name);
-    setView("report");
-  };
-
-  const loadCF = async (propertyName: string | null = selectedProperty) => {
-    const { start, end } = getDateRange();
-    
-    // Enhanced query mirroring cash flow component
-    const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
-    
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(selectColumns)
-      .gte("date", start)
-      .lte("date", end)
-      .not("entry_bank_account", "is", null)
-      .neq("report_category", "transfer");
-
-    if (propertyName) {
-      query =
-        propertyName === "General"
-          ? query.is("customer", null)
-          : query.eq("customer", propertyName);
-    }
-    
-    const { data } = await query;
-    let totalDebits = 0;
-    let totalCredits = 0;
-    const op: Record<string, number> = {};
-    const fin: Record<string, number> = {};
-    const inv: Record<string, number> = {};
-    
-    ((data as JournalRow[]) || []).forEach((row) => {
-      const debitRaw = Number(row.debit ?? 0);
-      const creditRaw = Number(row.credit ?? 0);
-      const debit = Number.isNaN(debitRaw) ? 0 : debitRaw;
-      const credit = Number.isNaN(creditRaw) ? 0 : creditRaw;
-
-      if (row.entry_bank_account && row.is_cash_account) {
-        totalDebits += debit;
-        totalCredits += credit;
-      }
-
-      if (row.is_cash_account) {
-        return;
-      }
-
-      // Enhanced cash impact calculation mirroring cash flow component
-      const classification = classifyTransaction(
-        row.account_type,
-        row.report_category,
-      );
-
-      if (classification !== "other" && classification !== "transfer") {
-        const cashImpact = debit - credit;
-
-        if (classification === "operating") {
-          op[row.account] = (op[row.account] || 0) + cashImpact;
-        } else if (classification === "financing") {
-          fin[row.account] = (fin[row.account] || 0) + cashImpact;
-        } else if (classification === "investing") {
-          inv[row.account] = (inv[row.account] || 0) + cashImpact;
-        }
-      }
-    });
-    
-    const operatingArr = Object.entries(op)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-    const financingArr = Object.entries(fin)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-    const investingArr = Object.entries(inv)
-      .map(([name, total]) => ({ name, total }))
-      .sort((a, b) => b.total - a.total);
-      
-    setCfData({
-      operating: operatingArr,
-      financing: financingArr,
-      investing: investingArr,
-      totals: {
-        debits: totalDebits,
-        credits: totalCredits,
-        net: totalDebits - totalCredits,
-      },
-    });
-  };
-
-  const handleCategory = async (account: string, type: "operating" | "financing" | "investing") => {
-    const { start, end } = getDateRange();
-    
-    let query = supabase
-      .from("journal_entry_lines")
-      .select(
-        "date, debit, credit, account, customer, report_category, normal_balance, memo, vendor, name, entry_number, number",
-      )
-      .eq("account", account)
-      .gte("date", start)
-      .lte("date", end)
-      .not("entry_bank_account", "is", null)
-      .eq("is_cash_account", false)
-      .neq("report_category", "transfer");
-
-    if (selectedProperty) {
-      query =
-        selectedProperty === "General"
-          ? query.is("customer", null)
-          : query.eq("customer", selectedProperty);
-    }
-    
-    const { data } = await query;
-    const list: Transaction[] = ((data as JournalRow[]) || [])
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map((row) => {
-        const debit = Number(row.debit) || 0;
-        const credit = Number(row.credit) || 0;
-        
-        // Enhanced cash flow calculation for transactions
-        const amount = row.report_category === "transfer" 
-          ? debit - credit
-          : row.normal_balance || credit - debit;
-        
-        return {
-          date: row.date,
-          amount,
-          running: 0,
-          payee: row.vendor || row.name,
-          memo: row.memo,
-          customer: row.customer,
-          entryNumber: row.entry_number,
-        };
-      });
-      
-    let run = 0;
-    list.forEach((t) => {
-      run += t.amount;
-      t.running = run;
-    });
-    
-    setTransactions(list);
-    setSelectedCategory(account);
-    setView("detail");
-  };
-
-  const openJournalEntry = async (entryNumber?: string) => {
-    if (!entryNumber) return;
-    
-    const { data, error } = await supabase
-      .from("journal_entry_lines")
-      .select("date, account, memo, customer, debit, credit")
-      .eq("entry_number", entryNumber)
-      .order("line_sequence");
-      
-    if (error) {
-      console.error("Error fetching journal entry lines:", error);
-      return;
-    }
-
-    setJournalEntryLines(data || []);
-    setJournalTitle(`Journal Entry ${entryNumber}`);
-    setShowJournalModal(true);
-  };
-
-  const back = () => {
-    if (view === "detail") setView("report");
-    else if (view === "report") setView("overview");
-    else if (view === "summary") {
-      setRankingMetric(null);
-      setView("overview");
-    }
-  };
-
-  return (
-    <div style={{ 
-      minHeight: '100vh',
-      background: BRAND_COLORS.gray[50],
-      padding: '16px',
-      position: 'relative'
-    }}>
-      <style jsx>{`
-        @keyframes slideDown {
-          0% {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.05); }
-        }
-      `}</style>
-
-      {/* Enhanced Header */}
-      <header style={{
-        background: `linear-gradient(135deg, ${BRAND_COLORS.success}, #2ECC71)`,
-        borderRadius: '16px',
-        padding: '20px',
-        marginBottom: '24px',
-        color: 'white',
-        boxShadow: `0 8px 32px ${BRAND_COLORS.success}33`
-      }}>
-        <div className="relative flex items-center justify-center mb-4">
-          <button
-            onClick={() => router.push('/mobile-dashboard')}
-            className="absolute left-0"
-            style={{
-              background: 'rgba(255, 255, 255, 0.2)',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px',
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            <Home size={20} />
-          </button>
-          <button
-            onClick={() => setMenuOpen(!menuOpen)}
-            className="absolute right-0"
-            style={{
-              background: 'rgba(255, 255, 255, 0.2)',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '8px',
-              color: 'white'
-            }}
-          >
-            {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
-          <span
-            onClick={() => handlePropertySelect(null)}
-            style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
-          >
-            I AM CFO
-          </span>
-        </div>
-
-        {/* Dashboard Summary */}
-        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
-            Cash Flow Dashboard
-          </h1>
-          <p style={{ fontSize: '14px', opacity: 0.9 }}>
-            {getMonthName(month)} {year} • {properties.length} Customers
-          </p>
-        </div>
-
-        {/* Company Total */}
-        <div
-          onClick={() => handlePropertySelect(null)}
-          style={{
-            background: 'rgba(255, 255, 255, 0.15)',
-            borderRadius: '12px',
-            padding: '20px',
-            backdropFilter: 'blur(10px)',
-            border: '1px solid rgba(255, 255, 255, 0.2)',
-            cursor: 'pointer',
-            transition: 'all 0.3s ease'
-          }}
-          onMouseOver={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)';
-            e.currentTarget.style.transform = 'translateY(-2px)';
-          }}
-          onMouseOut={(e) => {
-            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
-            e.currentTarget.style.transform = 'translateY(0)';
-          }}
-        >
-          <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-            <span style={{ fontSize: '14px', opacity: 0.9 }}>Company Total</span>
-            <div style={{ fontSize: '32px', fontWeight: 'bold', margin: '8px 0' }}>
-              {formatCompactCurrency(companyTotals.net)}
-            </div>
-          </div>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.operating)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Operating</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.financing)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Financing</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.investing)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Investing</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
-                {formatCompactCurrency(companyTotals.net)}
-              </div>
-              <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Hamburger Dropdown Menu */}
-      {menuOpen && (
-        <div style={{
-          position: 'absolute',
-          top: '80px',
-          left: '16px',
-          right: '16px',
-          background: 'white',
-          borderRadius: '12px',
-          padding: '20px',
-          boxShadow: '0 8px 40px rgba(0, 0, 0, 0.15)',
-          border: `2px solid ${BRAND_COLORS.gray[200]}`,
-          zIndex: 1000,
-          animation: 'slideDown 0.3s ease-out'
-        }}>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
-              Report Period
-            </label>
-            <select
-              style={{
-                width: '100%',
-                padding: '12px',
-                border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                borderRadius: '8px',
-                fontSize: '16px'
-              }}
-              value={reportPeriod}
-              onChange={(e) =>
-                setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
-              }
-            >
-              <option value="Monthly">Monthly</option>
-              <option value="Custom">Custom Range</option>
-              <option value="Year to Date">Year to Date</option>
-              <option value="Trailing 12">Trailing 12 Months</option>
-              <option value="Quarterly">Quarterly</option>
-            </select>
-          </div>
-          {reportPeriod === "Custom" ? (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
-              />
-              <input
-                type="date"
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8px',
-                  fontSize: '16px'
-                }}
-                value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
-              />
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-              <select
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
-                  borderRadius: '8
-                                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+<div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
               <select
                 style={{
                   flex: 1,
@@ -3311,4 +848,824 @@ export default function CashFlowMobileDashboard() {
       )}
     </div>
   );
+}"use client";
+
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
+import {
+  Menu,
+  X,
+  ChevronLeft,
+  TrendingUp,
+  Award,
+  AlertTriangle,
+  CheckCircle,
+  Target,
+  Home,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+
+import { supabase } from "@/lib/supabaseClient";
+
+// I AM CFO Brand Colors
+const BRAND_COLORS = {
+  primary: '#56B6E9',
+  secondary: '#3A9BD1', 
+  tertiary: '#7CC4ED',
+  accent: '#2E86C1',
+  success: '#27AE60',
+  warning: '#F39C12',
+  danger: '#E74C3C',
+  gray: {
+    50: '#F8FAFC',
+    100: '#F1F5F9',
+    200: '#E2E8F0'
+  }
+};
+
+interface PropertySummary {
+  name: string;
+  operating?: number;
+  financing?: number;
+  investing?: number;
 }
+
+interface Category {
+  name: string;
+  total: number;
+}
+
+interface Transaction {
+  date: string;
+  amount: number;
+  running: number;
+  payee?: string | null;
+  memo?: string | null;
+  customer?: string | null;
+  entryNumber?: string;
+  invoiceNumber?: string | null;
+}
+
+interface JournalRow {
+  account: string;
+  account_type: string | null;
+  debit: number | null;
+  credit: number | null;
+  customer: string | null;
+  report_category?: string | null;
+  normal_balance?: number | null;
+  date: string;
+  memo?: string | null;
+  vendor?: string | null;
+  name?: string | null;
+  entry_number?: string;
+  number?: string | null;
+  entry_bank_account?: string | null;
+  is_cash_account?: boolean;
+}
+
+interface JournalEntryLine {
+  date: string;
+  account: string;
+  memo: string | null;
+  customer: string | null;
+  debit: number | null;
+  credit: number | null;
+}
+
+type RankingMetric = "operating" | "netCash" | "investing" | "stability";
+
+const getMonthName = (m: number) =>
+  new Date(0, m - 1).toLocaleString("en-US", { month: "long" });
+
+const formatDate = (date: string) =>
+  new Date(date).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+
+const insights = [
+  {
+    title: "Strong operating cash",
+    message: "Operating activities generated positive cash flow.",
+    icon: TrendingUp,
+    type: "success" as const,
+  },
+  {
+    title: "Investment activity",
+    message: "Significant investing cash flow this period.",
+    icon: AlertTriangle,
+    type: "warning" as const,
+  },
+  {
+    title: "Stable financing",
+    message: "Financing activities remain consistent.",
+    icon: CheckCircle,
+    type: "info" as const,
+  },
+];
+
+// Enhanced classification function to mirror cash flow component
+const classifyTransaction = (
+  accountType: string | null,
+  reportCategory: string | null,
+) => {
+  const typeLower = accountType?.toLowerCase() || "";
+  
+  if (reportCategory === "transfer") {
+    return "transfer";
+  }
+
+  // Operating activities - Income and Expenses (mirroring cash flow logic)
+  const isReceivable = typeLower.includes("accounts receivable") || typeLower.includes("a/r");
+  const isPayable = typeLower.includes("accounts payable") || typeLower.includes("a/p");
+
+  if (
+    typeLower === "income" ||
+    typeLower === "other income" ||
+    typeLower === "expenses" ||
+    typeLower === "expense" ||
+    typeLower === "cost of goods sold" ||
+    isReceivable ||
+    isPayable
+  ) {
+    return "operating";
+  }
+
+  // Investing activities - Fixed Assets and Other Assets
+  if (
+    typeLower === "fixed assets" || 
+    typeLower === "other assets" || 
+    typeLower === "property, plant & equipment"
+  ) {
+    return "investing";
+  }
+
+  // Financing activities - Liabilities, Equity, Credit Cards
+  if (
+    typeLower === "long term liabilities" ||
+    typeLower === "equity" ||
+    typeLower === "credit card" ||
+    typeLower === "other current liabilities" ||
+    typeLower === "line of credit"
+  ) {
+    return "financing";
+  }
+
+  return "other";
+};
+
+export default function CashFlowMobileDashboard() {
+  const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [reportPeriod, setReportPeriod] = useState<
+    "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
+  >("Monthly");
+  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
+  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [view, setView] = useState<"overview" | "summary" | "report" | "detail">("overview");
+  const [properties, setProperties] = useState<PropertySummary[]>([]);
+  const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
+  const [cfData, setCfData] = useState<{
+    operating: Category[];
+    financing: Category[];
+    investing: Category[];
+    totals: {
+      debits: number;
+      credits: number;
+      net: number;
+    };
+  }>({
+    operating: [],
+    financing: [],
+    investing: [],
+    totals: {
+      debits: 0,
+      credits: 0,
+      net: 0,
+    },
+  });
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
+  const [journalEntryLines, setJournalEntryLines] = useState<JournalEntryLine[]>([]);
+  const [showJournalModal, setShowJournalModal] = useState(false);
+  const [journalTitle, setJournalTitle] = useState("");
+
+  const transactionTotal = useMemo(
+    () => transactions.reduce((sum, t) => sum + t.amount, 0),
+    [transactions],
+  );
+
+  const cfTotals = useMemo(() => {
+    const operating = cfData.operating.reduce((sum, c) => sum + c.total, 0);
+    const financing = cfData.financing.reduce((sum, c) => sum + c.total, 0);
+    const investing = cfData.investing.reduce((sum, c) => sum + c.total, 0);
+    const net = cfData.totals?.net ?? operating + financing + investing;
+    return {
+      operating,
+      financing,
+      investing,
+      net,
+    };
+  }, [cfData]);
+
+  const getDateRange = useCallback(() => {
+    const makeUTCDate = (y: number, m: number, d: number) =>
+      new Date(Date.UTC(y, m, d));
+    const y = year;
+    const m = month;
+    if (reportPeriod === "Custom" && customStart && customEnd) {
+      return { start: customStart, end: customEnd };
+    }
+    if (reportPeriod === "Monthly") {
+      const startDate = makeUTCDate(y, m - 1, 1);
+      const endDate = makeUTCDate(y, m, 0);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    if (reportPeriod === "Quarterly") {
+      const qStart = Math.floor((m - 1) / 3) * 3;
+      const startDate = makeUTCDate(y, qStart, 1);
+      const endDate = makeUTCDate(y, qStart + 3, 0);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    if (reportPeriod === "Year to Date") {
+      const startDate = makeUTCDate(y, 0, 1);
+      const endDate = makeUTCDate(y, m, 0);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    if (reportPeriod === "Trailing 12") {
+      const endDate = makeUTCDate(y, m, 0);
+      const startDate = makeUTCDate(y, m - 11, 1);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    return { start: `${y}-01-01`, end: `${y}-12-31` };
+  }, [reportPeriod, month, year, customStart, customEnd]);
+
+  // Load properties data from Supabase
+  useEffect(() => {
+    const load = async () => {
+      const { start, end } = getDateRange();
+
+      const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
+
+      let query = supabase
+        .from("journal_entry_lines")
+        .select(selectColumns)
+        .gte("date", start)
+        .lte("date", end)
+        .not("entry_bank_account", "is", null)
+        .eq("is_cash_account", false)
+        .neq("report_category", "transfer");
+
+      const { data } = await query;
+      const map: Record<string, PropertySummary> = {};
+
+      ((data as JournalRow[]) || []).forEach((row) => {
+        const customer = row.customer || "General";
+        if (!map[customer]) {
+          map[customer] = {
+            name: customer,
+            operating: 0,
+            financing: 0,
+            investing: 0,
+          };
+        }
+
+        const debit = Number(row.debit) || 0;
+        const credit = Number(row.credit) || 0;
+
+        const classification = classifyTransaction(row.account_type, row.report_category);
+
+        if (classification !== "other" && classification !== "transfer") {
+          const cashImpact = row.report_category === "transfer"
+            ? debit - credit
+            : row.normal_balance || credit - debit;
+
+          if (classification === "operating") {
+            map[customer].operating = (map[customer].operating || 0) + cashImpact;
+          } else if (classification === "financing") {
+            map[customer].financing = (map[customer].financing || 0) + cashImpact;
+          } else if (classification === "investing") {
+            map[customer].investing = (map[customer].investing || 0) + cashImpact;
+          }
+        }
+      });
+
+      const list = Object.values(map).filter((p) => {
+        return (p.operating || 0) !== 0 || (p.financing || 0) !== 0 || (p.investing || 0) !== 0;
+      });
+
+      const finalList =
+        map["General"] && !list.find((p) => p.name === "General")
+          ? [...list, map["General"]]
+          : list;
+
+      setProperties(finalList);
+    };
+    load();
+  }, [reportPeriod, month, year, customStart, customEnd, getDateRange]);
+
+  const cashKing = useMemo(() => {
+    if (!properties.length) return null;
+    return properties.reduce((max, p) =>
+      (p.operating || 0) > (max.operating || 0) ? p : max,
+    properties[0]).name;
+  }, [properties]);
+
+  const flowMaster = useMemo(() => {
+    if (!properties.length) return null;
+    return properties.reduce((max, p) => {
+      const netP = (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
+      const netM = (max.operating || 0) + (max.financing || 0) + (max.investing || 0);
+      return netP > netM ? p : max;
+    }, properties[0]).name;
+  }, [properties]);
+
+  const companyTotals = properties.reduce(
+    (acc, p) => {
+      acc.operating += p.operating || 0;
+      acc.financing += p.financing || 0;
+      acc.investing += p.investing || 0;
+      acc.net += (p.operating || 0) + (p.financing || 0) + (p.investing || 0);
+      return acc;
+    },
+    { operating: 0, financing: 0, investing: 0, net: 0 }
+  );
+
+  const formatCurrency = (n: number) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+    }).format(n);
+
+  const formatCompactCurrency = (n: number) => {
+    if (Math.abs(n) >= 1000000) {
+      return `${(n / 1000000).toFixed(1)}M`;
+    } else if (Math.abs(n) >= 1000) {
+      return `${(n / 1000).toFixed(1)}K`;
+    }
+    return formatCurrency(n);
+  };
+
+  const rankingLabels: Record<RankingMetric, string> = {
+    operating: "Operating Cash",
+    netCash: "Net Cash",
+    investing: "Investing",
+    stability: "Net Cash",
+  };
+
+  const rankedProperties = useMemo(() => {
+    if (!rankingMetric) return [];
+    const arr = [...properties];
+    switch (rankingMetric) {
+      case "operating":
+        return arr.sort((a, b) => (b.operating || 0) - (a.operating || 0));
+      case "netCash":
+        return arr.sort(
+          (a, b) =>
+            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
+            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
+        );
+      case "investing":
+        return arr.sort((a, b) => (a.investing || 0) - (b.investing || 0));
+      case "stability":
+        return arr.sort(
+          (a, b) =>
+            (b.operating || 0) + (b.financing || 0) + (b.investing || 0) -
+            ((a.operating || 0) + (a.financing || 0) + (a.investing || 0)),
+        );
+      default:
+        return arr;
+    }
+  }, [properties, rankingMetric]);
+
+  const formatRankingValue = (p: PropertySummary) => {
+    switch (rankingMetric) {
+      case "netCash":
+      case "stability":
+        return formatCompactCurrency(
+          (p.operating || 0) + (p.financing || 0) + (p.investing || 0),
+        );
+      case "operating":
+        return formatCompactCurrency(p.operating || 0);
+      case "investing":
+        return formatCompactCurrency(p.investing || 0);
+      default:
+        return formatCompactCurrency(0);
+    }
+  };
+
+  const showRanking = (metric: RankingMetric) => {
+    setRankingMetric(metric);
+    setView("summary");
+  };
+
+  const handlePropertySelect = async (name: string | null) => {
+    setSelectedProperty(name);
+    await loadCF(name);
+    setView("report");
+  };
+
+  const loadCF = async (propertyName: string | null = selectedProperty) => {
+    const { start, end } = getDateRange();
+    
+    // Enhanced query mirroring cash flow component
+    const selectColumns = "account, account_type, report_category, normal_balance, debit, credit, customer, date, entry_bank_account, is_cash_account";
+    
+    let query = supabase
+      .from("journal_entry_lines")
+      .select(selectColumns)
+      .gte("date", start)
+      .lte("date", end)
+      .not("entry_bank_account", "is", null)
+      .neq("report_category", "transfer");
+
+    if (propertyName) {
+      query =
+        propertyName === "General"
+          ? query.is("customer", null)
+          : query.eq("customer", propertyName);
+    }
+    
+    const { data } = await query;
+    let totalDebits = 0;
+    let totalCredits = 0;
+    const op: Record<string, number> = {};
+    const fin: Record<string, number> = {};
+    const inv: Record<string, number> = {};
+    
+    ((data as JournalRow[]) || []).forEach((row) => {
+      const debitRaw = Number(row.debit ?? 0);
+      const creditRaw = Number(row.credit ?? 0);
+      const debit = Number.isNaN(debitRaw) ? 0 : debitRaw;
+      const credit = Number.isNaN(creditRaw) ? 0 : creditRaw;
+
+      if (row.entry_bank_account && row.is_cash_account) {
+        totalDebits += debit;
+        totalCredits += credit;
+      }
+
+      if (row.is_cash_account) {
+        return;
+      }
+
+      // Enhanced cash impact calculation mirroring cash flow component
+      const classification = classifyTransaction(
+        row.account_type,
+        row.report_category,
+      );
+
+      if (classification !== "other" && classification !== "transfer") {
+        const cashImpact = debit - credit;
+
+        if (classification === "operating") {
+          op[row.account] = (op[row.account] || 0) + cashImpact;
+        } else if (classification === "financing") {
+          fin[row.account] = (fin[row.account] || 0) + cashImpact;
+        } else if (classification === "investing") {
+          inv[row.account] = (inv[row.account] || 0) + cashImpact;
+        }
+      }
+    });
+    
+    const operatingArr = Object.entries(op)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total);
+    const financingArr = Object.entries(fin)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total);
+    const investingArr = Object.entries(inv)
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total);
+      
+    setCfData({
+      operating: operatingArr,
+      financing: financingArr,
+      investing: investingArr,
+      totals: {
+        debits: totalDebits,
+        credits: totalCredits,
+        net: totalDebits - totalCredits,
+      },
+    });
+  };
+
+  const handleCategory = async (account: string, type: "operating" | "financing" | "investing") => {
+    const { start, end } = getDateRange();
+    
+    let query = supabase
+      .from("journal_entry_lines")
+      .select(
+        "date, debit, credit, account, customer, report_category, normal_balance, memo, vendor, name, entry_number, number",
+      )
+      .eq("account", account)
+      .gte("date", start)
+      .lte("date", end)
+      .not("entry_bank_account", "is", null)
+      .eq("is_cash_account", false)
+      .neq("report_category", "transfer");
+
+    if (selectedProperty) {
+      query =
+        selectedProperty === "General"
+          ? query.is("customer", null)
+          : query.eq("customer", selectedProperty);
+    }
+    
+    const { data } = await query;
+    const list: Transaction[] = ((data as JournalRow[]) || [])
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((row) => {
+        const debit = Number(row.debit) || 0;
+        const credit = Number(row.credit) || 0;
+        
+        // Enhanced cash flow calculation for transactions
+        const amount = row.report_category === "transfer" 
+          ? debit - credit
+          : row.normal_balance || credit - debit;
+        
+        return {
+          date: row.date,
+          amount,
+          running: 0,
+          payee: row.vendor || row.name,
+          memo: row.memo,
+          customer: row.customer,
+          entryNumber: row.entry_number,
+        };
+      });
+      
+    let run = 0;
+    list.forEach((t) => {
+      run += t.amount;
+      t.running = run;
+    });
+    
+    setTransactions(list);
+    setSelectedCategory(account);
+    setView("detail");
+  };
+
+  const openJournalEntry = async (entryNumber?: string) => {
+    if (!entryNumber) return;
+    
+    const { data, error } = await supabase
+      .from("journal_entry_lines")
+      .select("date, account, memo, customer, debit, credit")
+      .eq("entry_number", entryNumber)
+      .order("line_sequence");
+      
+    if (error) {
+      console.error("Error fetching journal entry lines:", error);
+      return;
+    }
+
+    setJournalEntryLines(data || []);
+    setJournalTitle(`Journal Entry ${entryNumber}`);
+    setShowJournalModal(true);
+  };
+
+  const back = () => {
+    if (view === "detail") setView("report");
+    else if (view === "report") setView("overview");
+    else if (view === "summary") {
+      setRankingMetric(null);
+      setView("overview");
+    }
+  };
+
+  return (
+    <div style={{ 
+      minHeight: '100vh',
+      background: BRAND_COLORS.gray[50],
+      padding: '16px',
+      position: 'relative'
+    }}>
+      <style jsx>{`
+        @keyframes slideDown {
+          0% {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @keyframes pulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+        }
+      `}</style>
+
+      {/* Enhanced Header */}
+      <header style={{
+        background: `linear-gradient(135deg, ${BRAND_COLORS.success}, #2ECC71)`,
+        borderRadius: '16px',
+        padding: '20px',
+        marginBottom: '24px',
+        color: 'white',
+        boxShadow: `0 8px 32px ${BRAND_COLORS.success}33`
+      }}>
+        <div className="relative flex items-center justify-center mb-4">
+          <button
+            onClick={() => router.push('/mobile-dashboard')}
+            className="absolute left-0"
+            style={{
+              background: 'rgba(255, 255, 255, 0.2)',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '8px',
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            <Home size={20} />
+          </button>
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="absolute right-0"
+            style={{
+              background: 'rgba(255, 255, 255, 0.2)',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '8px',
+              color: 'white'
+            }}
+          >
+            {menuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+          <span
+            onClick={() => handlePropertySelect(null)}
+            style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
+          >
+            I AM CFO
+          </span>
+        </div>
+
+        {/* Dashboard Summary */}
+        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+          <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
+            Cash Flow Dashboard
+          </h1>
+          <p style={{ fontSize: '14px', opacity: 0.9 }}>
+            {getMonthName(month)} {year} • {properties.length} Customers
+          </p>
+        </div>
+
+        {/* Company Total */}
+        <div
+          onClick={() => handlePropertySelect(null)}
+          style={{
+            background: 'rgba(255, 255, 255, 0.15)',
+            borderRadius: '12px',
+            padding: '20px',
+            backdropFilter: 'blur(10px)',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            cursor: 'pointer',
+            transition: 'all 0.3s ease'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)';
+            e.currentTarget.style.transform = 'translateY(-2px)';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)';
+            e.currentTarget.style.transform = 'translateY(0)';
+          }}
+        >
+          <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+            <span style={{ fontSize: '14px', opacity: 0.9 }}>Company Total</span>
+            <div style={{ fontSize: '32px', fontWeight: 'bold', margin: '8px 0' }}>
+              {formatCompactCurrency(companyTotals.net)}
+            </div>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', textAlign: 'center' }}>
+            <div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                {formatCompactCurrency(companyTotals.operating)}
+              </div>
+              <div style={{ fontSize: '11px', opacity: 0.8 }}>Operating</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                {formatCompactCurrency(companyTotals.financing)}
+              </div>
+              <div style={{ fontSize: '11px', opacity: 0.8 }}>Financing</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                {formatCompactCurrency(companyTotals.investing)}
+              </div>
+              <div style={{ fontSize: '11px', opacity: 0.8 }}>Investing</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold' }}>
+                {formatCompactCurrency(companyTotals.net)}
+              </div>
+              <div style={{ fontSize: '11px', opacity: 0.8 }}>Net Cash</div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Hamburger Dropdown Menu */}
+      {menuOpen && (
+        <div style={{
+          position: 'absolute',
+          top: '80px',
+          left: '16px',
+          right: '16px',
+          background: 'white',
+          borderRadius: '12px',
+          padding: '20px',
+          boxShadow: '0 8px 40px rgba(0, 0, 0, 0.15)',
+          border: `2px solid ${BRAND_COLORS.gray[200]}`,
+          zIndex: 1000,
+          animation: 'slideDown 0.3s ease-out'
+        }}>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
+              Report Period
+            </label>
+            <select
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                borderRadius: '8px',
+                fontSize: '16px'
+              }}
+              value={reportPeriod}
+              onChange={(e) =>
+                setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
+              }
+            >
+              <option value="Monthly">Monthly</option>
+              <option value="Custom">Custom Range</option>
+              <option value="Year to Date">Year to Date</option>
+              <option value="Trailing 12">Trailing 12 Months</option>
+              <option value="Quarterly">Quarterly</option>
+            </select>
+          </div>
+          {reportPeriod === "Custom" ? (
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+              <input
+                type="date"
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '16px'
+                }}
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+              />
+              <input
+                type="date"
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '16px'
+                }}
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+              />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+              <select
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8
