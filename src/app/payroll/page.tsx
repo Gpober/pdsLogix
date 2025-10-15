@@ -34,11 +34,10 @@ import {
   PieChart as RechartsPieChart,
   Pie,
   Cell,
-  BarChart,
-  LineChart,
+  BarChart as RechartsBarChart,
+  LineChart as RechartsLineChart,
 } from "recharts";
 import { supabase } from "@/lib/supabaseClient";
-import DateRangePicker from "@/components/DateRangePicker";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -184,6 +183,7 @@ export default function PayrollPage() {
   const timePeriodDropdownRef = useRef<HTMLDivElement>(null);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const yearDropdownRef = useRef<HTMLDivElement>(null);
+  const departmentDropdownRef = useRef<HTMLDivElement>(null);
 
   const comparisonLabel = useMemo(() => {
     switch (timePeriod) {
@@ -206,6 +206,9 @@ export default function PayrollPage() {
       }
       if (yearDropdownRef.current && !yearDropdownRef.current.contains(event.target as Node)) {
         setYearDropdownOpen(false);
+      }
+      if (departmentDropdownRef.current && !departmentDropdownRef.current.contains(event.target as Node)) {
+        setDepartmentDropdownOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -260,8 +263,13 @@ export default function PayrollPage() {
         prevEndDate: `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
       };
     }
-    // Add other period calculations as needed
-    return { prevStartDate: "", prevEndDate: "" };
+    const diff = end.getTime() - start.getTime();
+    const prevEnd = new Date(start.getTime() - 86400000);
+    const prevStart = new Date(prevEnd.getTime() - diff);
+    return {
+      prevStartDate: prevStart.toISOString().split("T")[0],
+      prevEndDate: prevEnd.toISOString().split("T")[0],
+    };
   };
 
   const { prevStartDate, prevEndDate } = useMemo(() => {
@@ -710,9 +718,325 @@ export default function PayrollPage() {
             </div>
           </div>
         ) : (
-          <div className="text-center py-12">
-            <p className="text-gray-600">Analytics view - Add your charts and KPIs here</p>
-            <p className="text-sm text-gray-500 mt-2">Historical payroll data will display here</p>
+          <div className="space-y-6">
+            {/* Filters */}
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Time Period */}
+                <div className="relative" ref={timePeriodDropdownRef}>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Time Period</label>
+                  <button onClick={() => setTimePeriodDropdownOpen(!timePeriodDropdownOpen)} className="w-full px-4 py-3 text-left bg-white border-2 rounded-lg flex items-center justify-between hover:border-gray-400 transition-colors" style={ringStyle}>
+                    <span className="font-medium">{timePeriod}</span>
+                    <ChevronDown className={`w-5 h-5 transition-transform ${timePeriodDropdownOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {timePeriodDropdownOpen && (
+                    <div className="absolute z-50 w-full mt-2 bg-white border-2 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                      {(["Monthly", "Quarterly", "YTD", "Trailing 12", "Custom"] as TimePeriod[]).map(period => (
+                        <button key={period} onClick={() => { setTimePeriod(period); setTimePeriodDropdownOpen(false); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors" style={timePeriod === period ? { backgroundColor: BRAND_COLORS.primary + "20", color: BRAND_COLORS.primary, fontWeight: 600 } : {}}>
+                          {period}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Month/Year or Custom Date */}
+                {timePeriod !== "Custom" ? (
+                  <>
+                    <div className="relative" ref={monthDropdownRef}>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Month</label>
+                      <button onClick={() => setMonthDropdownOpen(!monthDropdownOpen)} className="w-full px-4 py-3 text-left bg-white border-2 rounded-lg flex items-center justify-between hover:border-gray-400 transition-colors" style={ringStyle}>
+                        <span className="font-medium">{selectedMonth}</span>
+                        <ChevronDown className={`w-5 h-5 transition-transform ${monthDropdownOpen ? "rotate-180" : ""}`} />
+                      </button>
+                      {monthDropdownOpen && (
+                        <div className="absolute z-50 w-full mt-2 bg-white border-2 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {monthsList.map(month => (
+                            <button key={month} onClick={() => { setSelectedMonth(month); setMonthDropdownOpen(false); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors" style={selectedMonth === month ? { backgroundColor: BRAND_COLORS.primary + "20", color: BRAND_COLORS.primary, fontWeight: 600 } : {}}>
+                              {month}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="relative" ref={yearDropdownRef}>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Year</label>
+                      <button onClick={() => setYearDropdownOpen(!yearDropdownOpen)} className="w-full px-4 py-3 text-left bg-white border-2 rounded-lg flex items-center justify-between hover:border-gray-400 transition-colors" style={ringStyle}>
+                        <span className="font-medium">{selectedYear}</span>
+                        <ChevronDown className={`w-5 h-5 transition-transform ${yearDropdownOpen ? "rotate-180" : ""}`} />
+                      </button>
+                      {yearDropdownOpen && (
+                        <div className="absolute z-50 w-full mt-2 bg-white border-2 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          {yearsList.map(year => (
+                            <button key={year} onClick={() => { setSelectedYear(year); setYearDropdownOpen(false); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors" style={selectedYear === year ? { backgroundColor: BRAND_COLORS.primary + "20", color: BRAND_COLORS.primary, fontWeight: 600 } : {}}>
+                              {year}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Start Date</label>
+                      <input type="date" value={customStartDate} onChange={(e) => setCustomStartDate(e.target.value)} className="w-full px-4 py-3 border-2 rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">End Date</label>
+                      <input type="date" value={customEndDate} onChange={(e) => setCustomEndDate(e.target.value)} className="w-full px-4 py-3 border-2 rounded-lg" />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Department & Search */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div className="relative" ref={departmentDropdownRef}>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
+                  <button onClick={() => setDepartmentDropdownOpen(!departmentDropdownOpen)} className="w-full px-4 py-3 text-left bg-white border-2 rounded-lg flex items-center justify-between hover:border-gray-400 transition-colors" style={ringStyle}>
+                    <span className="font-medium">{departmentFilter}</span>
+                    <ChevronDown className={`w-5 h-5 transition-transform ${departmentDropdownOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {departmentDropdownOpen && (
+                    <div className="absolute z-50 w-full mt-2 bg-white border-2 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                      {departments.map(dept => (
+                        <button key={dept} onClick={() => { setDepartmentFilter(dept); setDepartmentDropdownOpen(false); }} className="w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors" style={departmentFilter === dept ? { backgroundColor: BRAND_COLORS.primary + "20", color: BRAND_COLORS.primary, fontWeight: 600 } : {}}>
+                          {dept}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Search Employee</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                    <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search by name..." className="w-full pl-10 pr-4 py-3 border-2 rounded-lg" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+              <div className="bg-white rounded-xl shadow-sm p-6" style={{ borderLeft: `4px solid ${BRAND_COLORS.primary}` }}>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: BRAND_COLORS.primary + "20" }}>
+                    <Users size={24} style={{ color: BRAND_COLORS.primary }} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-gray-600 text-sm font-medium">Total Transactions</p>
+                  <p className="text-3xl font-bold text-gray-900">{currentKpis.totalTx.toLocaleString()}</p>
+                  <div className="flex items-center gap-1">
+                    {kpiGrowth.totalTx >= 0 ? <ArrowUpRight size={16} style={{ color: BRAND_COLORS.success }} /> : <ArrowDownRight size={16} style={{ color: BRAND_COLORS.danger }} />}
+                    <span className="text-sm font-semibold" style={{ color: kpiGrowth.totalTx >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger }}>
+                      {formatPercentage(kpiGrowth.totalTx)}
+                    </span>
+                    <span className="text-xs text-gray-500">{comparisonLabel}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6" style={{ borderLeft: `4px solid ${BRAND_COLORS.success}` }}>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: BRAND_COLORS.success + "20" }}>
+                    <DollarSign size={24} style={{ color: BRAND_COLORS.success }} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-gray-600 text-sm font-medium">Total Payroll</p>
+                  <p className="text-3xl font-bold text-gray-900">{formatCurrency(currentKpis.total)}</p>
+                  <div className="flex items-center gap-1">
+                    {kpiGrowth.total >= 0 ? <ArrowUpRight size={16} style={{ color: BRAND_COLORS.success }} /> : <ArrowDownRight size={16} style={{ color: BRAND_COLORS.danger }} />}
+                    <span className="text-sm font-semibold" style={{ color: kpiGrowth.total >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger }}>
+                      {formatPercentage(kpiGrowth.total)}
+                    </span>
+                    <span className="text-xs text-gray-500">{comparisonLabel}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6" style={{ borderLeft: `4px solid ${BRAND_COLORS.accent}` }}>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: BRAND_COLORS.accent + "20" }}>
+                    <TrendingUp size={24} style={{ color: BRAND_COLORS.accent }} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-gray-600 text-sm font-medium">Avg Payment</p>
+                  <p className="text-3xl font-bold text-gray-900">{formatCurrency(currentKpis.avg)}</p>
+                  <div className="flex items-center gap-1">
+                    {kpiGrowth.avg >= 0 ? <ArrowUpRight size={16} style={{ color: BRAND_COLORS.success }} /> : <ArrowDownRight size={16} style={{ color: BRAND_COLORS.danger }} />}
+                    <span className="text-sm font-semibold" style={{ color: kpiGrowth.avg >= 0 ? BRAND_COLORS.success : BRAND_COLORS.danger }}>
+                      {formatPercentage(kpiGrowth.avg)}
+                    </span>
+                    <span className="text-xs text-gray-500">{comparisonLabel}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6" style={{ borderLeft: `4px solid ${BRAND_COLORS.warning}` }}>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 rounded-lg" style={{ backgroundColor: BRAND_COLORS.warning + "20" }}>
+                    <BarChart3 size={24} style={{ color: BRAND_COLORS.warning }} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-gray-600 text-sm font-medium">Top Department</p>
+                  <p className="text-xl font-bold text-gray-900 truncate">{currentKpis.topDept}</p>
+                  <p className="text-xs text-gray-500">by total payroll</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Trend Chart */}
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-lg font-semibold text-gray-900">YTD Payroll Trend</h3>
+                  <div className="flex gap-2">
+                    <button onClick={() => setTrendChartType("line")} className={`p-2 rounded-lg transition-colors ${trendChartType === "line" ? "text-white" : "bg-gray-100 text-gray-600"}`} style={trendChartType === "line" ? { backgroundColor: BRAND_COLORS.primary } : {}}>
+                      <LineChart size={18} />
+                    </button>
+                    <button onClick={() => setTrendChartType("bar")} className={`p-2 rounded-lg transition-colors ${trendChartType === "bar" ? "text-white" : "bg-gray-100 text-gray-600"}`} style={trendChartType === "bar" ? { backgroundColor: BRAND_COLORS.primary } : {}}>
+                      <BarChart3 size={18} />
+                    </button>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={300}>
+                  {trendChartType === "line" ? (
+                    <RechartsLineChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={BRAND_COLORS.gray[200]} />
+                      <XAxis dataKey="month" stroke={BRAND_COLORS.gray[400]} style={{ fontSize: 12 }} />
+                      <YAxis stroke={BRAND_COLORS.gray[400]} style={{ fontSize: 12 }} tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ borderRadius: 8, border: `1px solid ${BRAND_COLORS.gray[200]}` }} />
+                      <Line type="monotone" dataKey="grossPay" stroke={BRAND_COLORS.primary} strokeWidth={3} dot={{ fill: BRAND_COLORS.primary, r: 4 }} activeDot={{ r: 6 }} />
+                    </RechartsLineChart>
+                  ) : (
+                    <RechartsBarChart data={trendData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={BRAND_COLORS.gray[200]} />
+                      <XAxis dataKey="month" stroke={BRAND_COLORS.gray[400]} style={{ fontSize: 12 }} />
+                      <YAxis stroke={BRAND_COLORS.gray[400]} style={{ fontSize: 12 }} tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ borderRadius: 8, border: `1px solid ${BRAND_COLORS.gray[200]}` }} />
+                      <Bar dataKey="grossPay" fill={BRAND_COLORS.primary} radius={[8, 8, 0, 0]} />
+                    </RechartsBarChart>
+                  )}
+                </ResponsiveContainer>
+              </div>
+
+              {/* Department Distribution */}
+              <div className="bg-white rounded-xl shadow-sm p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-lg font-semibold text-gray-900">Department Distribution</h3>
+                  <div className="flex gap-2">
+                    <button onClick={() => setChartType("pie")} className={`p-2 rounded-lg transition-colors ${chartType === "pie" ? "text-white" : "bg-gray-100 text-gray-600"}`} style={chartType === "pie" ? { backgroundColor: BRAND_COLORS.primary } : {}}>
+                      <PieChart size={18} />
+                    </button>
+                    <button onClick={() => setChartType("bar")} className={`p-2 rounded-lg transition-colors ${chartType === "bar" ? "text-white" : "bg-gray-100 text-gray-600"}`} style={chartType === "bar" ? { backgroundColor: BRAND_COLORS.primary } : {}}>
+                      <BarChart3 size={18} />
+                    </button>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={300}>
+                  {chartType === "pie" ? (
+                    <RechartsPieChart>
+                      <Pie data={departmentData} dataKey="cost" nameKey="department" cx="50%" cy="50%" outerRadius={100} label={(entry) => entry.department}>
+                        {departmentData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ borderRadius: 8, border: `1px solid ${BRAND_COLORS.gray[200]}` }} />
+                    </RechartsPieChart>
+                  ) : (
+                    <RechartsBarChart data={departmentData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" stroke={BRAND_COLORS.gray[200]} />
+                      <XAxis type="number" stroke={BRAND_COLORS.gray[400]} style={{ fontSize: 12 }} tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`} />
+                      <YAxis type="category" dataKey="department" stroke={BRAND_COLORS.gray[400]} style={{ fontSize: 12 }} width={100} />
+                      <Tooltip formatter={(value: number) => formatCurrency(value)} contentStyle={{ borderRadius: 8, border: `1px solid ${BRAND_COLORS.gray[200]}` }} />
+                      <Bar dataKey="cost" fill={BRAND_COLORS.primary} radius={[0, 8, 8, 0]} />
+                    </RechartsBarChart>
+                  )}
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Summary Views */}
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-lg font-semibold text-gray-900">Detailed Summary</h3>
+                <div className="flex gap-2">
+                  <button onClick={() => setSummaryView("department")} className={`px-4 py-2 rounded-lg font-medium transition-colors ${summaryView === "department" ? "text-white" : "bg-gray-100 text-gray-600"}`} style={summaryView === "department" ? { backgroundColor: BRAND_COLORS.primary } : {}}>
+                    By Department
+                  </button>
+                  <button onClick={() => setSummaryView("date")} className={`px-4 py-2 rounded-lg font-medium transition-colors ${summaryView === "date" ? "text-white" : "bg-gray-100 text-gray-600"}`} style={summaryView === "date" ? { backgroundColor: BRAND_COLORS.primary } : {}}>
+                    By Date
+                  </button>
+                  <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors">
+                    <Download size={18} />
+                    Export CSV
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {summaryView === "department" ? (
+                  departmentSummary.map((dept, idx) => (
+                    <div key={idx} className="border-2 rounded-lg overflow-hidden" style={{ borderColor: BRAND_COLORS.gray[200] }}>
+                      <button onClick={() => toggleGroup(dept.department)} className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <ChevronDown className={`w-5 h-5 transition-transform ${expandedGroups.has(dept.department) ? "" : "-rotate-90"}`} style={{ color: BRAND_COLORS.primary }} />
+                          <span className="font-semibold text-gray-900">{dept.department}</span>
+                          <span className="text-sm text-gray-500">({dept.people.length} employees)</span>
+                        </div>
+                        <span className="text-lg font-bold" style={{ color: BRAND_COLORS.primary }}>{formatCurrency(dept.total)}</span>
+                      </button>
+                      {expandedGroups.has(dept.department) && (
+                        <div className="p-4 space-y-2">
+                          {dept.people.map((person, pidx) => (
+                            <div key={pidx} className="flex items-center justify-between py-2 px-3 bg-white rounded-lg border" style={{ borderColor: BRAND_COLORS.gray[200] }}>
+                              <div className="flex items-center gap-2">
+                                <User size={16} style={{ color: BRAND_COLORS.accent }} />
+                                <span className="text-sm font-medium text-gray-700">{person.name}</span>
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900">{formatCurrency(person.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  dateSummary.map((dateGroup, idx) => (
+                    <div key={idx} className="border-2 rounded-lg overflow-hidden" style={{ borderColor: BRAND_COLORS.gray[200] }}>
+                      <button onClick={() => toggleGroup(dateGroup.date)} className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <ChevronDown className={`w-5 h-5 transition-transform ${expandedGroups.has(dateGroup.date) ? "" : "-rotate-90"}`} style={{ color: BRAND_COLORS.primary }} />
+                          <span className="font-semibold text-gray-900">{formatDate(dateGroup.date)}</span>
+                          <span className="text-sm text-gray-500">({dateGroup.people.length} employees)</span>
+                        </div>
+                        <span className="text-lg font-bold" style={{ color: BRAND_COLORS.primary }}>{formatCurrency(dateGroup.total)}</span>
+                      </button>
+                      {expandedGroups.has(dateGroup.date) && (
+                        <div className="p-4 space-y-2">
+                          {dateGroup.people.map((person, pidx) => (
+                            <div key={pidx} className="flex items-center justify-between py-2 px-3 bg-white rounded-lg border" style={{ borderColor: BRAND_COLORS.gray[200] }}>
+                              <div className="flex items-center gap-2">
+                                <User size={16} style={{ color: BRAND_COLORS.accent }} />
+                                <span className="text-sm font-medium text-gray-700">{person.name}</span>
+                              </div>
+                              <span className="text-sm font-semibold text-gray-900">{formatCurrency(person.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         )}
 
