@@ -1,517 +1,1338 @@
-'use client'
+"use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { supabase as dataSupabase } from '@/lib/supabaseClient'
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import {
+  Download,
+  RefreshCw,
+  ChevronDown,
+  Users,
+  DollarSign,
+  TrendingUp,
+  PieChart as PieIcon,
+  Search,
+  BarChart3,
+  Calendar,
+  LineChart as LineChartIcon,
+  ArrowUpRight,
+  ArrowDownRight,
+  Clock,
+  Send,
+  Check,
+  X,
+  AlertCircle,
+  User,
+  ClipboardCheck,
+  CheckCircle,
+  XCircle,
+  ChevronLeft,
+} from "lucide-react";
+import {
+  ResponsiveContainer,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Bar,
+  Line,
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  BarChart,
+  LineChart,
+} from "recharts";
+import { supabase } from "@/lib/supabaseClient";
+import DateRangePicker from "@/components/DateRangePicker";
 
-type PayrollGroup = 'A' | 'B'
-type CompensationType = 'hourly' | 'production'
+// I AM CFO Brand Colors
+const BRAND_COLORS = {
+  primary: "#56B6E9",
+  secondary: "#3A9BD1",
+  tertiary: "#7CC4ED",
+  accent: "#2E86C1",
+  success: "#27AE60",
+  warning: "#F39C12",
+  danger: "#E74C3C",
+  gray: {
+    50: "#F8FAFC",
+    100: "#F1F5F9",
+    200: "#E2E8F0",
+    300: "#CBD5E1",
+    400: "#94A3B8",
+    500: "#64748B",
+    600: "#475569",
+    700: "#334155",
+    800: "#1E293B",
+    900: "#0F172A",
+  },
+};
 
-type Employee = {
-  id: string
-  first_name: string
-  last_name: string
-  employee_code: string
-  payroll_group: PayrollGroup
-  compensation_type: CompensationType
-  hourly_rate: number | null
-  piece_rate: number | null
+type Payment = {
+  id?: number;
+  last_name: string | null;
+  first_name: string | null;
+  department: string | null;
+  payment_method: string | null;
+  date: string | null;
+  total_amount: number | null;
+};
+
+type TimePeriod = "Monthly" | "Quarterly" | "YTD" | "Trailing 12" | "Custom";
+
+type ViewMode = "analytics" | "approvals";
+
+interface PendingSubmission {
+  id: string;
+  location_id: string;
+  location_name?: string;
+  pay_date: string;
+  payroll_group: 'A' | 'B';
+  period_start: string;
+  period_end: string;
+  total_amount: number;
+  employee_count: number;
+  submitted_by: string;
+  submitted_at: string;
+  status: string;
 }
 
-type EmployeeRow = Employee & {
-  hours: string
-  units: string
-  notes: string
-  amount: number
+interface LocationStatus {
+  location_id: string;
+  location_name: string;
+  submission_id?: string;
+  status: 'approved' | 'pending' | 'not_submitted';
+  total_amount?: number;
+  employee_count?: number;
+  pay_date?: string;
+  payroll_group?: 'A' | 'B';
+  submitted_at?: string;
 }
 
-type Alert = { type: 'success' | 'error'; message: string }
-
-// ============================================================================
-// PAYROLL PERIOD CALCULATION FROM SELECTED PAY DATE
-// ============================================================================
-
-function createLocalDateFromInput(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map(Number)
-  return new Date(year, month - 1, day, 12, 0, 0)
+interface SubmissionDetail {
+  employee_id: string;
+  employee_name: string;
+  hours: number | null;
+  units: number | null;
+  amount: number;
+  notes: string | null;
 }
 
-function calculatePayrollInfo(payDateStr: string): {
-  payrollGroup: PayrollGroup
-  periodStart: string
-  periodEnd: string
-} {
-  console.log('🔍 Input payDateStr:', payDateStr)
+// I AM CFO Logo
+const IAMCFOLogo = ({ className = "w-8 h-8" }: { className?: string }) => (
+  <div className={`${className} flex items-center justify-center relative`}>
+    <svg viewBox="0 0 120 120" className="w-full h-full">
+      <circle cx="60" cy="60" r="55" fill="#E2E8F0" stroke="#CBD5E1" strokeWidth="2" />
+      <circle cx="60" cy="60" r="42" fill={BRAND_COLORS.primary} />
+      <g fill="white">
+        <rect x="35" y="70" width="6" height="15" rx="1" />
+        <rect x="44" y="65" width="6" height="20" rx="1" />
+        <rect x="53" y="55" width="6" height="30" rx="1" />
+        <rect x="62" y="50" width="6" height="35" rx="1" />
+        <rect x="71" y="60" width="6" height="25" rx="1" />
+        <rect x="80" y="45" width="6" height="40" rx="1" />
+        <path d="M35 72 L44 67 L53 57 L62 52 L71 62 L80 47" stroke="#FFFFFF" strokeWidth="2.5" fill="none" />
+        <circle cx="35" cy="72" r="2.5" fill="#FFFFFF" />
+        <circle cx="44" cy="67" r="2.5" fill="#FFFFFF" />
+        <circle cx="53" cy="57" r="2.5" fill="#FFFFFF" />
+        <circle cx="62" cy="52" r="2.5" fill="#FFFFFF" />
+        <circle cx="71" cy="62" r="2.5" fill="#FFFFFF" />
+        <circle cx="80" cy="47" r="2.5" fill="#FFFFFF" />
+      </g>
+      <text x="60" y="95" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold" fontFamily="Arial, sans-serif">
+        CFO
+      </text>
+    </svg>
+  </div>
+);
 
-  // Parse date in local timezone to avoid timezone issues
-  const [year, month, day] = payDateStr.split('-').map(Number)
-  console.log('📅 Parsed:', { year, month, day })
+const formatDate = (date: string) =>
+  new Date(date).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 
-  const payDate = createLocalDateFromInput(payDateStr) // Set to noon to avoid DST issues
-  console.log('📅 Pay Date object:', payDate.toString())
+export default function PayrollPage() {
+  // UI state
+  const [notification, setNotification] = useState<{ show: boolean; message: string; type: "info" | "success" | "error" | "warning" }>({ show: false, message: "", type: "info" });
+  const [departmentFilter, setDepartmentFilter] = useState("All Departments");
+  const [departmentDropdownOpen, setDepartmentDropdownOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>("Monthly");
+  const [selectedMonth, setSelectedMonth] = useState(
+    new Date().toLocaleString("en-US", { month: "long" })
+  );
+  const [selectedYear, setSelectedYear] = useState(
+    String(new Date().getFullYear())
+  );
+  const [timePeriodDropdownOpen, setTimePeriodDropdownOpen] = useState(false);
+  const [monthDropdownOpen, setMonthDropdownOpen] = useState(false);
+  const [yearDropdownOpen, setYearDropdownOpen] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState("");
+  const [customEndDate, setCustomEndDate] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [chartType, setChartType] = useState<"pie" | "bar">("pie");
+  const [trendChartType, setTrendChartType] = useState<"line" | "bar">("line");
+  const [summaryView, setSummaryView] = useState<"department" | "date">("department");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<ViewMode>("analytics");
 
-  // Period END is the Wednesday 9 days before pay date
-  const periodEnd = new Date(year, month - 1, day - 9, 12, 0, 0)
-  console.log('📅 Period End object:', periodEnd.toString())
+  // Approval States
+  const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
+  const [allLocations, setAllLocations] = useState<LocationStatus[]>([]);
+  const [selectedSubmission, setSelectedSubmission] = useState<PendingSubmission | null>(null);
+  const [submissionDetails, setSubmissionDetails] = useState<SubmissionDetail[]>([]);
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+  const [userId, setUserId] = useState<string | null>("demo-user-id");
+  const [organizationId, setOrganizationId] = useState<string | null>("demo-org-id");
 
-  // Period START is 2 weeks (14 days) before period end
-  const periodStart = new Date(year, month - 1, day - 9 - 13, 12, 0, 0)
-  console.log('📅 Period Start object:', periodStart.toString())
-  
-  // Determine payroll group based on which week
-  // Using January 3, 2025 (first Friday of 2025) as Group A reference
-  const referenceDate = new Date(2025, 0, 3, 12, 0, 0)
-  const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
-  const weeksDifference = Math.floor(daysDifference / 7)
-  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'A' : 'B'
-  
-  console.log('🔢 Days difference:', daysDifference, 'Weeks:', weeksDifference, 'Group:', payrollGroup)
-  
-  // Format dates as YYYY-MM-DD in local timezone
-  const formatDate = (date: Date) => {
-    const y = date.getFullYear()
-    const m = String(date.getMonth() + 1).padStart(2, '0')
-    const d = String(date.getDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }
-  
-  const result = {
-    payrollGroup,
-    periodStart: formatDate(periodStart),
-    periodEnd: formatDate(periodEnd),
-  }
-  
-  console.log('✅ Final result:', result)
-  return result
-}
+  const monthsList = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ];
+  const yearsList = Array.from({ length: 10 }, (_, i) =>
+    String(new Date().getFullYear() - 5 + i)
+  );
 
-function getNextFriday(): string {
-  const today = new Date()
-  const dayOfWeek = today.getDay()
-  const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 6
-  const nextFriday = new Date(today)
-  nextFriday.setDate(today.getDate() + daysUntilFriday)
-  
-  const y = nextFriday.getFullYear()
-  const m = String(nextFriday.getMonth() + 1).padStart(2, '0')
-  const d = String(nextFriday.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
-
-function formatDateRange(startDate: string, endDate: string) {
-  const start = createLocalDateFromInput(startDate)
-  const end = createLocalDateFromInput(endDate)
-  const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-  return `${startFormatted} - ${endFormatted}`
-}
-
-export default function PayrollSubmit() {
-  const router = useRouter()
-  const [isInitializing, setIsInitializing] = useState(true)
-  const [isLoading, setIsLoading] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [userId, setUserId] = useState<string | null>(null)
-  const [userRole, setUserRole] = useState<string | null>(null)
-  const [locationId, setLocationId] = useState<string | null>(null)
-  const [locationName, setLocationName] = useState<string>('')
-  const [payDate, setPayDate] = useState<string>('')
-  const [payrollGroup, setPayrollGroup] = useState<PayrollGroup>('A')
-  const [periodStart, setPeriodStart] = useState<string>('')
-  const [periodEnd, setPeriodEnd] = useState<string>('')
-  const [employees, setEmployees] = useState<EmployeeRow[]>([])
-  const [alert, setAlert] = useState<Alert | null>(null)
-
-  // Initialize with next Friday
-  useEffect(() => {
-    const nextFriday = getNextFriday()
-    setPayDate(nextFriday)
-    const info = calculatePayrollInfo(nextFriday)
-    setPayrollGroup(info.payrollGroup)
-    setPeriodStart(info.periodStart)
-    setPeriodEnd(info.periodEnd)
-    console.log('📅 Desktop Payroll Info:', { payDate: nextFriday, ...info })
-  }, [])
-
-  // Recalculate when pay date changes
-  function handlePayDateChange(newPayDate: string) {
-    setPayDate(newPayDate)
-    if (newPayDate) {
-      const info = calculatePayrollInfo(newPayDate)
-      setPayrollGroup(info.payrollGroup)
-      setPeriodStart(info.periodStart)
-      setPeriodEnd(info.periodEnd)
-      console.log('📅 Updated Payroll Info:', { payDate: newPayDate, ...info })
+  const comparisonLabel = useMemo(() => {
+    switch (timePeriod) {
+      case "Monthly":
+        return "vs last month";
+      case "Quarterly":
+        return "vs last quarter";
+      case "YTD":
+        return "vs prior YTD";
+      case "Trailing 12":
+        return "vs prior 12 months";
+      default:
+        return "vs previous period";
     }
-  }
+  }, [timePeriod]);
 
-  useEffect(() => { checkAuthAndLoadData() }, [])
+  const timePeriodDropdownRef = useRef<HTMLDivElement>(null);
+  const monthDropdownRef = useRef<HTMLDivElement>(null);
+  const yearDropdownRef = useRef<HTMLDivElement>(null);
 
-  async function checkAuthAndLoadData() {
-    try {
-      console.log('🔍 Desktop Payroll: Starting auth check...')
-      
-      const platformClient = createClient()
-      const { data: { user }, error: authError } = await platformClient.auth.getUser()
-      
-      if (authError || !user) {
-        console.log('❌ Desktop Payroll: No user found')
-        router.replace('/login')
-        return
+  // Data state
+  const [payments, setPayments] = useState<Payment[]>([]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        timePeriodDropdownRef.current &&
+        !timePeriodDropdownRef.current.contains(event.target as Node)
+      ) {
+        setTimePeriodDropdownOpen(false);
       }
-      
-      setUserId(user.id)
-      console.log('✅ Desktop Payroll: User authenticated:', user.email)
-      
-      const { data: userRecord, error: userError } = await platformClient
-        .from('users')
-        .select('role, location_id')
-        .eq('id', user.id)
-        .single()
-      
-      if (userError) {
-        console.error('❌ Desktop Payroll: User record error:', userError)
-        setIsInitializing(false)
-        return
+      if (
+        monthDropdownRef.current &&
+        !monthDropdownRef.current.contains(event.target as Node)
+      ) {
+        setMonthDropdownOpen(false);
       }
-      
-      if (!userRecord) {
-        console.error('❌ Desktop Payroll: No user record found')
-        router.replace('/login')
-        return
+      if (
+        yearDropdownRef.current &&
+        !yearDropdownRef.current.contains(event.target as Node)
+      ) {
+        setYearDropdownOpen(false);
       }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const monthIndex = monthsList.indexOf(selectedMonth);
+    const yearNum = parseInt(selectedYear, 10);
+
+    const makeDate = (y: number, m: number, d: number) =>
+      new Date(Date.UTC(y, m, d)).toISOString().split("T")[0];
+
+    let start = "";
+    let end = "";
+    if (timePeriod === "Monthly") {
+      start = makeDate(yearNum, monthIndex, 1);
+      end = makeDate(yearNum, monthIndex + 1, 0);
+    } else if (timePeriod === "Quarterly") {
+      const qStart = Math.floor(monthIndex / 3) * 3;
+      start = makeDate(yearNum, qStart, 1);
+      end = makeDate(yearNum, qStart + 3, 0);
+    } else if (timePeriod === "YTD") {
+      start = makeDate(yearNum, 0, 1);
+      end = makeDate(yearNum, monthIndex + 1, 0);
+    } else if (timePeriod === "Trailing 12") {
+      const endDate = makeDate(yearNum, monthIndex + 1, 0);
+      const startDate = makeDate(yearNum, monthIndex - 11, 1);
+      start = startDate;
+      end = endDate;
+    } else {
+      start = customStartDate;
+      end = customEndDate;
+    }
+    setStartDate(start);
+    setEndDate(end);
+  }, [timePeriod, selectedMonth, selectedYear, customStartDate, customEndDate]);
+
+  const calculatePreviousDateRange = (startDate: string, endDate: string) => {
+    const start = new Date(`${startDate}T00:00:00Z`);
+    const end = new Date(`${endDate}T00:00:00Z`);
+
+    if (timePeriod === "Monthly") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = parseInt(selectedYear, 10);
+      const prevMonthIndex = monthIndex === 0 ? 11 : monthIndex - 1;
+      const prevYear = monthIndex === 0 ? year - 1 : year;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      let lastDay = daysInMonth[prevMonthIndex];
+      if (
+        prevMonthIndex === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-01`,
+        prevEndDate: `${prevYear}-${String(prevMonthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "Quarterly") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = parseInt(selectedYear, 10);
+      const quarter = Math.floor(monthIndex / 3);
+      const prevQuarterStartMonth = quarter * 3 - 3;
+      const adjustedStartMonth = (prevQuarterStartMonth + 12) % 12;
+      const prevYear = prevQuarterStartMonth < 0 ? year - 1 : year;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      const prevQuarterEndMonth = adjustedStartMonth + 2;
+      let lastDay = daysInMonth[prevQuarterEndMonth];
+      if (
+        prevQuarterEndMonth === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-${String(adjustedStartMonth + 1).padStart(2, "0")}-01`,
+        prevEndDate: `${prevYear}-${String(prevQuarterEndMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "YTD") {
+      const monthIndex = monthsList.indexOf(selectedMonth);
+      const year = parseInt(selectedYear, 10);
+      const prevYear = year - 1;
+      const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      let lastDay = daysInMonth[monthIndex];
+      if (
+        monthIndex === 1 &&
+        ((prevYear % 4 === 0 && prevYear % 100 !== 0) || prevYear % 400 === 0)
+      ) {
+        lastDay = 29;
+      }
+      return {
+        prevStartDate: `${prevYear}-01-01`,
+        prevEndDate: `${prevYear}-${String(monthIndex + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+      };
+    } else if (timePeriod === "Trailing 12") {
+      const prevStart = new Date(start);
+      const prevEnd = new Date(end);
+      prevStart.setUTCFullYear(prevStart.getUTCFullYear() - 1);
+      prevEnd.setUTCFullYear(prevEnd.getUTCFullYear() - 1);
+      return {
+        prevStartDate: prevStart.toISOString().split("T")[0],
+        prevEndDate: prevEnd.toISOString().split("T")[0],
+      };
+    } else {
+      const diff =
+        Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) +
+        1;
+      const prevEnd = new Date(start);
+      prevEnd.setUTCDate(prevEnd.getUTCDate() - 1);
+      const prevStart = new Date(prevEnd);
+      prevStart.setUTCDate(prevStart.getUTCDate() - (diff - 1));
+      return {
+        prevStartDate: prevStart.toISOString().split("T")[0],
+        prevEndDate: prevEnd.toISOString().split("T")[0],
+      };
+    }
+  };
+
+  const { prevStartDate, prevEndDate } = useMemo(() => {
+    if (!startDate || !endDate) return { prevStartDate: "", prevEndDate: "" };
+    return calculatePreviousDateRange(startDate, endDate);
+  }, [startDate, endDate, timePeriod, selectedMonth, selectedYear]);
+
+  // Load pending submissions and all locations
+  useEffect(() => {
+    loadPendingSubmissions();
+    loadAllLocations();
+  }, []);
+
+  const loadPendingSubmissions = async () => {
+    const { data: submissions, error } = await supabase
+      .from('payroll_submissions')
+      .select('*')
+      .eq('status', 'pending')
+      .order('submitted_at', { ascending: false });
+
+    if (error) {
+      console.error('Error loading pending submissions:', error);
+      return;
+    }
+
+    const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
+    const { data: locations } = await supabase
+      .from('locations')
+      .select('id, name')
+      .in('id', locationsIds);
+
+    const locationsMap = new Map(locations?.map(l => [l.id, l.name]));
+
+    const submissionsWithNames = (submissions || []).map(s => ({
+      ...s,
+      location_name: locationsMap.get(s.location_id) || 'Unknown Location'
+    }));
+
+    setPendingSubmissions(submissionsWithNames);
+  };
+
+  const loadAllLocations = async () => {
+    const { data: locations, error: locationsError } = await supabase
+      .from('locations')
+      .select('id, name');
+
+    if (locationsError) {
+      console.error('Error loading locations:', locationsError);
+      return;
+    }
+
+    const getNextFriday = () => {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+      const nextFriday = new Date(today);
+      nextFriday.setDate(today.getDate() + daysUntilFriday);
       
-      const role = userRecord.role as string
-      let locId = userRecord.location_id as string
-      
-      console.log('✅ Desktop Payroll: User role:', role, 'Location ID:', locId)
-      
-      setUserRole(role)
-      
-      // SUPER ADMIN: If no location_id, get the first available location
-      if (role === 'super_admin' && !locId) {
-        console.log('🔍 Super admin without location - fetching first location...')
-        try {
-          const { data: locations, error: locError } = await dataSupabase
-            .from('locations')
-            .select('id, name')
-            .eq('is_active', true)
-            .limit(1)
-            .single()
-          
-          if (!locError && locations) {
-            locId = locations.id
-            setLocationId(locId)
-            setLocationName(locations.name)
-            console.log('✅ Using location:', locations.name, '(', locId, ')')
-          } else {
-            console.error('❌ No locations found')
-            setLocationName('No Location Available')
-            setIsInitializing(false)
-            return
-          }
-        } catch (err) {
-          console.error('❌ Failed to fetch location:', err)
-          setLocationName('Error Loading Location')
-          setIsInitializing(false)
-          return
-        }
+      const year = nextFriday.getFullYear();
+      const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
+      const day = String(nextFriday.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const nextFriday = getNextFriday();
+
+    const { data: submissions } = await supabase
+      .from('payroll_submissions')
+      .select('*')
+      .eq('pay_date', nextFriday);
+
+    const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
+
+    const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
+      const submission = submissionsMap.get(location.id);
+
+      if (submission) {
+        return {
+          location_id: location.id,
+          location_name: location.name,
+          submission_id: submission.id,
+          status: submission.status as 'approved' | 'pending',
+          total_amount: submission.total_amount,
+          employee_count: submission.employee_count,
+          pay_date: submission.pay_date,
+          payroll_group: submission.payroll_group as 'A' | 'B',
+          submitted_at: submission.submitted_at
+        };
       } else {
-        setLocationId(locId)
+        return {
+          location_id: location.id,
+          location_name: location.name,
+          status: 'not_submitted' as const
+        };
       }
-      
-      if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
-        console.log('❌ Desktop Payroll: Access denied for role:', role)
-        router.replace('/dashboard')
-        return
-      }
-      
-      console.log('✅ Desktop Payroll: Access granted for role:', role)
-      
-      // Get location name if we don't have it yet
-      if (!locationName || locationName === '') {
-        try {
-          const { data: locationData, error: locError } = await dataSupabase
-            .from('locations')
-            .select('name')
-            .eq('id', locId)
-            .single()
-          
-          if (locError) {
-            console.warn('⚠️ Desktop Payroll: Location fetch failed:', locError)
-            setLocationName('Unknown Location')
-          } else {
-            setLocationName(locationData?.name || 'Unknown Location')
-            console.log('✅ Desktop Payroll: Location name:', locationData?.name)
-          }
-        } catch (err) {
-          console.warn('⚠️ Desktop Payroll: Location fetch error:', err)
-          setLocationName('Unknown Location')
-        }
-      }
-      
-      setIsInitializing(false)
-      console.log('✅ Desktop Payroll: Initialization complete, loading employees...')
-      await loadEmployees(locId)
-    } catch (error) {
-      console.error('❌ Desktop Payroll: Auth error:', error)
-      setIsInitializing(false)
+    });
+
+    setAllLocations(locationStatuses);
+  };
+
+  const handleReviewSubmission = async (submission: PendingSubmission) => {
+    setSelectedSubmission(submission);
+
+    const { data: details, error } = await supabase
+      .from('payroll_submission_details')
+      .select('*')
+      .eq('submission_id', submission.id);
+
+    if (error) {
+      console.error('Error loading submission details:', error);
+      return;
     }
-  }
 
-  async function loadEmployees(locId: string) {
-    setIsLoading(true)
+    const employeeIds = details?.map(d => d.employee_id) || [];
+    const { data: employees } = await supabase
+      .from('employees')
+      .select('id, first_name, last_name')
+      .in('id', employeeIds);
+
+    const employeesMap = new Map(
+      employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`])
+    );
+
+    const detailsWithNames = (details || []).map(d => ({
+      ...d,
+      employee_name: employeesMap.get(d.employee_id) || 'Unknown Employee'
+    }));
+
+    setSubmissionDetails(detailsWithNames);
+    setShowApprovalModal(true);
+  };
+
+  const handleApprove = async () => {
+    if (!selectedSubmission || !userId) return;
+
+    setIsApproving(true);
+
     try {
-      const { data, error } = await dataSupabase.from('employees').select('*').eq('location_id', locId).eq('is_active', true).order('last_name', { ascending: true })
-      if (error) throw error
-      const rows: EmployeeRow[] = (data || []).map((emp: Employee) => ({ ...emp, hours: '', units: '', notes: '', amount: 0 }))
-      setEmployees(rows)
+      const paymentsToInsert = submissionDetails.map(detail => ({
+        first_name: detail.employee_name.split(' ')[0],
+        last_name: detail.employee_name.split(' ').slice(1).join(' '),
+        department: selectedSubmission.location_name,
+        date: selectedSubmission.pay_date,
+        total_amount: detail.amount,
+        payment_method: 'Payroll'
+      }));
+
+      const { error: paymentsError } = await supabase
+        .from('payments')
+        .insert(paymentsToInsert);
+
+      if (paymentsError) throw paymentsError;
+
+      const { error: updateError } = await supabase
+        .from('payroll_submissions')
+        .update({
+          status: 'approved',
+          approved_by: userId,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', selectedSubmission.id);
+
+      if (updateError) throw updateError;
+
+      showNotification('Payroll approved successfully!', 'success');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      loadPendingSubmissions();
+      loadAllLocations();
+      fetchPayments();
+
     } catch (error) {
-      console.error('Error loading employees:', error)
-      showAlert('error', 'Failed to load employees')
-    } finally { setIsLoading(false) }
-  }
+      console.error('Error approving payroll:', error);
+      showNotification('Failed to approve payroll. Please try again.', 'error');
+    } finally {
+      setIsApproving(false);
+    }
+  };
 
-  const filteredEmployees = useMemo(() => employees.filter((emp) => emp.payroll_group === payrollGroup), [employees, payrollGroup])
+  const handleReject = async () => {
+    if (!selectedSubmission || !userId) return;
 
-  const totals = useMemo(() => {
-    const hourlyEmployees = filteredEmployees.filter((emp) => emp.compensation_type === 'hourly')
-    const productionEmployees = filteredEmployees.filter((emp) => emp.compensation_type === 'production')
-    const totalHours = hourlyEmployees.reduce((sum, emp) => sum + (parseFloat(emp.hours) || 0), 0)
-    const totalUnits = productionEmployees.reduce((sum, emp) => sum + (parseFloat(emp.units) || 0), 0)
-    const totalAmount = filteredEmployees.reduce((sum, emp) => sum + emp.amount, 0)
-    return { employees: filteredEmployees.length, hourlyCount: hourlyEmployees.length, productionCount: productionEmployees.length, totalHours, totalUnits, totalAmount }
-  }, [filteredEmployees])
+    setIsApproving(true);
 
-  function showAlert(type: 'success' | 'error', message: string) {
-    setAlert({ type, message })
-    if (type === 'success') setTimeout(() => setAlert(null), 5000)
-  }
-
-  function handleInputChange(employeeId: string, field: 'hours' | 'units' | 'notes', value: string) {
-    setEmployees(employees.map((emp) => {
-      if (emp.id !== employeeId) return emp
-      const updated = { ...emp, [field]: value }
-      if (field === 'hours' || field === 'units') {
-        const numValue = parseFloat(value) || 0
-        updated.amount = updated.compensation_type === 'hourly' ? numValue * (updated.hourly_rate || 0) : numValue * (updated.piece_rate || 0)
-      }
-      return updated
-    }))
-  }
-
-  async function handleSubmit() {
-    const employeesWithData = filteredEmployees.filter((emp) => emp.compensation_type === 'hourly' ? parseFloat(emp.hours) > 0 : parseFloat(emp.units) > 0)
-    if (employeesWithData.length === 0) { showAlert('error', 'Please enter hours or units for at least one employee'); return }
-    const hasInvalidHours = employeesWithData.some((emp) => {
-      if (emp.compensation_type === 'hourly') {
-        const hours = parseFloat(emp.hours)
-        return hours < 0 || hours > 80
-      }
-      return false
-    })
-    if (hasInvalidHours) { showAlert('error', 'Hours must be between 0 and 80'); return }
-    setIsSubmitting(true)
     try {
-      const response = await fetch('/api/payroll/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location_id: locationId, pay_date: payDate, payroll_group: payrollGroup, submitted_by: userId,
-          employees: employeesWithData.map((emp) => ({
-            employee_id: emp.id,
-            hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-            units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-            amount: emp.amount,
-            notes: emp.notes || null,
-          })),
-        }),
-      })
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Submission failed')
-      }
-      const result = await response.json()
-      showAlert('success', `✓ Payroll submitted! Submission #${result.submission_number}`)
-      setEmployees(employees.map((emp) => ({ ...emp, hours: '', units: '', notes: '', amount: 0 })))
-    } catch (error: any) {
-      console.error('Submission error:', error)
-      showAlert('error', error.message || 'Failed to submit payroll')
-    } finally { setIsSubmitting(false) }
-  }
+      const { error } = await supabase
+        .from('payroll_submissions')
+        .update({
+          status: 'rejected',
+          approved_by: userId,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', selectedSubmission.id);
 
-  const handleKeyPress = useCallback((e: KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); handleSubmit() }
-  }, [handleSubmit])
+      if (error) throw error;
+
+      showNotification('Payroll rejected. Location manager can resubmit.', 'warning');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      loadPendingSubmissions();
+      loadAllLocations();
+
+    } catch (error) {
+      console.error('Error rejecting payroll:', error);
+      showNotification('Failed to reject payroll. Please try again.', 'error');
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  // Fetch payments
+  const fetchPayments = async () => {
+    const { data, error } = await supabase
+      .from("payments")
+      .select(
+        "id, last_name, first_name, department, payment_method, date, total_amount"
+      )
+      .order("date", { ascending: false })
+      .limit(5000);
+    if (error) {
+      showNotification(error.message, "error");
+      return;
+    }
+    setPayments((data ?? []) as Payment[]);
+  };
 
   useEffect(() => {
-    document.addEventListener('keydown', handleKeyPress)
-    return () => document.removeEventListener('keydown', handleKeyPress)
-  }, [handleKeyPress])
+    fetchPayments();
+  }, []);
 
-  async function handleSignOut() {
-    const platformClient = createClient()
-    await platformClient.auth.signOut()
-    router.push('/login')
-  }
+  // Derived data
+  const departments = useMemo(() => {
+    const set = new Set<string>(["All Departments"]);
+    payments.forEach((p) => {
+      if (p.department && p.department.trim() !== "") set.add(p.department);
+    });
+    return Array.from(set);
+  }, [payments]);
 
-  if (isInitializing) {
+  const filteredPayments = useMemo(() => {
+    return payments.filter((p) => {
+      const matchesDept =
+        departmentFilter === "All Departments" || (p.department ?? "") === departmentFilter;
+      const fullName = `${p.first_name ?? ""} ${p.last_name ?? ""}`.toLowerCase();
+      const hay = [
+        fullName,
+        (p.department ?? "").toLowerCase(),
+        (p.payment_method ?? "").toLowerCase(),
+      ].join(" ");
+      const matchesSearch = searchTerm.trim() === "" || hay.includes(searchTerm.toLowerCase());
+      const matchesDate =
+        (!startDate || (p.date && Date.parse(p.date) >= Date.parse(startDate))) &&
+        (!endDate || (p.date && Date.parse(p.date) <= Date.parse(endDate)));
+      return matchesDept && matchesSearch && matchesDate;
+    });
+  }, [payments, departmentFilter, searchTerm, startDate, endDate]);
+
+  const filteredPrevPayments = useMemo(() => {
+    return payments.filter((p) => {
+      const matchesDept =
+        departmentFilter === "All Departments" || (p.department ?? "") === departmentFilter;
+      const fullName = `${p.first_name ?? ""} ${p.last_name ?? ""}`.toLowerCase();
+      const hay = [
+        fullName,
+        (p.department ?? "").toLowerCase(),
+        (p.payment_method ?? "").toLowerCase(),
+      ].join(" ");
+      const matchesSearch = searchTerm.trim() === "" || hay.includes(searchTerm.toLowerCase());
+      const matchesDate =
+        (!prevStartDate || (p.date && Date.parse(p.date) >= Date.parse(prevStartDate))) &&
+        (!prevEndDate || (p.date && Date.parse(p.date) <= Date.parse(prevEndDate)));
+      return matchesDept && matchesSearch && matchesDate;
+    });
+  }, [payments, departmentFilter, searchTerm, prevStartDate, prevEndDate]);
+
+  // KPIs
+  const currentKpis = useMemo(() => {
+    const totalTx = filteredPayments.length;
+    let total = 0;
+    for (const p of filteredPayments) {
+      total += Number(p.total_amount || 0);
+    }
+    const avg = totalTx ? total / totalTx : 0;
+
+    const byDept = new Map<string, number>();
+    for (const p of filteredPayments) {
+      const dept = (p.department || "Uncategorized").trim();
+      byDept.set(dept, (byDept.get(dept) || 0) + Number(p.total_amount || 0));
+    }
+    const topDept = Array.from(byDept.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
+
+    return { totalTx, total, avg, topDept };
+  }, [filteredPayments]);
+
+  const prevKpis = useMemo(() => {
+    const totalTx = filteredPrevPayments.length;
+    let total = 0;
+    for (const p of filteredPrevPayments) {
+      total += Number(p.total_amount || 0);
+    }
+    const avg = totalTx ? total / totalTx : 0;
+    return { totalTx, total, avg };
+  }, [filteredPrevPayments]);
+
+  const calculateGrowth = (current: number, previous: number) => {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return ((current - previous) / Math.abs(previous)) * 100;
+  };
+
+  const kpiGrowth = useMemo(
+    () => ({
+      totalTx: calculateGrowth(currentKpis.totalTx, prevKpis.totalTx),
+      total: calculateGrowth(currentKpis.total, prevKpis.total),
+      avg: calculateGrowth(currentKpis.avg, prevKpis.avg),
+    }),
+    [currentKpis, prevKpis],
+  );
+
+  // Trend & Department totals
+  const trendData = useMemo(() => {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const labels: { key: string; y: number; m: number }[] = [];
+    for (let m = 0; m <= currentMonth; m++) {
+      const key = monthsList[m].slice(0, 3) + " " + currentYear;
+      labels.push({ key, y: currentYear, m });
+    }
+    const map = new Map<string, { month: string; grossPay: number; netPay: number }>();
+    labels.forEach((l) => map.set(l.key, { month: l.key, grossPay: 0, netPay: 0 }));
+
+    for (const p of filteredPayments) {
+      if (!p.date) continue;
+      const d = new Date(p.date);
+      const key =
+        monthsList[d.getUTCMonth()].slice(0, 3) + " " + d.getUTCFullYear();
+      if (!map.has(key)) continue;
+      const amt = Number(p.total_amount || 0);
+      const bucket = map.get(key)!;
+      bucket.grossPay += amt;
+      bucket.netPay += amt;
+    }
+
+    return Array.from(map.values());
+  }, [filteredPayments]);
+
+  const departmentData = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of filteredPayments) {
+      const dept = (p.department || "Uncategorized").trim();
+      map.set(dept, (map.get(dept) || 0) + Number(p.total_amount || 0));
+    }
+    return Array.from(map.entries()).map(([department, cost]) => ({ department, cost }));
+  }, [filteredPayments]);
+
+  const departmentSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; people: Map<string, number> }
+    >();
+    for (const p of filteredPayments) {
+      const dept = (p.department || "Uncategorized").trim();
+      const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Unknown";
+      const amt = Number(p.total_amount || 0);
+      if (!map.has(dept)) map.set(dept, { total: 0, people: new Map() });
+      const info = map.get(dept)!;
+      info.total += amt;
+      info.people.set(name, (info.people.get(name) || 0) + amt);
+    }
+    return Array.from(map.entries())
+      .map(([department, { total, people }]) => ({
+        department,
+        total,
+        people: Array.from(people.entries()).map(([name, amount]) => ({
+          name,
+          amount,
+        })),
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [filteredPayments]);
+
+  const dateSummary = useMemo(() => {
+    const map = new Map<
+      string,
+      { total: number; people: Map<string, number> }
+    >();
+    for (const p of filteredPayments) {
+      const date = p.date ? p.date.split("T")[0] : "Unknown";
+      const name = `${p.first_name ?? ""} ${p.last_name ?? ""}`.trim() || "Unknown";
+      const amt = Number(p.total_amount || 0);
+      if (!map.has(date)) map.set(date, { total: 0, people: new Map() });
+      const info = map.get(date)!;
+      info.total += amt;
+      info.people.set(name, (info.people.get(name) || 0) + amt);
+    }
+    return Array.from(map.entries())
+      .map(([date, { total, people }]) => ({
+        date,
+        total,
+        people: Array.from(people.entries()).map(([name, amount]) => ({
+          name,
+          amount,
+        })),
+      }))
+      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+  }, [filteredPayments]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  // UI helpers
+  const CHART_COLORS = [BRAND_COLORS.primary, BRAND_COLORS.success, BRAND_COLORS.warning, BRAND_COLORS.danger, BRAND_COLORS.secondary];
+
+  const ringStyle = {
+    "--tw-ring-color": BRAND_COLORS.secondary + "33",
+  } as React.CSSProperties;
+
+  const formatCurrency = (amount: number): string =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+
+  const formatPercentage = (value: number): string =>
+    `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+
+  const renderDeptTooltip = ({
+    active,
+    payload,
+  }: {
+    active?: boolean;
+    payload?: Array<{ payload: { department: string; cost: number } }>;
+  }) => {
+    if (!active || !payload || !payload.length) return null;
+    const data = payload[0].payload;
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
-        </div>
+      <div className="bg-white p-2 border rounded shadow text-sm">
+        <div className="font-medium">Department: {data.department}</div>
+        <div>Total: {formatCurrency(Number(data.cost))}</div>
       </div>
-    )
-  }
+    );
+  };
 
-  const isEmployee = userRole === 'employee'
+  const showNotification = (message: string, type: "info" | "success" | "error" | "warning" = "info") => {
+    setNotification({ show: true, message, type });
+    setTimeout(() => setNotification({ show: false, message: "", type: "info" }), 3000);
+  };
+
+  const exportCSV = () => {
+    const headers = ["date", "first_name", "last_name", "department", "payment_method", "total_amount"];
+    const rows = filteredPayments.map((p) => [
+      p.date ?? "",
+      p.first_name ?? "",
+      p.last_name ?? "",
+      p.department ?? "",
+      p.payment_method ?? "",
+      String(p.total_amount ?? ""),
+    ]);
+    const csv = [headers, ...rows].map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `payments_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showNotification("Payments exported", "success");
+  };
+
+  const getLocationStatusColor = (status: LocationStatus['status']) => {
+    switch (status) {
+      case 'approved': return BRAND_COLORS.success;
+      case 'pending': return BRAND_COLORS.warning;
+      case 'not_submitted': return BRAND_COLORS.danger;
+    }
+  };
+
+  const getLocationStatusText = (status: LocationStatus['status']) => {
+    switch (status) {
+      case 'approved': return 'Approved';
+      case 'pending': return 'Pending Approval';
+      case 'not_submitted': return 'Not Submitted';
+    }
+  };
+
+  const getLocationStatusIcon = (status: LocationStatus['status']) => {
+    switch (status) {
+      case 'approved': return CheckCircle;
+      case 'pending': return Clock;
+      case 'not_submitted': return AlertCircle;
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-      {isEmployee && (
-        <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between h-16">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
-                  <span className="text-white font-bold text-lg">P</span>
-                </div>
-                <div>
-                  <h1 className="text-xl font-bold text-gray-900 dark:text-white">Payroll Submit</h1>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">{locationName}</p>
-                </div>
-              </div>
-              <button onClick={handleSignOut} className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition">Sign Out</button>
-            </div>
-          </div>
-        </header>
-      )}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {alert && (
-          <div className={`mb-6 p-4 rounded-xl border flex items-start gap-3 ${alert.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
-            <p className={`flex-1 text-sm ${alert.type === 'success' ? 'text-green-800 dark:text-green-200' : 'text-red-800 dark:text-red-200'}`}>{alert.message}</p>
-            <button onClick={() => setAlert(null)} className={alert.type === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>✕</button>
-          </div>
-        )}
-
-        {/* Pay Date Selector */}
-        <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 mb-6 border border-gray-200 dark:border-gray-800">
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Select Pay Date (Friday)
-            </label>
-            <input
-              type="date"
-              value={payDate}
-              onChange={(e) => handlePayDateChange(e.target.value)}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-
-        {/* Pay Period Info Card */}
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 mb-6 text-white shadow-lg">
-          <div className="flex items-start justify-between">
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex items-center justify-center mb-4">
+            <IAMCFOLogo className="w-8 h-8 mr-4" />
             <div>
-              <h2 className="text-sm font-medium text-blue-100 mb-1">Pay Period</h2>
-              <p className="text-2xl font-bold mb-4">{periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}</p>
-              <div className="flex items-center gap-3">
-                <span className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-semibold">Payroll Group {payrollGroup}</span>
-                <span className="text-blue-100 text-sm">Auto-calculated from pay date</span>
+              <div className="flex items-center justify-center space-x-3">
+                <h1 className="text-2xl font-bold text-gray-900 text-center">I AM CFO</h1>
+                <span className="text-sm px-3 py-1 rounded-full text-white" style={{ backgroundColor: BRAND_COLORS.primary }}>
+                  Payroll Management
+                </span>
               </div>
+              <p className="text-sm text-gray-600 mt-1 text-center">
+                Live payments from Supabase • Department insights • Approval workflow
+              </p>
             </div>
-            <div className="text-right">
-              <h2 className="text-sm font-medium text-blue-100 mb-1">Pay Date</h2>
-              <p className="text-2xl font-bold">{payDate ? createLocalDateFromInput(payDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '-'}</p>
-            </div>
+          </div>
+
+          {/* View Mode Toggle */}
+          <div className="flex justify-center gap-2">
+            <button
+              onClick={() => setViewMode("analytics")}
+              className={`px-6 py-2 rounded-lg font-medium transition-all ${
+                viewMode === "analytics"
+                  ? "text-white shadow-md"
+                  : "bg-white text-gray-700 border border-gray-300 hover:border-gray-400"
+              }`}
+              style={viewMode === "analytics" ? { backgroundColor: BRAND_COLORS.primary } : {}}
+            >
+              📊 Analytics
+            </button>
+            <button
+              onClick={() => setViewMode("approvals")}
+              className={`px-6 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${
+                viewMode === "approvals"
+                  ? "text-white shadow-md"
+                  : "bg-white text-gray-700 border border-gray-300 hover:border-gray-400"
+              }`}
+              style={viewMode === "approvals" ? { backgroundColor: BRAND_COLORS.accent } : {}}
+            >
+              <ClipboardCheck size={18} />
+              Approvals
+              {pendingSubmissions.length > 0 && (
+                <span className="bg-red-500 text-white rounded-full px-2 py-0.5 text-xs font-bold">
+                  {pendingSubmissions.length}
+                </span>
+              )}
+            </button>
           </div>
         </div>
+      </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800">
-            <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Total Employees</p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">{totals.employees}</p>
-            <p className="text-xs text-gray-500 mt-1">Group {payrollGroup}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800">
-            <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Hourly Employees</p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">{totals.hourlyCount}</p>
-            <p className="text-xs text-gray-500 mt-1">{totals.totalHours.toFixed(1)} hours</p>
-          </div>
-          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800">
-            <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Production Employees</p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">{totals.productionCount}</p>
-            <p className="text-xs text-gray-500 mt-1">{totals.totalUnits.toFixed(0)} units</p>
-          </div>
-          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800">
-            <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">Total Amount</p>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">${totals.totalAmount.toFixed(2)}</p>
-            <p className="text-xs text-gray-500 mt-1">Before taxes</p>
-          </div>
-        </div>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {viewMode === "analytics" ? (
+          <div className="space-y-8">
+            {/* Controls */}
+            <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+              <h2 className="flex-1 text-3xl font-bold text-center" style={{ color: BRAND_COLORS.primary }}>
+                Historical Overview
+              </h2>
+              <div className="flex flex-wrap gap-4 items-center justify-center lg:justify-end">
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <input
+                    type="text"
+                    placeholder="Search name, dept, or method…"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 transition-all w-64"
+                    style={ringStyle}
+                  />
+                </div>
 
-        {/* Employee Table */}
-        <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
-          <div className="overflow-x-auto">
-            {isLoading ? (
-              <div className="text-center py-12">
-                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                <p className="mt-4 text-gray-600 dark:text-gray-400 text-sm">Loading employees...</p>
+                {/* Department Filter */}
+                <div className="relative">
+                  <button
+                    onClick={() => setDepartmentDropdownOpen((v) => !v)}
+                    className="flex items-center justify-between w-56 px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                    style={ringStyle}
+                  >
+                    <span>{departmentFilter}</span>
+                    <ChevronDown className={`w-4 h-4 transition-transform ${departmentDropdownOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {departmentDropdownOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50">
+                      {departments.map((dept) => (
+                        <div
+                          key={dept}
+                          className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                          onClick={() => {
+                            setDepartmentFilter(dept);
+                            setDepartmentDropdownOpen(false);
+                          }}
+                        >
+                          {dept}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Time Period */}
+                <div className="flex items-center gap-2">
+                  <div className="relative" ref={timePeriodDropdownRef}>
+                    <button
+                      onClick={() => setTimePeriodDropdownOpen(!timePeriodDropdownOpen)}
+                      className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                      style={ringStyle}
+                    >
+                      <Calendar className="w-4 h-4 mr-2" />
+                      {timePeriod}
+                      <ChevronDown className="w-4 h-4 ml-2" />
+                    </button>
+                    {timePeriodDropdownOpen && (
+                      <div className="absolute z-10 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg">
+                        {(["Monthly", "Quarterly", "YTD", "Trailing 12", "Custom"] as TimePeriod[]).map((p) => (
+                          <div
+                            key={p}
+                            className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                            onClick={() => {
+                              setTimePeriod(p);
+                              setTimePeriodDropdownOpen(false);
+                            }}
+                          >
+                            {p}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {(timePeriod === "Monthly" ||
+                    timePeriod === "Quarterly" ||
+                    timePeriod === "YTD" ||
+                    timePeriod === "Trailing 12") && (
+                    <>
+                      <div className="relative" ref={monthDropdownRef}>
+                        <button
+                          onClick={() => setMonthDropdownOpen(!monthDropdownOpen)}
+                          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                          style={ringStyle}
+                        >
+                          {selectedMonth}
+                          <ChevronDown className="w-4 h-4 ml-2" />
+                        </button>
+                        {monthDropdownOpen && (
+                          <div className="absolute z-10 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            {monthsList.map((m) => (
+                              <div
+                                key={m}
+                                className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                                onClick={() => {
+                                  setSelectedMonth(m);
+                                  setMonthDropdownOpen(false);
+                                }}
+                              >
+                                {m}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="relative" ref={yearDropdownRef}>
+                        <button
+                          onClick={() => setYearDropdownOpen(!yearDropdownOpen)}
+                          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm hover:border-blue-500 focus:outline-none focus:ring-2 transition-all"
+                          style={ringStyle}
+                        >
+                          {selectedYear}
+                          <ChevronDown className="w-4 h-4 ml-2" />
+                        </button>
+                        {yearDropdownOpen && (
+                          <div className="absolute z-10 mt-1 w-32 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                            {yearsList.map((y) => (
+                              <div
+                                key={y}
+                                className="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm"
+                                onClick={() => {
+                                  setSelectedYear(y);
+                                  setYearDropdownOpen(false);
+                                }}
+                              >
+                                {y}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {timePeriod === "Custom" && (
+                    <DateRangePicker
+                      startDate={customStartDate}
+                      endDate={customEndDate}
+                      onChange={(start, end) => {
+                        setCustomStartDate(start);
+                        setCustomEndDate(end);
+                      }}
+                      className="w-[260px]"
+                    />
+                  )}
+                </div>
+
+                {/* Export & Refresh */}
+                <button
+                  onClick={exportCSV}
+                  className="flex items-center gap-2 px-4 py-2 text-white rounded-lg hover:opacity-90 transition-colors shadow-sm"
+                  style={{ backgroundColor: BRAND_COLORS.success }}
+                >
+                  <Download className="w-4 h-4" />
+                  Export
+                </button>
+                <button
+                  onClick={async () => {
+                    await fetchPayments();
+                    showNotification("Payments refreshed", "info");
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors shadow-sm"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Refresh
+                </button>
               </div>
-            ) : filteredEmployees.length === 0 ? (
-              <div className="text-center py-12"><p className="text-gray-600 dark:text-gray-400">No employees in Group {payrollGroup}</p></div>
-            ) : (
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800">
-                <thead className="bg-gray-50 dark:bg-gray-800">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">Employee</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">Type</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">Rate</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">Hours / Units</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">Amount</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-700 dark:text-gray-300">Notes</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800">
-                  {filteredEmployees.map((emp) => (
-                    <tr key={emp.id} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">{emp.first_name} {emp.last_name}</div>
-                        <div className="text-sm text-gray-500 dark:text-gray-400">{emp.employee_code}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${emp.compensation_type === 'hourly' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' : 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300'}`}>
-                          {emp.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">${emp.compensation_type === 'hourly' ? emp.hourly_rate?.toFixed(2) : emp.piece_rate?.toFixed(2)}</td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input type="number" step="0.01" min="0" max={emp.compensation_type === 'hourly' ? 80 : undefined} value={emp.compensation_type === 'hourly' ? emp.hours : emp.units} onChange={(e) => handleInputChange(emp.id, emp.compensation_type === 'hourly' ? 'hours' : 'units', e.target.value)} placeholder={emp.compensation_type === 'hourly' ? 'Hours' : 'Units'} className="w-24 px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900 dark:text-white">${emp.amount.toFixed(2)}</td>
-                      <td className="px-6 py-4">
-                        <input type="text" value={emp.notes} onChange={(e) => handleInputChange(emp.id, 'notes', e.target.value)} placeholder="Optional notes" className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                      </td>
-                    </tr>
+            </div>
+
+            {/* KPIs */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 hover:shadow-md transition-shadow" style={{ borderLeftColor: BRAND_COLORS.primary }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-gray-600 text-sm font-medium mb-2">Total Transactions</div>
+                    <div className="text-3xl font-bold text-gray-900 mb-1">{currentKpis.totalTx}</div>
+                    <div className={`flex items-center text-xs font-medium ${kpiGrowth.totalTx >= 0 ? "text-red-600" : "text-green-600"}`}>
+                      {kpiGrowth.totalTx >= 0 ? (
+                        <ArrowUpRight className="w-3 h-3 mr-1" />
+                      ) : (
+                        <ArrowDownRight className="w-3 h-3 mr-1" />
+                      )}
+                      {formatPercentage(kpiGrowth.totalTx)} {comparisonLabel}
+                    </div>
+                  </div>
+                  <Users className="w-8 h-8" style={{ color: BRAND_COLORS.primary }} />
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 hover:shadow-md transition-shadow" style={{ borderLeftColor: BRAND_COLORS.success }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-gray-600 text-sm font-medium mb-2">Total Payroll</div>
+                    <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(currentKpis.total)}</div>
+                    <div className={`flex items-center text-xs font-medium ${kpiGrowth.total >= 0 ? "text-red-600" : "text-green-600"}`}>
+                      {kpiGrowth.total >= 0 ? (
+                        <ArrowUpRight className="w-3 h-3 mr-1" />
+                      ) : (
+                        <ArrowDownRight className="w-3 h-3 mr-1" />
+                      )}
+                      {formatPercentage(kpiGrowth.total)} {comparisonLabel}
+                    </div>
+                  </div>
+                  <DollarSign className="w-8 h-8" style={{ color: BRAND_COLORS.success }} />
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 hover:shadow-md transition-shadow" style={{ borderLeftColor: BRAND_COLORS.warning }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-gray-600 text-sm font-medium mb-2">Average Payment</div>
+                    <div className="text-3xl font-bold text-gray-900 mb-1">{formatCurrency(currentKpis.avg)}</div>
+                    <div className={`flex items-center text-xs font-medium ${kpiGrowth.avg >= 0 ? "text-red-600" : "text-green-600"}`}>
+                      {kpiGrowth.avg >= 0 ? (
+                        <ArrowUpRight className="w-3 h-3 mr-1" />
+                      ) : (
+                        <ArrowDownRight className="w-3 h-3 mr-1" />
+                      )}
+                      {formatPercentage(kpiGrowth.avg)} {comparisonLabel}
+                    </div>
+                  </div>
+                  <TrendingUp className="w-8 h-8" style={{ color: BRAND_COLORS.warning }} />
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-xl shadow-sm border-l-4 hover:shadow-md transition-shadow" style={{ borderLeftColor: BRAND_COLORS.accent }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-gray-600 text-sm font-medium mb-2">Top Department</div>
+                    <div className="text-3xl font-bold text-gray-900 mb-1">{currentKpis.topDept}</div>
+                  </div>
+                  <PieIcon className="w-8 h-8" style={{ color: BRAND_COLORS.accent }} />
+                </div>
+              </div>
+            </div>
+
+            {/* Charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Trend */}
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                  <div className="flex-1 text-center">
+                    <h3 className="text-xl font-semibold text-gray-900 text-center">Year-to-Date Payments Trend</h3>
+                    <p className="text-sm text-gray-600 mt-1 text-center">Monthly payroll history</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className={`p-2 rounded ${trendChartType === "line" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                      onClick={() => setTrendChartType("line")}
+                    >
+                      <LineChartIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      className={`p-2 rounded ${trendChartType === "bar" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                      onClick={() => setTrendChartType("bar")}
+                    >
+                      <BarChart3 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="p-6">
+                  <ResponsiveContainer width="100%" height={300}>
+                    {trendChartType === "line" ? (
+                      <LineChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="month" />
+                        <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
+                        <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                        <Line type="monotone" dataKey="grossPay" stroke={BRAND_COLORS.primary} strokeWidth={3} name="Total" />
+                      </LineChart>
+                    ) : (
+                      <BarChart data={trendData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="month" />
+                        <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} />
+                        <Tooltip formatter={(v) => [formatCurrency(Number(v)), "Total"]} />
+                        <Bar dataKey="grossPay" fill={BRAND_COLORS.primary} name="Total" />
+                      </BarChart>
+                    )}
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Department Totals */}
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                  <div className="flex-1 text-center">
+                    <h3 className="text-xl font-semibold text-gray-900 text-center">Totals by Department</h3>
+                    <p className="text-sm text-gray-600 mt-1 text-center">Distribution of payment totals</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className={`p-2 rounded ${chartType === "pie" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                      onClick={() => setChartType("pie")}
+                    >
+                      <PieIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      className={`p-2 rounded ${chartType === "bar" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                      onClick={() => setChartType("bar")}
+                    >
+                      <BarChart3 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="p-6">
+                  <ResponsiveContainer width="100%" height={300}>
+                    {chartType === "pie" ? (
+                      <RechartsPieChart>
+                        <Tooltip content={renderDeptTooltip} />
+                        <Pie
+                          data={departmentData}
+                          dataKey="cost"
+                          nameKey="department"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={100}
+                        >
+                          {departmentData.map((_, i) => (
+                            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                          ))}
+                        </Pie>
+                      </RechartsPieChart>
+                    ) : (
+                      <BarChart data={departmentData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="department" hide />
+                        <YAxis tickFormatter={(v) => formatCurrency(Number(v))} />
+                        <Tooltip content={renderDeptTooltip} />
+                        <Bar dataKey="cost">
+                          {departmentData.map((_, i) => (
+                            <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    )}
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Summary */}
+            <div className="bg-white rounded-xl shadow-sm overflow-hidden mt-8">
+              <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+                <div className="flex items-center justify-center flex-1">
+                  <IAMCFOLogo className="w-6 h-6 mr-2" />
+                  <h3 className="text-xl font-semibold text-gray-900 text-center">
+                    {summaryView === "department" ? "Department Summary" : "Date Summary"}
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className={`px-3 py-1 text-sm rounded ${summaryView === "department" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setSummaryView("department")}
+                  >
+                    By Dept
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-sm rounded ${summaryView === "date" ? "" : "bg-white text-gray-700 border border-gray-200"}`}
+                    onClick={() => setSummaryView("date")}
+                  >
+                    By Date
+                  </button>
+                </div>
+              </div>
+              <div className="p-6 space-y-4">
+                {summaryView === "department" &&
+                  departmentSummary.map((dept) => (
+                    <div key={dept.department} className="border rounded-lg">
+                      <button
+                        onClick={() => toggleGroup(dept.department)}
+                        className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
+                      >
+                        <span className="font-medium">{dept.department}</span>
+                        <div className="flex items-center gap-4">
+                          <span>{formatCurrency(dept.total)}</span>
+                          <ChevronDown
+                            className={`w-4 h-4 transition-transform ${
+                              expandedGroups.has(dept.department) ? "rotate-180" : ""
+                            }`}
+                          />
+                        </div>
+                      </button>
+                      {expandedGroups.has(dept.department) && (
+                        <div className="bg-gray-50 px-4 py-2 space-y-1">
+                          {dept.people.map((person) => (
+                            <div key={person.name} className="flex justify-between text-sm">
+                              <span>{person.name}</span>
+                              <span>{formatCurrency(person.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
 
-        {/* Submit Button */}
-        <div className="mt-6 flex items-center justify-between">
-          <p className="text-sm text-gray-600 dark:text-gray-400">Press <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded text-xs font-mono">Ctrl+Enter</kbd> to submit</p>
-          <button onClick={handleSubmit} disabled={isSubmitting || totals.employees === 0} className={`inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-semibold text-white shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${isSubmitting || totals.employees === 0 ? 'cursor-not-allowed bg-gray-400 dark:bg-gray-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
-            {isSubmitting ? (<><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>Submitting...</>) : (<>Submit Payroll{totals.employees > 0 && <span className="ml-1 rounded-full bg-white/20 px-2 py-0.5 text-xs">{totals.employees}</span>}</>)}
-          </button>
-        </div>
-      </main>
-    </div>
-  )
-}
+                {summaryView === "date" &&
+                  dateSummary.map((d) => (
+                    <div key={d.date} className="border rounded-lg">
+                      <button
+                        onClick={() => toggleGroup(d.date)}
+                        className="w-full flex items-center justify-between px-4 py-2 bg-white hover:bg-gray-50"
+                      >
+                        <span className="font-medium">
+                          {d.date === "Unknown"
+                            ? "Unknown"
+                            : new Date(`${d.date}T00:00:00Z`).toLocaleDateString(
+                                "en-US",
+                                { timeZone: "UTC" }
+                              )}
+                        </span>
+                        <div className="flex items-center gap-4">
+                          <span>{formatCurrency(d.total)}</span>
+                          <ChevronDown
+                            className={`w-4 h-4 transition-transform ${
+                              expandedGroups.has(d.date) ? "rotate-180" : ""
