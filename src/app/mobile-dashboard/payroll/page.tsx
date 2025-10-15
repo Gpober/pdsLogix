@@ -20,6 +20,7 @@ import {
   ChevronRight,
   CheckCircle,
   XCircle,
+  ClipboardCheck,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { createClient } from '@/lib/supabase/client';
@@ -76,6 +77,18 @@ interface PendingSubmission {
   status: string;
 }
 
+interface LocationStatus {
+  location_id: string;
+  location_name: string;
+  submission_id?: string;
+  status: 'approved' | 'pending' | 'not_submitted';
+  total_amount?: number;
+  employee_count?: number;
+  pay_date?: string;
+  payroll_group?: 'A' | 'B';
+  submitted_at?: string;
+}
+
 interface SubmissionDetail {
   employee_id: string;
   employee_name: string;
@@ -85,7 +98,7 @@ interface SubmissionDetail {
   notes: string | null;
 }
 
-type ViewMode = "overview" | "summary" | "report" | "detail";
+type ViewMode = "overview" | "summary" | "report" | "detail" | "approvals";
 type RankingMetric = "payrollDept" | "payrollEmployee";
 
 const getMonthName = (m: number) =>
@@ -121,12 +134,14 @@ export default function PayrollDashboard() {
   
   // Approval States
   const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
+  const [allLocations, setAllLocations] = useState<LocationStatus[]>([]);
   const [selectedSubmission, setSelectedSubmission] = useState<PendingSubmission | null>(null);
   const [submissionDetails, setSubmissionDetails] = useState<SubmissionDetail[]>([]);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -202,6 +217,7 @@ export default function PayrollDashboard() {
       }
 
       setUserRole(userData.role);
+      setOrganizationId(userData.organization_id);
 
       // Only allow admins/owners
       if (userData.role !== 'super_admin' && userData.role !== 'admin' && userData.role !== 'owner') {
@@ -213,12 +229,13 @@ export default function PayrollDashboard() {
     checkAuth();
   }, [router]);
 
-  // Load pending submissions
+  // Load pending submissions and all locations
   useEffect(() => {
-    if (userRole) {
+    if (userRole && organizationId) {
       loadPendingSubmissions();
+      loadAllLocations();
     }
-  }, [userRole]);
+  }, [userRole, organizationId]);
 
   const loadPendingSubmissions = async () => {
     const { data: submissions, error } = await supabase
@@ -247,6 +264,73 @@ export default function PayrollDashboard() {
     }));
 
     setPendingSubmissions(submissionsWithNames);
+  };
+
+  const loadAllLocations = async () => {
+    if (!organizationId) return;
+
+    // Get all locations
+    const { data: locations, error: locationsError } = await supabase
+      .from('locations')
+      .select('id, name')
+      .eq('organization_id', organizationId);
+
+    if (locationsError) {
+      console.error('Error loading locations:', locationsError);
+      return;
+    }
+
+    // Get next Friday for default pay date
+    const getNextFriday = () => {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+      const nextFriday = new Date(today);
+      nextFriday.setDate(today.getDate() + daysUntilFriday);
+      
+      const year = nextFriday.getFullYear();
+      const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
+      const day = String(nextFriday.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const nextFriday = getNextFriday();
+
+    // Get all submissions for this pay period
+    const { data: submissions } = await supabase
+      .from('payroll_submissions')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .eq('pay_date', nextFriday);
+
+    const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
+
+    // Build location status array
+    const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
+      const submission = submissionsMap.get(location.id);
+
+      if (submission) {
+        return {
+          location_id: location.id,
+          location_name: location.name,
+          submission_id: submission.id,
+          status: submission.status as 'approved' | 'pending',
+          total_amount: submission.total_amount,
+          employee_count: submission.employee_count,
+          pay_date: submission.pay_date,
+          payroll_group: submission.payroll_group as 'A' | 'B',
+          submitted_at: submission.submitted_at
+        };
+      } else {
+        return {
+          location_id: location.id,
+          location_name: location.name,
+          status: 'not_submitted' as const
+        };
+      }
+    });
+
+    setAllLocations(locationStatuses);
   };
 
   const handleReviewSubmission = async (submission: PendingSubmission) => {
@@ -322,6 +406,7 @@ export default function PayrollDashboard() {
       setShowApprovalModal(false);
       setSelectedSubmission(null);
       loadPendingSubmissions();
+      loadAllLocations();
       
       // Reload historical data
       const load = async () => {
@@ -383,6 +468,7 @@ export default function PayrollDashboard() {
       setShowApprovalModal(false);
       setSelectedSubmission(null);
       loadPendingSubmissions();
+      loadAllLocations();
 
     } catch (error) {
       console.error('Error rejecting payroll:', error);
@@ -552,6 +638,32 @@ export default function PayrollDashboard() {
     else if (view === "summary") {
       setRankingMetric(null);
       setView("overview");
+    } else if (view === "approvals") {
+      setView("overview");
+    }
+  };
+
+  const getLocationStatusColor = (status: LocationStatus['status']) => {
+    switch (status) {
+      case 'approved': return BRAND_COLORS.success;
+      case 'pending': return BRAND_COLORS.warning;
+      case 'not_submitted': return BRAND_COLORS.danger;
+    }
+  };
+
+  const getLocationStatusText = (status: LocationStatus['status']) => {
+    switch (status) {
+      case 'approved': return 'Approved';
+      case 'pending': return 'Pending Approval';
+      case 'not_submitted': return 'Not Submitted';
+    }
+  };
+
+  const getLocationStatusIcon = (status: LocationStatus['status']) => {
+    switch (status) {
+      case 'approved': return CheckCircle;
+      case 'pending': return Clock;
+      case 'not_submitted': return AlertCircle;
     }
   };
 
@@ -625,6 +737,49 @@ export default function PayrollDashboard() {
             {getMonthName(month)} {year} • {properties.length} Departments
           </p>
         </div>
+
+        {/* Approvals Button */}
+        <button
+          onClick={() => setView("approvals")}
+          style={{
+            width: '100%',
+            padding: '12px',
+            background: 'rgba(255, 255, 255, 0.2)',
+            color: 'white',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            borderRadius: '10px',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            marginBottom: '16px',
+            transition: 'all 0.2s'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.3)';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+          }}
+        >
+          <ClipboardCheck size={18} />
+          Location Approvals
+          {pendingSubmissions.length > 0 && (
+            <span style={{
+              background: BRAND_COLORS.danger,
+              color: 'white',
+              borderRadius: '12px',
+              padding: '2px 8px',
+              fontSize: '12px',
+              fontWeight: '700'
+            }}>
+              {pendingSubmissions.length}
+            </span>
+          )}
+        </button>
 
         <div
           style={{
@@ -1022,6 +1177,175 @@ export default function PayrollDashboard() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* APPROVALS VIEW - Location Status Grid */}
+      {view === "approvals" && (
+        <div>
+          <button
+            onClick={back}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'white',
+              border: `1px solid ${BRAND_COLORS.gray[200]}`,
+              borderRadius: '8px',
+              padding: '12px 16px',
+              marginBottom: '16px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: BRAND_COLORS.accent
+            }}
+          >
+            <ChevronLeft size={20} />
+            Back to Dashboard
+          </button>
+
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            marginBottom: '16px',
+            border: `1px solid ${BRAND_COLORS.gray[200]}`,
+            boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
+          }}>
+            <h2 style={{ 
+              fontSize: '20px', 
+              fontWeight: 'bold', 
+              marginBottom: '8px',
+              color: BRAND_COLORS.accent 
+            }}>
+              Location Approvals
+            </h2>
+            <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '20px' }}>
+              {allLocations.filter(l => l.status === 'approved').length} Approved • {' '}
+              {allLocations.filter(l => l.status === 'pending').length} Pending • {' '}
+              {allLocations.filter(l => l.status === 'not_submitted').length} Not Submitted
+            </p>
+
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {allLocations.map((location) => {
+                const StatusIcon = getLocationStatusIcon(location.status);
+                const statusColor = getLocationStatusColor(location.status);
+
+                return (
+                  <div
+                    key={location.location_id}
+                    onClick={() => {
+                      if (location.status === 'pending' && location.submission_id) {
+                        const submission = pendingSubmissions.find(s => s.id === location.submission_id);
+                        if (submission) handleReviewSubmission(submission);
+                      }
+                    }}
+                    style={{
+                      padding: '16px',
+                      borderRadius: '12px',
+                      background: BRAND_COLORS.gray[50],
+                      border: `3px solid ${statusColor}`,
+                      cursor: location.status === 'pending' ? 'pointer' : 'default',
+                      transition: 'all 0.2s',
+                      position: 'relative'
+                    }}
+                  >
+                    <div style={{
+                      position: 'absolute',
+                      top: '12px',
+                      right: '12px',
+                      background: statusColor,
+                      borderRadius: '20px',
+                      padding: '6px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}>
+                      <StatusIcon size={14} style={{ color: 'white' }} />
+                      <span style={{ 
+                        fontSize: '11px', 
+                        fontWeight: '700', 
+                        color: 'white',
+                        textTransform: 'uppercase'
+                      }}>
+                        {getLocationStatusText(location.status)}
+                      </span>
+                    </div>
+
+                    <h3 style={{ 
+                      fontSize: '18px', 
+                      fontWeight: 'bold', 
+                      marginBottom: '12px',
+                      color: BRAND_COLORS.accent,
+                      paddingRight: '140px'
+                    }}>
+                      {location.location_name}
+                    </h3>
+
+                    {location.status !== 'not_submitted' && location.total_amount && (
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '12px',
+                        marginTop: '12px'
+                      }}>
+                        <div style={{
+                          background: 'white',
+                          borderRadius: '8px',
+                          padding: '10px',
+                          textAlign: 'center'
+                        }}>
+                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
+                            {formatCurrency(location.total_amount)}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#64748b' }}>Total</div>
+                        </div>
+                        <div style={{
+                          background: 'white',
+                          borderRadius: '8px',
+                          padding: '10px',
+                          textAlign: 'center'
+                        }}>
+                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
+                            {location.employee_count || 0}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {location.submitted_at && (
+                      <div style={{
+                        marginTop: '12px',
+                        fontSize: '11px',
+                        color: '#94a3b8',
+                        textAlign: 'center'
+                      }}>
+                        Submitted {new Date(location.submitted_at).toLocaleString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit'
+                        })}
+                      </div>
+                    )}
+
+                    {location.status === 'not_submitted' && (
+                      <div style={{
+                        marginTop: '12px',
+                        fontSize: '13px',
+                        color: '#64748b',
+                        textAlign: 'center',
+                        fontStyle: 'italic'
+                      }}>
+                        Waiting for submission from location manager
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
