@@ -103,11 +103,13 @@ export default function ClientRootLayout({
     return (
       <html lang="en">
         <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
           <link rel="icon" type="image/png" href="/favicon.png" />
           <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
           <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
           <meta name="mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-capable" content="yes" />
+          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
           <meta name="apple-mobile-web-app-title" content="I AM CFO" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
@@ -118,16 +120,18 @@ export default function ClientRootLayout({
     )
   }
 
-  // Render mobile dashboard without global navigation
+  // Render mobile dashboard without global navigation - FULLSCREEN MODE
   if (pathname?.startsWith("/mobile-dashboard")) {
     return (
       <html lang="en">
         <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
           <link rel="icon" type="image/png" href="/favicon.png" />
           <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
           <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
           <meta name="mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-capable" content="yes" />
+          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
           <meta name="apple-mobile-web-app-title" content="I AM CFO" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
@@ -140,11 +144,13 @@ export default function ClientRootLayout({
     return (
       <html lang="en">
         <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
           <link rel="icon" type="image/png" href="/favicon.png" />
           <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
           <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
           <meta name="mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-capable" content="yes" />
+          <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
           <meta name="apple-mobile-web-app-title" content="I AM CFO" />
           <meta name="theme-color" content="#56B6E9" />
         </head>
@@ -156,11 +162,13 @@ export default function ClientRootLayout({
   return (
     <html lang="en">
       <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
         <link rel="icon" type="image/png" href="/favicon.png" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <meta name="apple-mobile-web-app-title" content="I AM CFO" />
         <meta name="theme-color" content="#56B6E9" />
       </head>
