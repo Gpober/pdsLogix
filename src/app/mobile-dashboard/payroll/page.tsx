@@ -774,23 +774,38 @@ export default function PayrollDashboard() {
       {view === "overview" && (
         <div>
           {/* Pending Approvals Section */}
-          {pendingSubmissions.length > 0 && (
-            <div style={{
-              background: 'white',
-              borderRadius: '16px',
-              padding: '20px',
-              marginBottom: '24px',
-              border: `2px solid ${BRAND_COLORS.warning}`,
-              boxShadow: `0 4px 20px ${BRAND_COLORS.warning}33`
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-                <Clock size={20} style={{ color: BRAND_COLORS.warning }} />
-                <h3 style={{ fontSize: '18px', fontWeight: '600', color: BRAND_COLORS.warning }}>
-                  Pending Approvals ({pendingSubmissions.length})
-                </h3>
-              </div>
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            marginBottom: '24px',
+            border: pendingSubmissions.length > 0 
+              ? `2px solid ${BRAND_COLORS.warning}` 
+              : `2px solid ${BRAND_COLORS.success}`,
+            boxShadow: pendingSubmissions.length > 0 
+              ? `0 4px 20px ${BRAND_COLORS.warning}33`
+              : `0 4px 20px ${BRAND_COLORS.success}33`
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+              {pendingSubmissions.length > 0 ? (
+                <>
+                  <Clock size={20} style={{ color: BRAND_COLORS.warning }} />
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', color: BRAND_COLORS.warning }}>
+                    Pending Approvals ({pendingSubmissions.length})
+                  </h3>
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={20} style={{ color: BRAND_COLORS.success }} />
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', color: BRAND_COLORS.success }}>
+                    Pending Approvals
+                  </h3>
+                </>
+              )}
+            </div>
 
-              {pendingSubmissions.map((submission) => (
+            {pendingSubmissions.length > 0 ? (
+              pendingSubmissions.map((submission) => (
                 <div
                   key={submission.id}
                   onClick={() => handleReviewSubmission(submission)}
@@ -859,9 +874,28 @@ export default function PayrollDashboard() {
                     })}
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            ) : (
+              <div style={{
+                background: `${BRAND_COLORS.success}10`,
+                borderRadius: '12px',
+                padding: '32px 20px',
+                textAlign: 'center',
+                border: `2px dashed ${BRAND_COLORS.success}`
+              }}>
+                <CheckCircle size={48} style={{ color: BRAND_COLORS.success, marginBottom: '12px' }} />
+                <h4 style={{ fontSize: '18px', fontWeight: '700', color: BRAND_COLORS.success, marginBottom: '8px' }}>
+                  All Caught Up!
+                </h4>
+                <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '0' }}>
+                  No pending payroll submissions at this time.
+                </p>
+                <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px' }}>
+                  New submissions will appear here for approval.
+                </p>
+              </div>
+            )}
+          </div>
 
           {/* Department Insights */}
           <div style={{
