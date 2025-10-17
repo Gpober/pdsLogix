@@ -16,6 +16,8 @@ import {
   Send,
   Plus,
   Trash2,
+  MapPin,
+  ChevronDown,
 } from "lucide-react";
 
 // I AM CFO Brand Colors
@@ -43,6 +45,11 @@ const BRAND_COLORS = {
 
 type PayrollGroup = "A" | "B";
 type CompensationType = "hourly" | "production";
+
+type Location = {
+  id: string;
+  name: string;
+};
 
 type Employee = {
   id: string;
@@ -117,8 +124,11 @@ export default function DesktopPayrollSubmit() {
   const [userId, setUserId] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>("");
-  const [locationId, setLocationId] = useState<string | null>(null);
-  const [locationName, setLocationName] = useState<string>("");
+
+  // Multi-location support
+  const [availableLocations, setAvailableLocations] = useState<Location[]>([]);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
+  const [showLocationDropdown, setShowLocationDropdown] = useState(false);
 
   // Form state
   const [payDate, setPayDate] = useState<string>(
@@ -128,75 +138,131 @@ export default function DesktopPayrollSubmit() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [alert, setAlert] = useState<Alert | null>(null);
 
+  // Get selected location name
+  const selectedLocationName = useMemo(() => {
+    const location = availableLocations.find(loc => loc.id === selectedLocationId);
+    return location?.name || 'Select Location';
+  }, [availableLocations, selectedLocationId]);
+
   useEffect(() => {
     initializeUser();
   }, []);
 
   const initializeUser = async () => {
     try {
+      console.log('🔐 Desktop Payroll: Starting auth check...');
+      
       const authClient = createClient();
-      const {
-        data: { user },
-      } = await authClient.auth.getUser();
+      const { data: { user }, error: authError } = await authClient.auth.getUser();
 
-      if (!user) {
+      if (authError || !user) {
+        console.log('❌ Desktop Payroll: No user found');
         router.push("/login");
         return;
       }
 
       setUserId(user.id);
-      const role = user.user_metadata?.role || "employee";
-      setUserRole(role);
-      setUserName(
-        `${user.user_metadata?.first_name || ""} ${
-          user.user_metadata?.last_name || ""
-        }`.trim() || user.email || "User"
-      );
+      console.log('✅ Desktop Payroll: User authenticated:', user.email);
 
-      // Get employee record to find location
-      const { data: empData } = await dataSupabase
-        .from("employees")
-        .select("location_id")
-        .eq("user_id", user.id)
+      // Get user info from Auth Supabase
+      const { data: userRecord, error: userError } = await authClient
+        .from('users')
+        .select('role, name')
+        .eq('id', user.id)
         .single();
 
-      if (empData?.location_id) {
-        setLocationId(empData.location_id);
-
-        // Get location name
-        const { data: locData } = await dataSupabase
-          .from("locations")
-          .select("name")
-          .eq("id", empData.location_id)
-          .single();
-
-        setLocationName(locData?.name || "Unknown Location");
+      if (userError || !userRecord) {
+        console.error('❌ Desktop Payroll: User record error:', userError);
+        showAlert('Failed to load user data. Please refresh.', 'error');
+        setIsInitializing(false);
+        return;
       }
+
+      const role = userRecord.role as string;
+      console.log('✅ Desktop Payroll: User role:', role);
+
+      setUserRole(role);
+      setUserName(userRecord.name || user.email || 'User');
+
+      // Check role permissions
+      if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
+        console.log('❌ Desktop Payroll: Access denied for role:', role);
+        router.push('/dashboard');
+        return;
+      }
+
+      console.log('✅ Desktop Payroll: Access granted');
+
+      // Load locations from location_managers table in Client Supabase
+      const { data: locationManagerData, error: locMgrError } = await dataSupabase
+        .from('location_managers')
+        .select('location_id')
+        .eq('user_id', user.id);
+
+      if (locMgrError) {
+        console.error('❌ Desktop Payroll: Error fetching location_managers:', locMgrError);
+        showAlert('Failed to load your locations. Please contact support.', 'error');
+        setIsInitializing(false);
+        return;
+      }
+
+      if (!locationManagerData || locationManagerData.length === 0) {
+        console.error('❌ Desktop Payroll: No locations found for user');
+        showAlert('You are not assigned to any locations. Please contact support.', 'error');
+        setIsInitializing(false);
+        return;
+      }
+
+      const locationIds = locationManagerData.map(lm => lm.location_id);
+      console.log('✅ Desktop Payroll: User has access to locations:', locationIds);
+
+      // Fetch location details
+      const { data: locationsData, error: locError } = await dataSupabase
+        .from('locations')
+        .select('id, name')
+        .in('id', locationIds)
+        .order('name');
+
+      if (locError) {
+        console.error('❌ Desktop Payroll: Error fetching locations:', locError);
+        showAlert('Failed to load location details.', 'error');
+        setIsInitializing(false);
+        return;
+      }
+
+      setAvailableLocations(locationsData || []);
+      
+      // Auto-select first location
+      if (locationsData && locationsData.length > 0) {
+        setSelectedLocationId(locationsData[0].id);
+        console.log('✅ Desktop Payroll: Auto-selected location:', locationsData[0].name);
+      }
+
+      setIsInitializing(false);
     } catch (error) {
-      console.error("Initialization error:", error);
-      showAlert("Failed to initialize user data", "error");
-    } finally {
+      console.error('❌ Desktop Payroll: Critical error:', error);
+      showAlert('Something went wrong. Please try again.', 'error');
       setIsInitializing(false);
     }
   };
 
   useEffect(() => {
-    if (locationId && payrollGroup) {
+    if (selectedLocationId && payrollGroup) {
       loadEmployees();
     }
-  }, [locationId, payrollGroup]);
+  }, [selectedLocationId, payrollGroup]);
 
   const loadEmployees = async () => {
-    if (!locationId) return;
+    if (!selectedLocationId) return;
 
     setIsLoading(true);
     try {
       const { data, error } = await dataSupabase
         .from("employees")
         .select("*")
-        .eq("location_id", locationId)
+        .eq("location_id", selectedLocationId)
         .eq("payroll_group", payrollGroup)
-        .eq("status", "active")
+        .eq("is_active", true)
         .order("last_name");
 
       if (error) throw error;
@@ -210,6 +276,7 @@ export default function DesktopPayrollSubmit() {
       }));
 
       setEmployees(rows);
+      console.log('✅ Desktop Payroll: Loaded', rows.length, 'employees');
     } catch (error) {
       console.error("Error loading employees:", error);
       showAlert("Failed to load employees", "error");
@@ -252,7 +319,7 @@ export default function DesktopPayrollSubmit() {
   }, [employees]);
 
   const handleSubmit = async () => {
-    if (!locationId || !userId) {
+    if (!selectedLocationId || !userId) {
       showAlert("Missing location or user information", "error");
       return;
     }
@@ -285,7 +352,7 @@ export default function DesktopPayrollSubmit() {
         .from("payroll_submissions")
         .insert([
           {
-            location_id: locationId,
+            location_id: selectedLocationId,
             pay_date: payDate,
             payroll_group: payrollGroup,
             period_start: periodStart.toISOString().split("T")[0],
@@ -386,7 +453,45 @@ export default function DesktopPayrollSubmit() {
                 >
                   Payroll Submit
                 </h1>
-                <p className="text-sm text-gray-600">{locationName}</p>
+                
+                {/* Location Selector */}
+                {availableLocations.length > 1 ? (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowLocationDropdown(!showLocationDropdown)}
+                      className="flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition"
+                    >
+                      <MapPin size={14} />
+                      <span>{selectedLocationName}</span>
+                      <ChevronDown size={14} />
+                    </button>
+                    
+                    {showLocationDropdown && (
+                      <div className="absolute top-full left-0 mt-2 bg-white border rounded-lg shadow-lg z-50 min-w-[200px]">
+                        {availableLocations.map((location) => (
+                          <button
+                            key={location.id}
+                            onClick={() => {
+                              setSelectedLocationId(location.id);
+                              setShowLocationDropdown(false);
+                              setEmployees([]);
+                            }}
+                            className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 ${
+                              location.id === selectedLocationId ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'
+                            }`}
+                          >
+                            {location.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-600 flex items-center gap-2">
+                    <MapPin size={14} />
+                    {selectedLocationName}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -433,205 +538,215 @@ export default function DesktopPayrollSubmit() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Controls */}
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Pay Date
-              </label>
-              <input
-                type="date"
-                value={payDate}
-                onChange={(e) => setPayDate(e.target.value)}
-                className="w-full px-4 py-2 border-2 rounded-lg"
-                style={{ borderColor: BRAND_COLORS.gray[300] }}
-              />
-            </div>
+        {!selectedLocationId ? (
+          <div className="bg-white rounded-xl shadow-sm p-12 text-center">
+            <MapPin className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Location Selected</h3>
+            <p className="text-gray-600">Please select a location to continue.</p>
+          </div>
+        ) : (
+          <>
+            {/* Controls */}
+            <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Pay Date
+                  </label>
+                  <input
+                    type="date"
+                    value={payDate}
+                    onChange={(e) => setPayDate(e.target.value)}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                  />
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Payroll Group
-              </label>
-              <select
-                value={payrollGroup}
-                onChange={(e) => setPayrollGroup(e.target.value as PayrollGroup)}
-                className="w-full px-4 py-2 border-2 rounded-lg"
-                style={{ borderColor: BRAND_COLORS.gray[300] }}
-              >
-                <option value="A">Group A</option>
-                <option value="B">Group B</option>
-              </select>
-            </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Payroll Group
+                  </label>
+                  <select
+                    value={payrollGroup}
+                    onChange={(e) => setPayrollGroup(e.target.value as PayrollGroup)}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                  >
+                    <option value="A">Group A</option>
+                    <option value="B">Group B</option>
+                  </select>
+                </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Total Amount
-              </label>
-              <div
-                className="px-4 py-2 rounded-lg text-2xl font-bold"
-                style={{
-                  backgroundColor: BRAND_COLORS.primary + "10",
-                  color: BRAND_COLORS.primary,
-                }}
-              >
-                {formatCurrency(totalAmount)}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Total Amount
+                  </label>
+                  <div
+                    className="px-4 py-2 rounded-lg text-2xl font-bold"
+                    style={{
+                      backgroundColor: BRAND_COLORS.primary + "10",
+                      color: BRAND_COLORS.primary,
+                    }}
+                  >
+                    {formatCurrency(totalAmount)}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        {/* Employee Table */}
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead style={{ backgroundColor: BRAND_COLORS.gray[50] }}>
-                <tr>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Employee
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Type
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Rate
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Hours/Units
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Amount
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Notes
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y" style={{ divideColor: BRAND_COLORS.gray[200] }}>
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                      Loading employees...
-                    </td>
-                  </tr>
-                ) : employees.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
-                      No employees found for Group {payrollGroup}
-                    </td>
-                  </tr>
-                ) : (
-                  employees.map((emp, idx) => (
-                    <tr key={emp.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {emp.first_name} {emp.last_name}
-                        </div>
-                        <div className="text-xs text-gray-500">{emp.employee_code}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span
-                          className="px-2 py-1 text-xs font-medium rounded-full capitalize"
-                          style={{
-                            backgroundColor:
-                              emp.compensation_type === "hourly"
-                                ? BRAND_COLORS.primary + "20"
-                                : BRAND_COLORS.warning + "20",
-                            color:
-                              emp.compensation_type === "hourly"
-                                ? BRAND_COLORS.primary
-                                : BRAND_COLORS.warning,
-                          }}
-                        >
-                          {emp.compensation_type}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatCurrency(
-                          emp.compensation_type === "hourly"
-                            ? emp.hourly_rate || 0
-                            : emp.piece_rate || 0
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="number"
-                          step="0.5"
-                          min="0"
-                          value={
-                            emp.compensation_type === "hourly" ? emp.hours : emp.units
-                          }
-                          onChange={(e) =>
-                            updateEmployeeRow(
-                              idx,
-                              emp.compensation_type === "hourly" ? "hours" : "units",
-                              e.target.value
-                            )
-                          }
-                          placeholder={emp.compensation_type === "hourly" ? "0.0" : "0"}
-                          className="w-24 px-3 py-2 border rounded-lg text-sm"
-                          style={{ borderColor: BRAND_COLORS.gray[300] }}
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span
-                          className="text-sm font-semibold"
-                          style={{ color: BRAND_COLORS.success }}
-                        >
-                          {formatCurrency(emp.amount)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <input
-                          type="text"
-                          value={emp.notes}
-                          onChange={(e) =>
-                            updateEmployeeRow(idx, "notes", e.target.value)
-                          }
-                          placeholder="Optional notes"
-                          className="w-full px-3 py-2 border rounded-lg text-sm"
-                          style={{ borderColor: BRAND_COLORS.gray[300] }}
-                        />
-                      </td>
+            {/* Employee Table */}
+            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead style={{ backgroundColor: BRAND_COLORS.gray[50] }}>
+                    <tr>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Employee
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Type
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Rate
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Hours/Units
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Amount
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Notes
+                      </th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody className="divide-y" style={{ divideColor: BRAND_COLORS.gray[200] }}>
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                          Loading employees...
+                        </td>
+                      </tr>
+                    ) : employees.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                          No employees found for Group {payrollGroup}
+                        </td>
+                      </tr>
+                    ) : (
+                      employees.map((emp, idx) => (
+                        <tr key={emp.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">
+                              {emp.first_name} {emp.last_name}
+                            </div>
+                            <div className="text-xs text-gray-500">{emp.employee_code}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span
+                              className="px-2 py-1 text-xs font-medium rounded-full capitalize"
+                              style={{
+                                backgroundColor:
+                                  emp.compensation_type === "hourly"
+                                    ? BRAND_COLORS.primary + "20"
+                                    : BRAND_COLORS.warning + "20",
+                                color:
+                                  emp.compensation_type === "hourly"
+                                    ? BRAND_COLORS.primary
+                                    : BRAND_COLORS.warning,
+                              }}
+                            >
+                              {emp.compensation_type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {formatCurrency(
+                              emp.compensation_type === "hourly"
+                                ? emp.hourly_rate || 0
+                                : emp.piece_rate || 0
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              value={
+                                emp.compensation_type === "hourly" ? emp.hours : emp.units
+                              }
+                              onChange={(e) =>
+                                updateEmployeeRow(
+                                  idx,
+                                  emp.compensation_type === "hourly" ? "hours" : "units",
+                                  e.target.value
+                                )
+                              }
+                              placeholder={emp.compensation_type === "hourly" ? "0.0" : "0"}
+                              className="w-24 px-3 py-2 border rounded-lg text-sm"
+                              style={{ borderColor: BRAND_COLORS.gray[300] }}
+                            />
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span
+                              className="text-sm font-semibold"
+                              style={{ color: BRAND_COLORS.success }}
+                            >
+                              {formatCurrency(emp.amount)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <input
+                              type="text"
+                              value={emp.notes}
+                              onChange={(e) =>
+                                updateEmployeeRow(idx, "notes", e.target.value)
+                              }
+                              placeholder="Optional notes"
+                              className="w-full px-3 py-2 border rounded-lg text-sm"
+                              style={{ borderColor: BRAND_COLORS.gray[300] }}
+                            />
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-          {/* Footer */}
-          <div
-            className="px-6 py-4 border-t flex items-center justify-between"
-            style={{ borderColor: BRAND_COLORS.gray[200] }}
-          >
-            <div>
-              <p className="text-sm text-gray-600">
-                {employees.filter((e) => e.amount > 0).length} employees with pay
-              </p>
+              {/* Footer */}
+              <div
+                className="px-6 py-4 border-t flex items-center justify-between"
+                style={{ borderColor: BRAND_COLORS.gray[200] }}
+              >
+                <div>
+                  <p className="text-sm text-gray-600">
+                    {employees.filter((e) => e.amount > 0).length} employees with pay
+                  </p>
+                </div>
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || totalAmount === 0}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: BRAND_COLORS.success }}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div
+                        className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"
+                      ></div>
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={20} />
+                      Submit Payroll
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-            <button
-              onClick={handleSubmit}
-              disabled={isSubmitting || totalAmount === 0}
-              className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ backgroundColor: BRAND_COLORS.success }}
-            >
-              {isSubmitting ? (
-                <>
-                  <div
-                    className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"
-                  ></div>
-                  Submitting...
-                </>
-              ) : (
-                <>
-                  <Send size={20} />
-                  Submit Payroll
-                </>
-              )}
-            </button>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
