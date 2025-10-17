@@ -2,7 +2,7 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { authClient } from '@/lib/supabase/auth-client'
+import { createClient } from '@/lib/supabase/client'
 import { useRouter, usePathname } from 'next/navigation'
 
 export type UserRole = 'owner' | 'admin' | 'member' | 'super_admin' | 'employee'
@@ -60,7 +60,8 @@ export function useAuth() {
   useEffect(() => {
     checkAuth()
 
-    const { data: authListener } = authClient.auth.onAuthStateChange(
+    const supabase = createClient()
+    const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' && session) {
           await fetchUserProfile(session.user.id)
@@ -88,7 +89,8 @@ export function useAuth() {
 
   async function checkAuth() {
     try {
-      const { data: { session } } = await authClient.auth.getSession()
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
       
       if (session?.user) {
         await fetchUserProfile(session.user.id)
@@ -104,7 +106,8 @@ export function useAuth() {
 
   async function fetchUserProfile(userId: string) {
     try {
-      const { data, error } = await authClient
+      const supabase = createClient()
+      const { data, error } = await supabase
         .from('users')
         .select('id, email, name, role, organization_id')
         .eq('id', userId)
@@ -162,7 +165,8 @@ export function useAuth() {
   }
 
   async function signOut() {
-    await authClient.auth.signOut()
+    const supabase = createClient()
+    await supabase.auth.signOut()
     setUser(null)
     router.push('/login')
   }
