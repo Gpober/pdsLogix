@@ -17,11 +17,13 @@ import {
   Settings,
   Wallet,
   ClipboardCheck,
+  LogOut,
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import Image from "next/image"
 import LoadingScreenSpinner from './LoadingScreen'
+import { useAuth } from '@/lib/hooks/useAuth'
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -88,6 +90,10 @@ export default function ClientRootLayout({
   const [sidebarVisible, setSidebarVisible] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const pathname = usePathname()
+  const { user, loading: authLoading, signOut, getFilteredNavigation } = useAuth()
+
+  // Get filtered navigation based on user role
+  const filteredNavigation = user ? getFilteredNavigation(navigation) : []
 
   // Loading effect on app initialization
   useEffect(() => {
@@ -98,8 +104,8 @@ export default function ClientRootLayout({
     return () => clearTimeout(timer)
   }, [])
 
-  // Show loading screen during initialization
-  if (isLoading) {
+  // Show loading screen during initialization or auth loading
+  if (isLoading || authLoading) {
     return (
       <html lang="en">
         <head>
@@ -198,7 +204,7 @@ export default function ClientRootLayout({
               </div>
               <div className="mt-5 h-0 flex-1 overflow-y-auto">
                 <nav className="space-y-1 px-2">
-                  {navigation.map((item) => {
+                  {filteredNavigation.map((item) => {
                     const isActive = pathname === item.href
                     return (
                       <Link
@@ -221,8 +227,31 @@ export default function ClientRootLayout({
                       </Link>
                     )
                   })}
+                  
+                  {/* Sign Out Button */}
+                  <button
+                    onClick={signOut}
+                    className="w-full group flex items-center px-2 py-2 text-base font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  >
+                    <LogOut className="mr-4 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
+                    Sign Out
+                  </button>
                 </nav>
               </div>
+              
+              {/* User Info */}
+              {user && (
+                <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+                  <div className="flex-shrink-0 group block">
+                    <div className="flex items-center">
+                      <div className="ml-3">
+                        <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                        <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -238,7 +267,7 @@ export default function ClientRootLayout({
                   <IAMCFOLogo className="w-auto h-10" />
                 </div>
                 <nav className="mt-5 flex-1 space-y-1 px-2">
-                  {navigation.map((item) => {
+                  {filteredNavigation.map((item) => {
                     const isActive = pathname === item.href
                     return (
                       <Link
@@ -260,8 +289,31 @@ export default function ClientRootLayout({
                       </Link>
                     )
                   })}
+                  
+                  {/* Sign Out Button */}
+                  <button
+                    onClick={signOut}
+                    className="w-full group flex items-center px-2 py-2 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  >
+                    <LogOut className="mr-3 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
+                    Sign Out
+                  </button>
                 </nav>
               </div>
+              
+              {/* User Info */}
+              {user && (
+                <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+                  <div className="flex-shrink-0 group block w-full">
+                    <div className="flex items-center">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                        <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
