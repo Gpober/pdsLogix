@@ -1,0 +1,177 @@
+// src/lib/hooks/useAuth.ts
+"use client"
+
+import { useState, useEffect } from 'react'
+import { authClient } from '@/lib/supabase/auth-client'
+import { useRouter, usePathname } from 'next/navigation'
+
+export type UserRole = 'owner' | 'admin' | 'member' | 'super_admin' | 'employee'
+
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
+  role: UserRole
+  organization_id: string
+}
+
+// Define which routes each role can access
+const ROLE_ROUTES: Record<UserRole, string[]> = {
+  employee: [
+    '/payroll-submit',
+    '/mobile-dashboard',
+  ],
+  member: [
+    '/payroll-submit',
+    '/mobile-dashboard',
+    '/payroll',
+    '/dashboard',
+  ],
+  admin: [
+    // Admins can access most routes
+    '/',
+    '/balance-sheet',
+    '/financials',
+    '/cash-flow',
+    '/accounts-receivable',
+    '/accounts-payable',
+    '/payroll',
+    '/payroll-submit',
+    '/mobile-dashboard',
+    '/comparative-analysis',
+    '/settings',
+  ],
+  owner: [
+    // Owners have full access
+    '*'
+  ],
+  super_admin: [
+    // Super admins have full access
+    '*'
+  ]
+}
+
+export function useAuth() {
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+  const pathname = usePathname()
+
+  useEffect(() => {
+    checkAuth()
+
+    const { data: authListener } = authClient.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          await fetchUserProfile(session.user.id)
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null)
+          router.push('/login')
+        }
+      }
+    )
+
+    return () => {
+      authListener.subscription.unsubscribe()
+    }
+  }, [])
+
+  // Check route access whenever pathname changes
+  useEffect(() => {
+    if (!loading && user && pathname) {
+      const hasAccess = checkRouteAccess(user.role, pathname)
+      if (!hasAccess) {
+        redirectToDefaultRoute(user.role)
+      }
+    }
+  }, [pathname, user, loading])
+
+  async function checkAuth() {
+    try {
+      const { data: { session } } = await authClient.auth.getSession()
+      
+      if (session?.user) {
+        await fetchUserProfile(session.user.id)
+      } else if (!pathname?.startsWith('/login')) {
+        router.push('/login')
+      }
+    } catch (error) {
+      console.error('Auth check error:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function fetchUserProfile(userId: string) {
+    try {
+      const { data, error } = await authClient
+        .from('users')
+        .select('id, email, name, role, organization_id')
+        .eq('id', userId)
+        .single()
+
+      if (error) throw error
+
+      if (data) {
+        setUser(data as AuthUser)
+      }
+    } catch (error) {
+      console.error('Error fetching user profile:', error)
+      setUser(null)
+    }
+  }
+
+  function checkRouteAccess(role: UserRole, path: string): boolean {
+    const allowedRoutes = ROLE_ROUTES[role]
+    
+    // Full access roles
+    if (allowedRoutes.includes('*')) {
+      return true
+    }
+
+    // Check if current path matches any allowed route
+    return allowedRoutes.some(route => {
+      if (route === path) return true
+      // Allow sub-routes (e.g., /mobile-dashboard/payroll/submit)
+      if (path.startsWith(route + '/')) return true
+      return false
+    })
+  }
+
+  function redirectToDefaultRoute(role: UserRole) {
+    const allowedRoutes = ROLE_ROUTES[role]
+    const defaultRoute = allowedRoutes[0] === '*' ? '/' : allowedRoutes[0]
+    router.push(defaultRoute)
+  }
+
+  function getFilteredNavigation(navigation: any[]) {
+    if (!user) return []
+
+    // Full access for owners and super_admins
+    if (user.role === 'owner' || user.role === 'super_admin') {
+      return navigation
+    }
+
+    const allowedRoutes = ROLE_ROUTES[user.role]
+    
+    return navigation.filter(item => {
+      return allowedRoutes.some(route => {
+        return item.href === route || item.href.startsWith(route + '/')
+      })
+    })
+  }
+
+  async function signOut() {
+    await authClient.auth.signOut()
+    setUser(null)
+    router.push('/login')
+  }
+
+  return {
+    user,
+    loading,
+    signOut,
+    checkRouteAccess,
+    getFilteredNavigation,
+  }
+}
