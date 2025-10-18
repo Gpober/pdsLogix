@@ -102,23 +102,34 @@ export function useAuth() {
         
         if (accessToken && refreshToken) {
           console.log('🔑 Found session tokens in URL, setting session...')
+          console.log('🔑 Access token length:', accessToken.length)
+          console.log('🔑 Refresh token length:', refreshToken.length)
           
-          // Set the session from URL tokens
-          const { data, error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          })
-          
-          if (!error && data.session) {
-            console.log('✅ Session set successfully from URL')
-            await fetchUserProfile(data.session.user.id)
+          try {
+            // Set the session from URL tokens
+            const { data, error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            })
             
-            // Clean up the URL hash
-            window.history.replaceState(null, '', window.location.pathname)
-            setLoading(false)
-            return
-          } else {
-            console.error('❌ Failed to set session from URL:', error)
+            console.log('🔑 setSession result:', { hasData: !!data, hasError: !!error })
+            
+            if (error) {
+              console.error('❌ Failed to set session from URL:', error)
+            }
+            
+            if (data?.session) {
+              console.log('✅ Session set successfully from URL')
+              console.log('✅ User ID:', data.session.user.id)
+              await fetchUserProfile(data.session.user.id)
+              
+              // Clean up the URL hash
+              window.history.replaceState(null, '', window.location.pathname)
+              setLoading(false)
+              return
+            }
+          } catch (err) {
+            console.error('❌ Exception setting session:', err)
           }
         }
       }
