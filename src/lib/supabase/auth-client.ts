@@ -12,4 +12,13 @@ if (!supabaseAnonKey) {
 }
 
 // This client connects to YOUR platform Supabase for authentication
-export const authClient = createClient(supabaseUrl, supabaseAnonKey)
+export const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true, // This will pick up the session from URL hash
+    flowType: 'pkce',
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    storageKey: 'iamcfo-auth', // Shared storage key
+  },
+})
