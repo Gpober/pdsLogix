@@ -80,8 +80,11 @@ export function useAuth() {
   // Check route access whenever pathname changes
   useEffect(() => {
     if (!loading && user && pathname) {
+      console.log('🔒 Checking access:', { role: user.role, pathname })
       const hasAccess = checkRouteAccess(user.role, pathname)
+      console.log('🔒 Has access:', hasAccess)
       if (!hasAccess) {
+        console.log('❌ Access denied, redirecting...')
         redirectToDefaultRoute(user.role)
       }
     }
@@ -116,6 +119,7 @@ export function useAuth() {
       if (error) throw error
 
       if (data) {
+        console.log('✅ User profile loaded:', { name: data.name, role: data.role })
         setUser(data as AuthUser)
       }
     } catch (error) {
