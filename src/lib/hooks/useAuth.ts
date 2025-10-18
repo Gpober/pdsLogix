@@ -93,6 +93,37 @@ export function useAuth() {
   async function checkAuth() {
     try {
       const supabase = createClient()
+      
+      // First, check if there's a session in the URL hash (from platform redirect)
+      if (typeof window !== 'undefined' && window.location.hash) {
+        const hashParams = new URLSearchParams(window.location.hash.substring(1))
+        const accessToken = hashParams.get('access_token')
+        const refreshToken = hashParams.get('refresh_token')
+        
+        if (accessToken && refreshToken) {
+          console.log('🔑 Found session tokens in URL, setting session...')
+          
+          // Set the session from URL tokens
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          })
+          
+          if (!error && data.session) {
+            console.log('✅ Session set successfully from URL')
+            await fetchUserProfile(data.session.user.id)
+            
+            // Clean up the URL hash
+            window.history.replaceState(null, '', window.location.pathname)
+            setLoading(false)
+            return
+          } else {
+            console.error('❌ Failed to set session from URL:', error)
+          }
+        }
+      }
+      
+      // Otherwise, check for existing session
       const { data: { session } } = await supabase.auth.getSession()
       
       if (session?.user) {
