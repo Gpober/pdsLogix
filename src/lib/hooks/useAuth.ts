@@ -51,6 +51,23 @@ const ROLE_ROUTES: Record<UserRole, string[]> = {
   ]
 }
 
+// Improved mobile detection
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false
+  
+  // Check user agent
+  const userAgent = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+  
+  // Check screen width
+  const screenWidth = window.innerWidth < 768
+  
+  // Check for touch support
+  const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+  
+  // Device is mobile if it has touch AND (small screen OR mobile user agent)
+  return hasTouch && (screenWidth || userAgent)
+}
+
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
@@ -83,9 +100,27 @@ export function useAuth() {
       console.log('🔒 Checking access:', { role: user.role, pathname })
       const hasAccess = checkRouteAccess(user.role, pathname)
       console.log('🔒 Has access:', hasAccess)
+      
       if (!hasAccess) {
         console.log('❌ Access denied, redirecting...')
         redirectToDefaultRoute(user.role)
+      } else {
+        // Special handling for employees on root/dashboard
+        if (user.role === 'employee') {
+          const isMobile = isMobileDevice()
+          console.log('📱 Mobile detection:', isMobile)
+          
+          // If employee is on desktop-only routes, redirect based on device
+          if (pathname === '/' || pathname === '/dashboard') {
+            if (isMobile) {
+              console.log('📱 Employee on mobile - redirecting to mobile payroll')
+              router.push('/mobile-dashboard/payroll/submit')
+            } else {
+              console.log('💻 Employee on desktop - redirecting to desktop payroll')
+              router.push('/payroll-submit')
+            }
+          }
+        }
       }
     }
   }, [pathname, user, loading])
@@ -189,6 +224,22 @@ export function useAuth() {
 
   function redirectToDefaultRoute(role: UserRole) {
     const allowedRoutes = ROLE_ROUTES[role]
+    
+    // Special handling for employees - check device type
+    if (role === 'employee') {
+      const isMobile = isMobileDevice()
+      if (isMobile) {
+        console.log('📱 Redirecting employee to mobile payroll')
+        router.push('/mobile-dashboard/payroll/submit')
+        return
+      } else {
+        console.log('💻 Redirecting employee to desktop payroll')
+        router.push('/payroll-submit')
+        return
+      }
+    }
+    
+    // For other roles, use first allowed route
     const defaultRoute = allowedRoutes[0] === '*' ? '/' : allowedRoutes[0]
     router.push(defaultRoute)
   }
