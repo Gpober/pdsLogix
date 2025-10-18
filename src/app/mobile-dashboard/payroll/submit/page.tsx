@@ -150,6 +150,21 @@ export default function MobilePayrollSubmit() {
   const [periodEnd, setPeriodEnd] = useState<string>('')
   const [alert, setAlert] = useState<Alert | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [showAddEmployee, setShowAddEmployee] = useState(false)
+  const [showEditEmployee, setShowEditEmployee] = useState(false)
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
+  const [swipedEmployeeId, setSwipedEmployeeId] = useState<string | null>(null)
+  const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(null)
+  const [touchOffset, setTouchOffset] = useState(0)
+  const [newEmployee, setNewEmployee] = useState({
+    first_name: '',
+    last_name: '',
+    employee_code: '',
+    payroll_group: 'A' as PayrollGroup,
+    compensation_type: 'hourly' as CompensationType,
+    hourly_rate: '',
+    piece_rate: '',
+  })
 
   const fridayOptions = useMemo(() => generateFridayOptions(), [])
 
@@ -171,68 +186,104 @@ export default function MobilePayrollSubmit() {
   }, [])
 
   async function checkAuth() {
+    console.log('📱 Mobile: Starting auth check...')
     try {
       const authClient = createClient()
-      const { data: { user } } = await authClient.auth.getUser()
+      console.log('📱 Mobile: Auth client created')
+      
+      const { data: { user }, error } = await authClient.auth.getUser()
+      console.log('📱 Mobile: getUser result:', { hasUser: !!user, hasError: !!error })
 
-      if (!user) {
+      if (error || !user) {
+        console.log('📱 Mobile: No user, redirecting to login')
         router.replace('/login')
         return
       }
 
+      console.log('📱 Mobile: User found:', user.email)
       setUserId(user.id)
       
       // Get user name
+      console.log('📱 Mobile: Fetching user name...')
       const { data: userRecord } = await authClient
         .from('users')
         .select('name')
         .eq('id', user.id)
         .single()
       
+      console.log('📱 Mobile: User name fetched')
       setUserName(userRecord?.name || user.email || 'User')
 
       // Load locations
+      console.log('📱 Mobile: Loading locations...')
       await loadLocations(user.id)
       
+      console.log('📱 Mobile: Auth check complete')
       setLoading(false)
     } catch (error) {
-      console.error('Auth error:', error)
-      router.replace('/login')
+      console.error('📱 Mobile: Auth error:', error)
+      setLoading(false)
+      showAlert('error', 'Authentication failed. Please log in again.')
+      setTimeout(() => router.replace('/login'), 2000)
     }
   }
 
   async function loadLocations(uid: string) {
+    console.log('📱 Mobile: loadLocations called for user:', uid)
     try {
-      const { data: locationManagerData } = await dataSupabase
+      const { data: locationManagerData, error: locError } = await dataSupabase
         .from('location_managers')
         .select('location_id')
         .eq('user_id', uid)
 
+      console.log('📱 Mobile: location_managers query result:', { 
+        hasData: !!locationManagerData, 
+        count: locationManagerData?.length,
+        hasError: !!locError 
+      })
+
+      if (locError) {
+        console.error('📱 Mobile: Error fetching location_managers:', locError)
+        showAlert('error', 'Failed to load locations')
+        return
+      }
+
       if (!locationManagerData || locationManagerData.length === 0) {
+        console.log('📱 Mobile: No locations found')
         showAlert('error', 'No locations found. Please contact support.')
         return
       }
 
       const locationIds = locationManagerData.map(lm => lm.location_id)
+      console.log('📱 Mobile: Location IDs:', locationIds)
 
-      const { data: locationsData } = await dataSupabase
+      const { data: locationsData, error: locationsError } = await dataSupabase
         .from('locations')
         .select('id, name')
         .in('id', locationIds)
         .order('name')
 
+      console.log('📱 Mobile: locations query result:', { 
+        hasData: !!locationsData, 
+        count: locationsData?.length,
+        hasError: !!locationsError 
+      })
+
       if (locationsData) {
         setAvailableLocations(locationsData)
+        console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
         
         if (locationsData.length === 1) {
+          console.log('📱 Mobile: Auto-selecting single location')
           setSelectedLocationId(locationsData[0].id)
           await loadEmployees(locationsData[0].id)
         } else if (locationsData.length > 1) {
+          console.log('📱 Mobile: Multiple locations, showing picker')
           setShowLocationPicker(true)
         }
       }
     } catch (error) {
-      console.error('Error loading locations:', error)
+      console.error('📱 Mobile: Exception in loadLocations:', error)
       showAlert('error', 'Failed to load locations')
     }
   }
@@ -402,6 +453,163 @@ export default function MobilePayrollSubmit() {
     router.push('/login')
   }
 
+  async function handleAddEmployee() {
+    if (!selectedLocationId) {
+      showAlert('error', 'Please select a location first')
+      return
+    }
+
+    // Validation
+    if (!newEmployee.first_name || !newEmployee.last_name || !newEmployee.employee_code) {
+      showAlert('error', 'Please fill in all required fields')
+      return
+    }
+
+    if (newEmployee.compensation_type === 'hourly' && !newEmployee.hourly_rate) {
+      showAlert('error', 'Please enter hourly rate')
+      return
+    }
+
+    if (newEmployee.compensation_type === 'production' && !newEmployee.piece_rate) {
+      showAlert('error', 'Please enter piece rate')
+      return
+    }
+
+    try {
+      const { data, error } = await dataSupabase
+        .from('employees')
+        .insert([
+          {
+            organization_id: 'ba5ac7ab-ff03-42c8-9e63-3a5a444449ca',
+            location_id: selectedLocationId,
+            employee_code: newEmployee.employee_code,
+            first_name: newEmployee.first_name,
+            last_name: newEmployee.last_name,
+            payroll_group: newEmployee.payroll_group,
+            compensation_type: newEmployee.compensation_type,
+            hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
+            piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
+            is_active: true,
+            hire_date: new Date().toISOString().split('T')[0],
+          },
+        ])
+        .select()
+
+      if (error) throw error
+
+      showAlert('success', `✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added!`)
+      
+      setNewEmployee({
+        first_name: '',
+        last_name: '',
+        employee_code: '',
+        payroll_group: 'A',
+        compensation_type: 'hourly',
+        hourly_rate: '',
+        piece_rate: '',
+      })
+      
+      setShowAddEmployee(false)
+      
+      if (selectedLocationId) {
+        await loadEmployees(selectedLocationId)
+      }
+    } catch (error: any) {
+      console.error('Error adding employee:', error)
+      showAlert('error', error.message || 'Failed to add employee')
+    }
+  }
+
+  async function handleEditEmployee() {
+    if (!editingEmployee) return
+
+    try {
+      const { error } = await dataSupabase
+        .from('employees')
+        .update({
+          first_name: editingEmployee.first_name,
+          last_name: editingEmployee.last_name,
+          employee_code: editingEmployee.employee_code,
+          payroll_group: editingEmployee.payroll_group,
+          compensation_type: editingEmployee.compensation_type,
+          hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
+          piece_rate: editingEmployee.compensation_type === 'production' ? editingEmployee.piece_rate : null,
+        })
+        .eq('id', editingEmployee.id)
+
+      if (error) throw error
+
+      showAlert('success', '✓ Employee updated!')
+      setShowEditEmployee(false)
+      setEditingEmployee(null)
+      
+      if (selectedLocationId) {
+        await loadEmployees(selectedLocationId)
+      }
+    } catch (error: any) {
+      console.error('Error updating employee:', error)
+      showAlert('error', error.message || 'Failed to update employee')
+    }
+  }
+
+  async function handleArchiveEmployee(employeeId: string) {
+    try {
+      const { error } = await dataSupabase
+        .from('employees')
+        .update({ is_active: false })
+        .eq('id', employeeId)
+
+      if (error) throw error
+
+      showAlert('success', '✓ Employee archived!')
+      setSwipedEmployeeId(null)
+      
+      if (selectedLocationId) {
+        await loadEmployees(selectedLocationId)
+      }
+    } catch (error: any) {
+      console.error('Error archiving employee:', error)
+      showAlert('error', error.message || 'Failed to archive employee')
+    }
+  }
+
+  function handleTouchStart(e: React.TouchEvent, empId: string) {
+    setTouchStart({
+      x: e.touches[0].clientX,
+      y: e.touches[0].clientY,
+    })
+    setSwipedEmployeeId(empId)
+  }
+
+  function handleTouchMove(e: React.TouchEvent) {
+    if (!touchStart) return
+
+    const currentX = e.touches[0].clientX
+    const currentY = e.touches[0].clientY
+    const deltaX = currentX - touchStart.x
+    const deltaY = currentY - touchStart.y
+
+    // Only allow horizontal swipe (not vertical scroll)
+    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+      e.preventDefault()
+      // Limit swipe to -150px (left) max
+      const offset = Math.max(-150, Math.min(0, deltaX))
+      setTouchOffset(offset)
+    }
+  }
+
+  function handleTouchEnd() {
+    if (touchOffset < -75) {
+      // Swipe threshold reached, keep it swiped
+      setTouchOffset(-150)
+    } else {
+      // Reset
+      setTouchOffset(0)
+      setSwipedEmployeeId(null)
+    }
+    setTouchStart(null)
+  }
+
   const selectedLocationName = useMemo(() => {
     const location = availableLocations.find(loc => loc.id === selectedLocationId)
     return location?.name || 'Select Location'
@@ -451,6 +659,226 @@ export default function MobilePayrollSubmit() {
               ))}
             </div>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (showEditEmployee && editingEmployee) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
+        <div className="max-w-lg mx-auto pt-6">
+          <div className="flex items-center justify-between mb-6">
+            <button
+              onClick={() => {
+                setShowEditEmployee(false)
+                setEditingEmployee(null)
+              }}
+              className="text-blue-100 text-sm font-medium"
+            >
+              ← Back
+            </button>
+            <h2 className="text-white text-lg font-semibold">Edit Employee</h2>
+            <div className="w-12" />
+          </div>
+
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20 space-y-4">
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">First Name</label>
+              <input
+                type="text"
+                value={editingEmployee.first_name}
+                onChange={(e) => setEditingEmployee({ ...editingEmployee, first_name: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              />
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Last Name</label>
+              <input
+                type="text"
+                value={editingEmployee.last_name}
+                onChange={(e) => setEditingEmployee({ ...editingEmployee, last_name: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              />
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Employee Code</label>
+              <input
+                type="text"
+                value={editingEmployee.employee_code}
+                onChange={(e) => setEditingEmployee({ ...editingEmployee, employee_code: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              />
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group</label>
+              <select
+                value={editingEmployee.payroll_group}
+                onChange={(e) => setEditingEmployee({ ...editingEmployee, payroll_group: e.target.value as PayrollGroup })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              >
+                <option value="A" className="bg-slate-900">Group A</option>
+                <option value="B" className="bg-slate-900">Group B</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Compensation Type</label>
+              <select
+                value={editingEmployee.compensation_type}
+                onChange={(e) => setEditingEmployee({ ...editingEmployee, compensation_type: e.target.value as CompensationType })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              >
+                <option value="hourly" className="bg-slate-900">Hourly</option>
+                <option value="production" className="bg-slate-900">Production</option>
+              </select>
+            </div>
+
+            {editingEmployee.compensation_type === 'hourly' ? (
+              <div>
+                <label className="text-blue-200 text-sm font-medium mb-2 block">Hourly Rate ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editingEmployee.hourly_rate || ''}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, hourly_rate: parseFloat(e.target.value) || null })}
+                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editingEmployee.piece_rate || ''}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, piece_rate: parseFloat(e.target.value) || null })}
+                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                />
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleEditEmployee}
+            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
+          >
+            Save Changes
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (showAddEmployee) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
+        <div className="max-w-lg mx-auto pt-6">
+          <div className="flex items-center justify-between mb-6">
+            <button
+              onClick={() => setShowAddEmployee(false)}
+              className="text-blue-100 text-sm font-medium"
+            >
+              ← Back
+            </button>
+            <h2 className="text-white text-lg font-semibold">Add Employee</h2>
+            <div className="w-12" />
+          </div>
+
+          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20 space-y-4">
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">First Name *</label>
+              <input
+                type="text"
+                value={newEmployee.first_name}
+                onChange={(e) => setNewEmployee({ ...newEmployee, first_name: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                placeholder="John"
+              />
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Last Name *</label>
+              <input
+                type="text"
+                value={newEmployee.last_name}
+                onChange={(e) => setNewEmployee({ ...newEmployee, last_name: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                placeholder="Doe"
+              />
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Employee Code *</label>
+              <input
+                type="text"
+                value={newEmployee.employee_code}
+                onChange={(e) => setNewEmployee({ ...newEmployee, employee_code: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                placeholder="EMP001"
+              />
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group *</label>
+              <select
+                value={newEmployee.payroll_group}
+                onChange={(e) => setNewEmployee({ ...newEmployee, payroll_group: e.target.value as PayrollGroup })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              >
+                <option value="A" className="bg-slate-900">Group A</option>
+                <option value="B" className="bg-slate-900">Group B</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Compensation Type *</label>
+              <select
+                value={newEmployee.compensation_type}
+                onChange={(e) => setNewEmployee({ ...newEmployee, compensation_type: e.target.value as CompensationType })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              >
+                <option value="hourly" className="bg-slate-900">Hourly</option>
+                <option value="production" className="bg-slate-900">Production</option>
+              </select>
+            </div>
+
+            {newEmployee.compensation_type === 'hourly' ? (
+              <div>
+                <label className="text-blue-200 text-sm font-medium mb-2 block">Hourly Rate * ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newEmployee.hourly_rate}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, hourly_rate: e.target.value })}
+                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                  placeholder="25.00"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate * ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newEmployee.piece_rate}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, piece_rate: e.target.value })}
+                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                  placeholder="5.00"
+                />
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleAddEmployee}
+            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
+          >
+            Add Employee
+          </button>
         </div>
       </div>
     )
@@ -682,48 +1110,98 @@ export default function MobilePayrollSubmit() {
                   <p className="text-blue-200">No employees in Group {payrollGroup}</p>
                 </div>
               ) : (
-                filteredEmployees.map((emp) => (
-                  <button
-                    key={emp.id}
-                    onClick={() => handleEmployeeSelect(emp)}
-                    className="w-full bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 hover:bg-white/15 transition text-left"
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1">
-                        <h3 className="text-white font-semibold">
-                          {emp.first_name} {emp.last_name}
-                        </h3>
-                        <p className="text-blue-200 text-sm">{emp.employee_code}</p>
+                filteredEmployees.map((emp) => {
+                  const isSwiped = swipedEmployeeId === emp.id
+                  const offset = isSwiped ? touchOffset : 0
+                  
+                  return (
+                    <div key={emp.id} className="relative overflow-hidden rounded-xl">
+                      {/* Action buttons (revealed on swipe) */}
+                      <div className="absolute inset-y-0 right-0 flex">
+                        <button
+                          onClick={() => {
+                            setEditingEmployee(emp)
+                            setShowEditEmployee(true)
+                            setSwipedEmployeeId(null)
+                            setTouchOffset(0)
+                          }}
+                          className="w-[75px] bg-blue-500 flex items-center justify-center text-white font-medium"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleArchiveEmployee(emp.id)}
+                          className="w-[75px] bg-red-500 flex items-center justify-center text-white font-medium"
+                        >
+                          Archive
+                        </button>
                       </div>
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                          emp.compensation_type === 'hourly'
-                            ? 'bg-blue-500/20 text-blue-200'
-                            : 'bg-purple-500/20 text-purple-200'
-                        }`}
-                      >
-                        {emp.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
-                      </span>
-                    </div>
 
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm">
-                        <span className="text-blue-200">
-                          {emp.compensation_type === 'hourly' ? 'Hours: ' : 'Units: '}
-                        </span>
-                        <span className="text-white font-semibold">
-                          {emp.compensation_type === 'hourly'
-                            ? emp.hours || '0'
-                            : emp.units || '0'}
-                        </span>
-                      </div>
-                      <div className="text-white font-bold text-lg">
-                        ${emp.amount.toFixed(2)}
-                      </div>
+                      {/* Employee card (swipeable) */}
+                      <button
+                        onTouchStart={(e) => handleTouchStart(e, emp.id)}
+                        onTouchMove={handleTouchMove}
+                        onTouchEnd={handleTouchEnd}
+                        onClick={() => {
+                          if (Math.abs(offset) < 10) {
+                            handleEmployeeSelect(emp)
+                          }
+                        }}
+                        style={{
+                          transform: `translateX(${offset}px)`,
+                          transition: touchStart ? 'none' : 'transform 0.3s ease',
+                        }}
+                        className="w-full bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 hover:bg-white/15 transition text-left relative"
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex-1">
+                            <h3 className="text-white font-semibold">
+                              {emp.first_name} {emp.last_name}
+                            </h3>
+                            <p className="text-blue-200 text-sm">{emp.employee_code}</p>
+                          </div>
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                              emp.compensation_type === 'hourly'
+                                ? 'bg-blue-500/20 text-blue-200'
+                                : 'bg-purple-500/20 text-purple-200'
+                            }`}
+                          >
+                            {emp.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm">
+                            <span className="text-blue-200">
+                              {emp.compensation_type === 'hourly' ? 'Hours: ' : 'Units: '}
+                            </span>
+                            <span className="text-white font-semibold">
+                              {emp.compensation_type === 'hourly'
+                                ? emp.hours || '0'
+                                : emp.units || '0'}
+                            </span>
+                          </div>
+                          <div className="text-white font-bold text-lg">
+                            ${emp.amount.toFixed(2)}
+                          </div>
+                        </div>
+                      </button>
                     </div>
-                  </button>
-                ))
+                  )
+                })
               )}
+              
+              {/* Add Employee Button */}
+              <button
+                onClick={() => setShowAddEmployee(true)}
+                className="w-full bg-white/5 border-2 border-dashed border-white/20 hover:border-blue-400 hover:bg-white/10 rounded-xl p-4 text-center transition-all group"
+              >
+                <div className="flex items-center justify-center gap-2 text-blue-200 group-hover:text-blue-100">
+                  <Users className="w-5 h-5" />
+                  <span className="font-medium">Add New Employee</span>
+                </div>
+              </button>
             </div>
           </>
         )}
