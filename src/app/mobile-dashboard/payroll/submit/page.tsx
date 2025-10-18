@@ -1,15 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { supabase as dataSupabase } from '@/lib/supabaseClient'
 import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar, MapPin, ChevronDown } from 'lucide-react'
 
-// ============================================================================
-// TYPES
-// ============================================================================
-
+// Simplified types
 type PayrollGroup = 'A' | 'B'
 type CompensationType = 'hourly' | 'production'
 
@@ -41,16 +38,10 @@ type Alert = {
   message: string
 }
 
-// ============================================================================
-// PAYROLL PERIOD CALCULATION FROM SELECTED PAY DATE
-// ============================================================================
-
+// Date helper functions (keeping these the same)
 function parseLocalDate(dateStr: string): Date | null {
   const parts = dateStr.split('-').map(Number)
-  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) {
-    return null
-  }
-
+  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) return null
   const [year, month, day] = parts
   return new Date(year, month - 1, day)
 }
@@ -62,15 +53,6 @@ function formatInputDate(date: Date): string {
   return `${y}-${m}-${d}`
 }
 
-function formatDisplayDate(dateStr: string, options?: Intl.DateTimeFormatOptions): string {
-  const date = parseLocalDate(dateStr)
-  if (!date) {
-    return dateStr
-  }
-
-  return date.toLocaleDateString('en-US', options)
-}
-
 function calculatePayrollInfo(payDateStr: string): {
   payrollGroup: PayrollGroup
   periodStart: string
@@ -78,11 +60,7 @@ function calculatePayrollInfo(payDateStr: string): {
 } {
   const payDate = parseLocalDate(payDateStr)
   if (!payDate) {
-    return {
-      payrollGroup: 'A',
-      periodStart: payDateStr,
-      periodEnd: payDateStr,
-    }
+    return { payrollGroup: 'A', periodStart: payDateStr, periodEnd: payDateStr }
   }
   
   const periodEnd = new Date(payDate)
@@ -109,21 +87,17 @@ function getNextFriday(): string {
   const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 6
   const nextFriday = new Date(today)
   nextFriday.setDate(today.getDate() + daysUntilFriday)
-
   return formatInputDate(nextFriday)
 }
 
 function formatDateRange(startDate: string, endDate: string): string {
   const start = parseLocalDate(startDate)
   const end = parseLocalDate(endDate)
+  if (!start || !end) return `${startDate} - ${endDate}`
 
-  if (!start || !end) {
-    return `${startDate} - ${endDate}`
-  }
-
-  const startMonth = formatDisplayDate(startDate, { month: 'short' })
+  const startMonth = start.toLocaleDateString('en-US', { month: 'short' })
   const startDay = start.getDate()
-  const endMonth = formatDisplayDate(endDate, { month: 'short' })
+  const endMonth = end.toLocaleDateString('en-US', { month: 'short' })
   const endDay = end.getDate()
 
   if (startMonth === endMonth) {
@@ -157,212 +131,120 @@ function generateFridayOptions(pastCount = 6, futureCount = 12) {
       }),
     })
   }
-
   return options
 }
 
-// ============================================================================
-// MAIN COMPONENT
-// ============================================================================
-
 export default function MobilePayrollSubmit() {
   const router = useRouter()
-  const [isInitializing, setIsInitializing] = useState(true)
-  const [isLoading, setIsLoading] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  // Auth state
+  const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
-  const [userRole, setUserRole] = useState<string | null>(null)
   const [userName, setUserName] = useState<string>('')
-  
-  // Multi-location support
   const [availableLocations, setAvailableLocations] = useState<Location[]>([])
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null)
   const [showLocationPicker, setShowLocationPicker] = useState(false)
-
-  // Form state
+  const [employees, setEmployees] = useState<EmployeeRow[]>([])
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
   const [payDate, setPayDate] = useState<string>('')
   const [payrollGroup, setPayrollGroup] = useState<PayrollGroup>('A')
   const [periodStart, setPeriodStart] = useState<string>('')
   const [periodEnd, setPeriodEnd] = useState<string>('')
-  const [employees, setEmployees] = useState<EmployeeRow[]>([])
-  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
   const [alert, setAlert] = useState<Alert | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const fridayOptions = useMemo(() => generateFridayOptions(), [])
 
-  // Get selected location name
-  const selectedLocationName = useMemo(() => {
-    const location = availableLocations.find(loc => loc.id === selectedLocationId)
-    return location?.name || 'Select Location'
-  }, [availableLocations, selectedLocationId])
-
-  // ============================================================================
-  // INITIALIZE WITH NEXT FRIDAY
-  // ============================================================================
-
+  // Initialize pay date
   useEffect(() => {
-    if (fridayOptions.length === 0) {
-      return
-    }
-
+    if (fridayOptions.length === 0) return
     const nextFriday = getNextFriday()
-    const defaultDate =
-      fridayOptions.find((option) => option.value === nextFriday)?.value ??
-      fridayOptions[fridayOptions.length - 1]?.value ??
-      nextFriday
-
+    const defaultDate = fridayOptions.find((option) => option.value === nextFriday)?.value ?? fridayOptions[fridayOptions.length - 1]?.value ?? nextFriday
     setPayDate(defaultDate)
     const info = calculatePayrollInfo(defaultDate)
     setPayrollGroup(info.payrollGroup)
     setPeriodStart(info.periodStart)
     setPeriodEnd(info.periodEnd)
-    console.log('📅 Initial Payroll Info:', { payDate: defaultDate, ...info })
   }, [fridayOptions])
 
-  // ============================================================================
-  // RECALCULATE WHEN PAY DATE CHANGES
-  // ============================================================================
-
-  function handlePayDateChange(newPayDate: string) {
-    setPayDate(newPayDate)
-    if (newPayDate) {
-      const info = calculatePayrollInfo(newPayDate)
-      setPayrollGroup(info.payrollGroup)
-      setPeriodStart(info.periodStart)
-      setPeriodEnd(info.periodEnd)
-      console.log('📅 Updated Payroll Info:', { payDate: newPayDate, ...info })
-    }
-  }
-
-  // ============================================================================
-  // AUTH & INITIALIZATION
-  // ============================================================================
-
+  // Simple auth check - just verify session exists
   useEffect(() => {
-    checkAuthAndLoadData()
+    checkAuth()
   }, [])
 
-  async function checkAuthAndLoadData() {
+  async function checkAuth() {
     try {
-      console.log('🔐 Mobile Payroll: Starting auth check...')
-      
-      const platformClient = createClient()
-      const { data: { user }, error: authError } = await platformClient.auth.getUser()
+      const authClient = createClient()
+      const { data: { user } } = await authClient.auth.getUser()
 
-      if (authError || !user) {
-        console.log('❌ Mobile Payroll: No user found, redirecting to login')
+      if (!user) {
         router.replace('/login')
         return
       }
 
       setUserId(user.id)
-      console.log('✅ Mobile Payroll: User authenticated:', user.email)
-
-      // Get user info from Auth Supabase
-      const { data: userRecord, error: userError } = await platformClient
+      
+      // Get user name
+      const { data: userRecord } = await authClient
         .from('users')
-        .select('role, name')
+        .select('name')
         .eq('id', user.id)
         .single()
-
-      if (userError || !userRecord) {
-        console.error('❌ Mobile Payroll: User record error:', userError)
-        setIsInitializing(false)
-        showAlert('error', 'Failed to load user data. Please refresh.')
-        return
-      }
-
-      const role = userRecord.role as string
-      console.log('✅ Mobile Payroll: User role:', role)
-
-      setUserRole(role)
-      setUserName(userRecord.name || user.email || 'User')
-
-      // Check role permissions
-      if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
-        console.log('❌ Mobile Payroll: Access denied for role:', role)
-        router.replace('/dashboard')
-        return
-      }
       
-      console.log('✅ Mobile Payroll: Access granted for role:', role)
+      setUserName(userRecord?.name || user.email || 'User')
 
-      // Load locations from location_managers table in Client Supabase
-      try {
-        const { data: locationManagerData, error: locMgrError } = await dataSupabase
-          .from('location_managers')
-          .select('location_id')
-          .eq('user_id', user.id)
+      // Load locations
+      await loadLocations(user.id)
+      
+      setLoading(false)
+    } catch (error) {
+      console.error('Auth error:', error)
+      router.replace('/login')
+    }
+  }
 
-        if (locMgrError) {
-          console.error('❌ Mobile Payroll: Error fetching location_managers:', locMgrError)
-          showAlert('error', 'Failed to load your locations. Please contact support.')
-          setIsInitializing(false)
-          return
-        }
+  async function loadLocations(uid: string) {
+    try {
+      const { data: locationManagerData } = await dataSupabase
+        .from('location_managers')
+        .select('location_id')
+        .eq('user_id', uid)
 
-        if (!locationManagerData || locationManagerData.length === 0) {
-          console.error('❌ Mobile Payroll: No locations found for user')
-          showAlert('error', 'You are not assigned to any locations. Please contact support.')
-          setIsInitializing(false)
-          return
-        }
+      if (!locationManagerData || locationManagerData.length === 0) {
+        showAlert('error', 'No locations found. Please contact support.')
+        return
+      }
 
-        const locationIds = locationManagerData.map(lm => lm.location_id)
-        console.log('✅ Mobile Payroll: User has access to locations:', locationIds)
+      const locationIds = locationManagerData.map(lm => lm.location_id)
 
-        // Fetch location details
-        const { data: locationsData, error: locError } = await dataSupabase
-          .from('locations')
-          .select('id, name')
-          .in('id', locationIds)
-          .order('name')
+      const { data: locationsData } = await dataSupabase
+        .from('locations')
+        .select('id, name')
+        .in('id', locationIds)
+        .order('name')
 
-        if (locError) {
-          console.error('❌ Mobile Payroll: Error fetching locations:', locError)
-          showAlert('error', 'Failed to load location details.')
-          setIsInitializing(false)
-          return
-        }
-
-        setAvailableLocations(locationsData || [])
+      if (locationsData) {
+        setAvailableLocations(locationsData)
         
-        // Auto-select first location if only one
-        if (locationsData && locationsData.length === 1) {
+        if (locationsData.length === 1) {
           setSelectedLocationId(locationsData[0].id)
-          console.log('✅ Mobile Payroll: Auto-selected single location:', locationsData[0].name)
           await loadEmployees(locationsData[0].id)
-        } else if (locationsData && locationsData.length > 1) {
-          console.log('✅ Mobile Payroll: Multiple locations available, user must select')
+        } else if (locationsData.length > 1) {
           setShowLocationPicker(true)
         }
-
-        setIsInitializing(false)
-      } catch (err) {
-        console.error('❌ Mobile Payroll: Critical error loading locations:', err)
-        showAlert('error', 'Failed to load locations. Please try again.')
-        setIsInitializing(false)
       }
     } catch (error) {
-      console.error('❌ Mobile Payroll: Critical error:', error)
-      setIsInitializing(false)
-      showAlert('error', 'Something went wrong. Please try again.')
+      console.error('Error loading locations:', error)
+      showAlert('error', 'Failed to load locations')
     }
   }
 
   async function loadEmployees(locId: string) {
-    setIsLoading(true)
     try {
-      const { data, error } = await dataSupabase
+      const { data } = await dataSupabase
         .from('employees')
         .select('*')
         .eq('location_id', locId)
         .eq('is_active', true)
         .order('last_name', { ascending: true })
-
-      if (error) throw error
 
       const rows: EmployeeRow[] = (data || []).map((emp: Employee) => ({
         ...emp,
@@ -373,54 +255,39 @@ export default function MobilePayrollSubmit() {
       }))
 
       setEmployees(rows)
-      console.log('✅ Mobile Payroll: Loaded', rows.length, 'employees for location', locId)
     } catch (error) {
-      console.error('❌ Mobile Payroll: Error loading employees:', error)
+      console.error('Error loading employees:', error)
       showAlert('error', 'Failed to load employees')
-    } finally {
-      setIsLoading(false)
     }
   }
 
-  // Handle location selection
   async function handleLocationSelect(locationId: string) {
     setSelectedLocationId(locationId)
     setShowLocationPicker(false)
-    
-    // Reset form when changing locations
     setEmployees([])
-    setSelectedEmployee(null)
-    
-    // Load employees for new location
     await loadEmployees(locationId)
   }
 
-  // ============================================================================
-  // FILTERING & CALCULATIONS
-  // ============================================================================
+  function handlePayDateChange(newPayDate: string) {
+    setPayDate(newPayDate)
+    if (newPayDate) {
+      const info = calculatePayrollInfo(newPayDate)
+      setPayrollGroup(info.payrollGroup)
+      setPeriodStart(info.periodStart)
+      setPeriodEnd(info.periodEnd)
+    }
+  }
 
   const filteredEmployees = useMemo(() => {
     return employees.filter((emp) => emp.payroll_group === payrollGroup)
   }, [employees, payrollGroup])
 
   const totals = useMemo(() => {
-    const hourlyEmployees = filteredEmployees.filter(
-      (emp) => emp.compensation_type === 'hourly'
-    )
-    const productionEmployees = filteredEmployees.filter(
-      (emp) => emp.compensation_type === 'production'
-    )
+    const hourlyEmployees = filteredEmployees.filter(e => e.compensation_type === 'hourly')
+    const productionEmployees = filteredEmployees.filter(e => e.compensation_type === 'production')
 
-    const totalHours = hourlyEmployees.reduce((sum, emp) => {
-      const hours = parseFloat(emp.hours) || 0
-      return sum + hours
-    }, 0)
-
-    const totalUnits = productionEmployees.reduce((sum, emp) => {
-      const units = parseFloat(emp.units) || 0
-      return sum + units
-    }, 0)
-
+    const totalHours = hourlyEmployees.reduce((sum, emp) => sum + (parseFloat(emp.hours) || 0), 0)
+    const totalUnits = productionEmployees.reduce((sum, emp) => sum + (parseFloat(emp.units) || 0), 0)
     const totalAmount = filteredEmployees.reduce((sum, emp) => sum + emp.amount, 0)
 
     return {
@@ -432,10 +299,6 @@ export default function MobilePayrollSubmit() {
       totalAmount,
     }
   }, [filteredEmployees])
-
-  // ============================================================================
-  // HANDLERS
-  // ============================================================================
 
   function showAlert(type: 'success' | 'error', message: string) {
     setAlert({ type, message })
@@ -463,9 +326,7 @@ export default function MobilePayrollSubmit() {
     }
 
     setSelectedEmployee(updated)
-    setEmployees(
-      employees.map((emp) => (emp.id === updated.id ? updated : emp))
-    )
+    setEmployees(employees.map((emp) => (emp.id === updated.id ? updated : emp)))
   }
 
   function handleSaveEmployee() {
@@ -473,8 +334,8 @@ export default function MobilePayrollSubmit() {
   }
 
   async function handleSubmit() {
-    if (!selectedLocationId) {
-      showAlert('error', 'Please select a location first')
+    if (!selectedLocationId || !userId) {
+      showAlert('error', 'Missing required information')
       return
     }
 
@@ -488,19 +349,6 @@ export default function MobilePayrollSubmit() {
 
     if (employeesWithData.length === 0) {
       showAlert('error', 'Please enter hours or units for at least one employee')
-      return
-    }
-
-    const hasInvalidHours = employeesWithData.some((emp) => {
-      if (emp.compensation_type === 'hourly') {
-        const hours = parseFloat(emp.hours)
-        return hours < 0 || hours > 80
-      }
-      return false
-    })
-
-    if (hasInvalidHours) {
-      showAlert('error', 'Hours must be between 0 and 80')
       return
     }
 
@@ -533,15 +381,13 @@ export default function MobilePayrollSubmit() {
       const result = await response.json()
       showAlert('success', `✓ Payroll submitted! Submission #${result.submission_number}`)
 
-      setEmployees(
-        employees.map((emp) => ({
-          ...emp,
-          hours: '',
-          units: '',
-          notes: '',
-          amount: 0,
-        }))
-      )
+      setEmployees(employees.map((emp) => ({
+        ...emp,
+        hours: '',
+        units: '',
+        notes: '',
+        amount: 0,
+      })))
     } catch (error: any) {
       console.error('Submission error:', error)
       showAlert('error', error.message || 'Failed to submit payroll')
@@ -551,16 +397,17 @@ export default function MobilePayrollSubmit() {
   }
 
   async function handleSignOut() {
-    const platformClient = createClient()
-    await platformClient.auth.signOut()
+    const authClient = createClient()
+    await authClient.auth.signOut()
     router.push('/login')
   }
 
-  // ============================================================================
-  // RENDER
-  // ============================================================================
+  const selectedLocationName = useMemo(() => {
+    const location = availableLocations.find(loc => loc.id === selectedLocationId)
+    return location?.name || 'Select Location'
+  }, [availableLocations, selectedLocationId])
 
-  if (isInitializing) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
         <div className="text-center">
@@ -571,7 +418,6 @@ export default function MobilePayrollSubmit() {
     )
   }
 
-  // Location Picker Modal
   if (showLocationPicker && availableLocations.length > 1) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4 flex items-center justify-center">
@@ -595,11 +441,9 @@ export default function MobilePayrollSubmit() {
                       <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center">
                         <MapPin className="w-5 h-5 text-blue-300" />
                       </div>
-                      <div>
-                        <h3 className="text-white font-semibold group-hover:text-blue-200 transition">
-                          {location.name}
-                        </h3>
-                      </div>
+                      <h3 className="text-white font-semibold group-hover:text-blue-200 transition">
+                        {location.name}
+                      </h3>
                     </div>
                     <ChevronDown className="w-5 h-5 text-blue-300 rotate-[-90deg]" />
                   </div>
@@ -612,7 +456,6 @@ export default function MobilePayrollSubmit() {
     )
   }
 
-  // Employee Detail Modal
   if (selectedEmployee) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
@@ -710,7 +553,6 @@ export default function MobilePayrollSubmit() {
     )
   }
 
-  // Main List View
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
       <div className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
@@ -764,7 +606,6 @@ export default function MobilePayrollSubmit() {
           </div>
         )}
 
-        {/* Show message if no location selected */}
         {!selectedLocationId && (
           <div className="text-center py-12">
             <MapPin className="w-12 h-12 text-blue-300/50 mx-auto mb-4" />
@@ -772,10 +613,8 @@ export default function MobilePayrollSubmit() {
           </div>
         )}
 
-        {/* Show form only if location is selected */}
         {selectedLocationId && (
           <>
-            {/* Pay Date Selector */}
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 mb-4 border border-white/20">
               <div className="max-w-xs w-full mx-auto">
                 <div className="mb-4">
@@ -837,12 +676,7 @@ export default function MobilePayrollSubmit() {
             </div>
 
             <div className="space-y-3">
-              {isLoading ? (
-                <div className="text-center py-12">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
-                  <p className="mt-4 text-blue-200 text-sm">Loading employees...</p>
-                </div>
-              ) : filteredEmployees.length === 0 ? (
+              {filteredEmployees.length === 0 ? (
                 <div className="text-center py-12">
                   <Users className="w-12 h-12 text-blue-300/50 mx-auto mb-4" />
                   <p className="text-blue-200">No employees in Group {payrollGroup}</p>
