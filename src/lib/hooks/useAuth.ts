@@ -34,37 +34,38 @@ function isMobileDevice(): boolean {
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const [sessionChecked, setSessionChecked] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
   const supabase = createClient()
 
   useEffect(() => {
-    // Let Supabase handle the URL session automatically
-    // Give it more time to process the session from URL
-    const timer = setTimeout(() => {
-      checkSession()
-    }, 5000) // 5 seconds
-
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔐 Auth event:', event)
         if (event === 'SIGNED_IN' && session) {
           console.log('✅ Signed in, loading user profile')
-          clearTimeout(timer) // Cancel the timeout check
+          setSessionChecked(true)
           await loadUser(session.user.id)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
           window.location.href = 'https://iamcfo.com/login'
         } else if (event === 'INITIAL_SESSION' && session) {
-          console.log('✅ Initial session found')
-          clearTimeout(timer)
+          console.log('✅ Initial session found, loading user')
+          setSessionChecked(true)
           await loadUser(session.user.id)
+        } else if (event === 'INITIAL_SESSION' && !session) {
+          console.log('⚠️ Initial session check complete, no session found')
+          setSessionChecked(true)
+          setLoading(false)
+          if (!pathname?.startsWith('/login')) {
+            window.location.href = 'https://iamcfo.com/login'
+          }
         }
       }
     )
 
     return () => {
-      clearTimeout(timer)
       authListener.subscription.unsubscribe()
     }
   }, [])
