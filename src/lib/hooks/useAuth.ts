@@ -3,7 +3,6 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { authClient } from '@/lib/supabase/auth-client'
 import { useRouter, usePathname } from 'next/navigation'
 
 export type UserRole = 'owner' | 'admin' | 'member' | 'super_admin' | 'employee'
@@ -62,8 +61,8 @@ export function useAuth() {
   useEffect(() => {
     checkAuth()
 
-    // Listen to Platform auth changes
-    const { data: authListener } = authClient.auth.onAuthStateChange(
+    const supabase = createClient()
+    const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔐 Auth event:', event)
         if (event === 'SIGNED_IN' && session) {
@@ -106,27 +105,18 @@ export function useAuth() {
   async function checkAuth() {
     try {
       console.log('🔍 Checking auth...')
+      const supabase = createClient()
       
-      // Check session in Platform Supabase (authClient)
-      console.log('🔍 Getting session from authClient...')
-      const { data: { session }, error: sessionError } = await authClient.auth.getSession()
+      // Check for existing session
+      const { data: { session } } = await supabase.auth.getSession()
       
-      console.log('🔍 Session result:', { 
-        hasSession: !!session, 
-        hasError: !!sessionError,
-        userId: session?.user?.id 
-      })
-      
-      if (sessionError) {
-        console.error('❌ Session error:', sessionError)
-      }
+      console.log('🔍 Session check:', { hasSession: !!session, userId: session?.user?.id })
       
       if (session?.user) {
-        console.log('✅ Found session in Platform Supabase:', session.user.id)
-        console.log('✅ User email:', session.user.email)
+        console.log('✅ Found session:', session.user.id)
         await fetchUserProfile(session.user.id, session.user.email || '')
       } else {
-        console.log('❌ No session found, checking pathname:', pathname)
+        console.log('❌ No session found')
         if (!pathname?.startsWith('/login')) {
           console.log('🔄 Redirecting to Platform login...')
           if (typeof window !== 'undefined') {
@@ -137,49 +127,34 @@ export function useAuth() {
     } catch (error) {
       console.error('❌ Auth check error:', error)
     } finally {
-      console.log('✅ Auth check complete, setting loading to false')
+      console.log('✅ Auth check complete')
       setLoading(false)
     }
   }
 
   async function fetchUserProfile(userId: string, userEmail: string) {
     try {
-      console.log('🔍 Fetching profile for:', userId, userEmail)
+      console.log('🔍 Fetching profile for:', userId)
+      const supabase = createClient()
       
-      // First check Platform Supabase users table using authClient
-      const { data: platformUser } = await authClient
+      // Get user from Platform Supabase users table
+      const { data: userData, error } = await supabase
         .from('users')
         .select('id, email, name, role, organization_id')
         .eq('id', userId)
-        .maybeSingle()
+        .single()
 
-      if (platformUser) {
-        console.log('✅ Found user in Platform:', platformUser.name, platformUser.role)
-        
-        // If employee, also verify they exist in Client Supabase
-        if (platformUser.role === 'employee') {
-          const clientSupabase = createClient()
-          const { data: employeeData } = await clientSupabase
-            .from('employees')
-            .select('user_id, email, first_name, last_name, organization_id')
-            .eq('user_id', userId)
-            .eq('is_active', true)
-            .maybeSingle()
-
-          if (!employeeData) {
-            console.error('❌ Employee not found in Client database')
-            throw new Error('Employee record not found')
-          }
-          
-          console.log('✅ Verified employee in Client database')
-        }
-        
-        setUser(platformUser as AuthUser)
-        return
+      if (error) {
+        console.error('❌ Error fetching user:', error)
+        throw error
       }
 
-      console.error('❌ User not found in Platform')
-      throw new Error('User profile not found')
+      if (userData) {
+        console.log('✅ Found user:', userData.name, userData.role)
+        setUser(userData as AuthUser)
+      } else {
+        throw new Error('User not found')
+      }
 
     } catch (error) {
       console.error('❌ Error fetching user profile:', error)
@@ -229,7 +204,8 @@ export function useAuth() {
   }
 
   async function signOut() {
-    await authClient.auth.signOut()
+    const supabase = createClient()
+    await supabase.auth.signOut()
     setUser(null)
     if (typeof window !== 'undefined') {
       window.location.href = 'https://iamcfo.com/login'
