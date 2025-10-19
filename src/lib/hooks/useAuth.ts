@@ -40,6 +40,41 @@ export function useAuth() {
   const supabase = createClient()
 
   useEffect(() => {
+    // CRITICAL: Check for session tokens in URL FIRST before anything else
+    const checkUrlTokens = async () => {
+      if (typeof window !== 'undefined' && window.location.hash) {
+        const hashParams = new URLSearchParams(window.location.hash.substring(1))
+        const accessToken = hashParams.get('access_token')
+        const refreshToken = hashParams.get('refresh_token')
+        
+        if (accessToken && refreshToken) {
+          console.log('🔑 Found tokens in URL, setting session manually...')
+          try {
+            const { data, error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            })
+            
+            if (error) {
+              console.error('❌ Failed to set session:', error)
+            } else if (data?.session) {
+              console.log('✅ Session set from URL tokens')
+              // Clean up URL
+              window.history.replaceState(null, '', window.location.pathname)
+              // Load user immediately
+              await loadUser(data.session.user.id)
+              return // Exit early, session is set
+            }
+          } catch (err) {
+            console.error('❌ Exception setting session:', err)
+          }
+        }
+      }
+    }
+
+    // Run URL check first
+    checkUrlTokens()
+
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔐 Auth event:', event)
@@ -106,6 +141,7 @@ export function useAuth() {
   async function loadUser(userId: string) {
     try {
       console.log('👤 Loading user:', userId)
+      console.log('👤 About to query users table...')
       
       const { data, error } = await supabase
         .from('users')
@@ -113,15 +149,23 @@ export function useAuth() {
         .eq('id', userId)
         .single()
       
-      if (error) throw error
+      console.log('👤 Query complete:', { hasData: !!data, hasError: !!error })
+      
+      if (error) {
+        console.error('❌ Query error:', error)
+        throw error
+      }
       
       if (data) {
-        console.log('✅ User loaded:', data.role)
+        console.log('✅ User loaded:', data.email, data.role)
         setUser(data as AuthUser)
+        setLoading(false)
+      } else {
+        console.error('❌ No data returned from query')
         setLoading(false)
       }
     } catch (error) {
-      console.error('❌ Load user error:', error)
+      console.error('❌ Load user exception:', error)
       setLoading(false)
     }
   }
