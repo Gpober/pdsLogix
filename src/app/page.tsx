@@ -3,12 +3,11 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAuthClient } from '@/lib/supabase/auth-client'
-import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
+import { syncDataClientSession } from '@/lib/supabase/client'
 
 export default function HomePage() {
   const router = useRouter()
   const authClient = getAuthClient()
-  const dataClient = getDataClient()
 
   useEffect(() => {
     checkAuthAndRedirect()
@@ -26,7 +25,7 @@ export default function HomePage() {
     }
 
     // User is logged in - check if super admin or regular user
-    const { data: userData } = await dataClient
+    const { data: userData } = await authClient
       .from('users')
       .select('role, organization_id')
       .eq('id', session.user.id)

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAuthClient } from '@/lib/supabase/auth-client'
-import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
+import { syncDataClientSession } from '@/lib/supabase/client'
 
 export default function DashboardLayout({
   children,
@@ -13,7 +13,6 @@ export default function DashboardLayout({
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const authClient = getAuthClient()
-  const dataClient = getDataClient()
 
   useEffect(() => {
     checkAuthAndRoute()
@@ -47,7 +46,7 @@ export default function DashboardLayout({
       await syncDataClientSession(session)
 
       // Get user data including role and organization
-      const { data: userData, error } = await dataClient
+      const { data: userData, error } = await authClient
         .from('users')
         .select('role, organization_id, organizations(subdomain, status)')
         .eq('id', session.user.id)

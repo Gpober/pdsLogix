@@ -73,7 +73,7 @@ export default function ClientSignupPage() {
       }
 
       // Create user record in database
-      const { error: userError } = await dataClient
+      const { error: userError } = await authClient
         .from('users')
         .insert({
           id: authData.user.id,

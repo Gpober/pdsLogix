@@ -252,7 +252,7 @@ export default function PayrollDashboard() {
       console.log('👤 User ID:', user.id);
       setUserId(user.id);
 
-      const { data: userData, error: userError } = await dataClient
+      const { data: userData, error: userError } = await authClient
         .from('users')
         .select('role, organization_id')
         .eq('id', user.id)

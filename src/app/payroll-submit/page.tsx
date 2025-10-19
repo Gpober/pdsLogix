@@ -169,7 +169,7 @@ export default function DesktopPayrollSubmit() {
       console.log('✅ Desktop Payroll: User authenticated:', user.email);
 
       // Get user info from Auth Supabase
-      const { data: userRecord, error: userError } = await dataSupabase
+      const { data: userRecord, error: userError } = await authClient
         .from('users')
         .select('role, name')
         .eq('id', user.id)
