@@ -1,3 +1,4 @@
+// src/lib/hooks/useAuth.ts
 import { useEffect, useState, useCallback } from 'react'
 import { User, Session } from '@supabase/supabase-js'
 import { getAuthClient, getDataClient, syncDataClientSession } from '@/lib/supabase/client'
@@ -9,6 +10,12 @@ interface UserProfile {
   name: string | null
   role: 'super_admin' | 'owner' | 'employee'
   organization_id: string | null
+}
+
+interface NavigationItem {
+  name: string
+  href: string
+  icon: any
 }
 
 export function useAuth() {
@@ -57,7 +64,7 @@ export function useAuth() {
       await syncDataClientSession(null)
     }
     setLoading(false)
-  }, [loadUserProfile, router, pathname])
+  }, [loadUserProfile, router, pathname, dataClient])
 
   useEffect(() => {
     // Get initial session
@@ -79,38 +86,24 @@ export function useAuth() {
     router.push('/login')
   }
 
+  const getFilteredNavigation = useCallback((navigation: NavigationItem[]) => {
+    if (!profile) return []
+    
+    if (profile.role === 'employee') {
+      // Employees only see Payroll Submit
+      return navigation.filter(item => item.href === '/payroll-submit')
+    }
+    
+    // Super admins and owners see everything
+    return navigation
+  }, [profile])
+
   return {
     user,
     profile,
     loading,
     signOut,
     isAuthenticated: !!user,
+    getFilteredNavigation,
   }
-}
-
-
-// ============================================
-// USAGE EXAMPLES
-// ============================================
-
-/*
-// In any component that needs auth:
-import { getAuthClient } from '@/lib/supabase/client'
-
-const authClient = getAuthClient()
-await authClient.auth.signInWithPassword({ email, password })
-
-// In any component that needs data:
-import { getDataClient } from '@/lib/supabase/client'
-
-const dataClient = getDataClient()
-const { data } = await dataClient.from('employees').select('*')
-
-// In login/signup flows:
-import { getAuthClient, syncDataClientSession } from '@/lib/supabase/client'
-
-const authClient = getAuthClient()
-const { data } = await authClient.auth.signUp({ email, password })
-if (data.session) {
-  await syncDataClientSession(data.session)
 }
