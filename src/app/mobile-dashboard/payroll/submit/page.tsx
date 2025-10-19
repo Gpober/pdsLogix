@@ -213,7 +213,7 @@ export default function MobilePayrollSubmit() {
 
       // Get user name
       console.log('📱 Mobile: Fetching user name...')
-      const { data: userRecord } = await dataSupabase
+      const { data: userRecord } = await authClient
         .from('users')
         .select('name')
         .eq('id', user.id)
@@ -240,7 +240,7 @@ export default function MobilePayrollSubmit() {
     console.log('📱 Mobile: loadLocations called for user:', uid)
     try {
       // Get user role and organization
-      const { data: userData } = await dataSupabase
+      const { data: userData } = await authClient
         .from('users')
         .select('role, organization_id')
         .eq('id', uid)
