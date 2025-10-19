@@ -108,14 +108,27 @@ export function useAuth() {
       console.log('🔍 Checking auth...')
       
       // Check session in Platform Supabase (authClient)
-      const { data: { session } } = await authClient.auth.getSession()
+      console.log('🔍 Getting session from authClient...')
+      const { data: { session }, error: sessionError } = await authClient.auth.getSession()
+      
+      console.log('🔍 Session result:', { 
+        hasSession: !!session, 
+        hasError: !!sessionError,
+        userId: session?.user?.id 
+      })
+      
+      if (sessionError) {
+        console.error('❌ Session error:', sessionError)
+      }
       
       if (session?.user) {
         console.log('✅ Found session in Platform Supabase:', session.user.id)
+        console.log('✅ User email:', session.user.email)
         await fetchUserProfile(session.user.id, session.user.email || '')
       } else {
-        console.log('❌ No session found')
+        console.log('❌ No session found, checking pathname:', pathname)
         if (!pathname?.startsWith('/login')) {
+          console.log('🔄 Redirecting to Platform login...')
           if (typeof window !== 'undefined') {
             window.location.href = 'https://iamcfo.com/login'
           }
@@ -124,6 +137,7 @@ export function useAuth() {
     } catch (error) {
       console.error('❌ Auth check error:', error)
     } finally {
+      console.log('✅ Auth check complete, setting loading to false')
       setLoading(false)
     }
   }
