@@ -1,5 +1,26 @@
 // ========================================
-// FIXED PAYROLL SUBMIT API ROUTE
+// QUESTIONS TO CHECK:
+// ========================================
+
+/*
+1. Did you update the file: /app/api/payroll/submit/route.ts?
+   - Location: Your project > app > api > payroll > submit > route.ts
+
+2. Did you restart your Next.js dev server after updating?
+   - Stop the server (Ctrl+C)
+   - Start it again (npm run dev)
+
+3. Check your terminal for errors like:
+   - "error Column 'xxx' does not exist"
+   - "error Null value in column 'xxx'"
+   
+4. If deployed on Vercel:
+   - Did you push the changes to Git?
+   - Did Vercel redeploy?
+*/
+
+// ========================================
+// SIMPLIFIED API ROUTE (Copy this entire file)
 // File: /app/api/payroll/submit/route.ts
 // ========================================
 
@@ -9,33 +30,38 @@ import { supabase } from '@/lib/supabaseClient';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log('📥 Received payroll submission:', body);
+
     const { location_id, pay_date, payroll_group, submitted_by, employees } = body;
 
     // Validation
     if (!location_id || !pay_date || !payroll_group || !submitted_by || !employees?.length) {
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      );
+      console.error('❌ Validation failed - missing fields');
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // ✅ FIX: Get organization_id from the location
+    // Get organization_id from location
+    console.log('🔍 Fetching location:', location_id);
     const { data: locationData, error: locationError } = await supabase
       .from('locations')
       .select('organization_id')
       .eq('id', location_id)
       .single();
 
-    if (locationError || !locationData) {
-      return NextResponse.json(
-        { error: 'Location not found' },
-        { status: 404 }
-      );
+    if (locationError) {
+      console.error('❌ Location fetch error:', locationError);
+      return NextResponse.json({ error: 'Location not found', details: locationError.message }, { status: 404 });
+    }
+
+    if (!locationData?.organization_id) {
+      console.error('❌ No organization_id in location');
+      return NextResponse.json({ error: 'Location missing organization_id' }, { status: 400 });
     }
 
     const organization_id = locationData.organization_id;
+    console.log('✅ Organization ID:', organization_id);
 
-    // Calculate period dates (14-day period ending 9 days before pay date)
+    // Calculate period dates
     const payDateObj = new Date(pay_date);
     const periodEnd = new Date(payDateObj);
     periodEnd.setDate(payDateObj.getDate() - 9);
@@ -45,36 +71,40 @@ export async function POST(request: NextRequest) {
     const total_amount = employees.reduce((sum: number, emp: any) => sum + (emp.amount || 0), 0);
 
     // Create submission
+    const submissionData = {
+      organization_id,
+      location_id,
+      pay_date,
+      payroll_group,
+      period_start: periodStart.toISOString().split('T')[0],
+      period_end: periodEnd.toISOString().split('T')[0],
+      total_amount,
+      employee_count: employees.length,
+      submitted_by,
+      status: 'pending',
+    };
+
+    console.log('📝 Creating submission:', submissionData);
+
     const { data: submission, error: submissionError } = await supabase
       .from('payroll_submissions')
-      .insert([
-        {
-          organization_id,  // ✅ Add organization_id here too
-          location_id,
-          pay_date,
-          payroll_group,
-          period_start: periodStart.toISOString().split('T')[0],
-          period_end: periodEnd.toISOString().split('T')[0],
-          total_amount,
-          employee_count: employees.length,
-          submitted_by,
-          status: 'pending',
-        },
-      ])
+      .insert([submissionData])
       .select()
       .single();
 
     if (submissionError) {
-      console.error('Submission error:', submissionError);
+      console.error('❌ Submission creation error:', submissionError);
       return NextResponse.json(
         { error: 'Failed to create submission', details: submissionError.message },
         { status: 500 }
       );
     }
 
-    // ✅ FIX: Create payroll entries WITH organization_id
+    console.log('✅ Submission created:', submission.id);
+
+    // Create payroll entries
     const entries = employees.map((emp: any) => ({
-      organization_id,      // ✅ ADD THIS!
+      organization_id,
       submission_id: submission.id,
       employee_id: emp.employee_id,
       hours: emp.hours,
@@ -84,24 +114,25 @@ export async function POST(request: NextRequest) {
       status: 'pending',
     }));
 
+    console.log('📝 Creating entries:', entries.length);
+
     const { error: entriesError } = await supabase
       .from('payroll_entries')
       .insert(entries);
 
     if (entriesError) {
-      console.error('Entries error:', entriesError);
+      console.error('❌ Entries creation error:', entriesError);
       
-      // Rollback: delete the submission since entries failed
-      await supabase
-        .from('payroll_submissions')
-        .delete()
-        .eq('id', submission.id);
-
+      // Rollback: delete submission
+      await supabase.from('payroll_submissions').delete().eq('id', submission.id);
+      
       return NextResponse.json(
         { error: 'Failed to create payroll entries', details: entriesError.message },
         { status: 500 }
       );
     }
+
+    console.log('✅ Entries created successfully');
 
     return NextResponse.json({
       success: true,
@@ -110,7 +141,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('API error:', error);
+    console.error('❌ API error:', error);
     return NextResponse.json(
       { error: 'Internal server error', details: error.message },
       { status: 500 }
