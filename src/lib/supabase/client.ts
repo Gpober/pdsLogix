@@ -1,8 +1,7 @@
-// Export auth client as createClient for login/signup pages
-// This connects to YOUR platform Supabase (not PDS Logix's own Supabase)
-
-import { authClient } from './auth-client'
+// src/lib/supabase/client.ts
+// Export the CLIENT Supabase for business data queries
+import { supabase } from './supabaseClient'
 
 export function createClient() {
-  return authClient
+  return supabase
 }
