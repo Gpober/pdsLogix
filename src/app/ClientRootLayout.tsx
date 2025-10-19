@@ -24,6 +24,7 @@ import { usePathname } from "next/navigation"
 import Image from "next/image"
 import LoadingScreenSpinner from './LoadingScreen'
 import { useAuth } from '@/lib/hooks/useAuth'
+import { handlePkceCallbackFromUrl } from '@/lib/supabase/pkce-callback-handler'
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -76,6 +77,8 @@ const navigation = [
 ]
 
 export default function ClientRootLayout({ children }: { children: React.ReactNode }) {
+  handlePkceCallbackFromUrl()
+
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarVisible, setSidebarVisible] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
