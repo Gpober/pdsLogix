@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { authClient } from '@/lib/supabase/auth-client'  // ✅ Use auth client for login
+import { createClient } from '@/lib/supabase/client'      // For data queries
 
 export default function ClientLoginPage() {
   const [email, setEmail] = useState('')
@@ -10,7 +11,6 @@ export default function ClientLoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -18,8 +18,8 @@ export default function ClientLoginPage() {
     setLoading(true)
 
     try {
-      // Sign in with Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      // ✅ Sign in with Platform/Auth Supabase
+      const { data: authData, error: authError } = await authClient.auth.signInWithPassword({
         email,
         password,
       })
@@ -36,50 +36,95 @@ export default function ClientLoginPage() {
         return
       }
 
-      // Verify user belongs to this organization OR is super admin
-      const { data: userData, error: userError } = await supabase
+      console.log('✅ Authentication successful:', authData.user.id)
+
+      // ✅ Now check if user is employee or admin/owner
+      const clientSupabase = createClient()
+      
+      // First, try to find user in Platform users table (owners/admins)
+      const { data: platformUser } = await authClient
         .from('users')
         .select('role, organization_id, organizations(subdomain, status)')
         .eq('id', authData.user.id)
-        .single()
+        .maybeSingle()
 
-      if (userError || !userData) {
-        await supabase.auth.signOut()
-        setError('Access denied. You do not have permission to access this dashboard.')
-        setLoading(false)
-        return
-      }
+      // Check if user is employee in Client database
+      const { data: employeeData } = await clientSupabase
+        .from('employees')
+        .select('user_id, email, organization_id, is_active')
+        .eq('user_id', authData.user.id)
+        .eq('is_active', true)
+        .maybeSingle()
 
-      const userRole = userData?.role
-      const orgSubdomain = (userData as any).organizations?.subdomain
-      const orgStatus = (userData as any).organizations?.status
+      const currentSubdomain = typeof window !== 'undefined' 
+        ? window.location.hostname.split('.')[0] 
+        : ''
 
       // SUPER ADMIN BYPASS - Allow super admins into any client dashboard
-      if (userRole === 'super_admin') {
+      if (platformUser?.role === 'super_admin') {
+        console.log('✅ Super admin access granted')
         router.push('/dashboard')
         return
       }
 
-      // Check if user belongs to THIS specific organization
-      const currentSubdomain = window.location.hostname.split('.')[0]
+      // EMPLOYEE LOGIN
+      if (employeeData) {
+        console.log('✅ Employee login detected')
+        
+        // Check if employee's organization matches current subdomain
+        const { data: orgData } = await authClient
+          .from('organizations')
+          .select('subdomain')
+          .eq('id', employeeData.organization_id)
+          .single()
 
-      if (orgSubdomain !== currentSubdomain) {
-        await supabase.auth.signOut()
-        setError('Access denied. You do not have permission to access this dashboard.')
-        setLoading(false)
+        if (orgData?.subdomain !== currentSubdomain) {
+          await authClient.auth.signOut()
+          setError('Access denied. You do not have permission to access this dashboard.')
+          setLoading(false)
+          return
+        }
+
+        // Redirect employee based on device
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+        if (isMobile) {
+          router.push('/mobile-dashboard/payroll/submit')
+        } else {
+          router.push('/payroll-submit')
+        }
         return
       }
 
-      // Check if organization is suspended
-      if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
-        await supabase.auth.signOut()
-        setError('Your account has been suspended. Please contact support.')
-        setLoading(false)
+      // OWNER/ADMIN LOGIN
+      if (platformUser) {
+        const orgSubdomain = (platformUser as any).organizations?.subdomain
+        const orgStatus = (platformUser as any).organizations?.status
+
+        // Check if user belongs to THIS specific organization
+        if (orgSubdomain !== currentSubdomain) {
+          await authClient.auth.signOut()
+          setError('Access denied. You do not have permission to access this dashboard.')
+          setLoading(false)
+          return
+        }
+
+        // Check if organization is suspended
+        if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
+          await authClient.auth.signOut()
+          setError('Your account has been suspended. Please contact support.')
+          setLoading(false)
+          return
+        }
+
+        // Success - redirect to dashboard
+        router.push('/dashboard')
         return
       }
 
-      // Success - redirect to dashboard
-      router.push('/dashboard')
+      // User not found in either database
+      await authClient.auth.signOut()
+      setError('User not found. Please contact support.')
+      setLoading(false)
 
     } catch (err: any) {
       console.error('Login error:', err)
