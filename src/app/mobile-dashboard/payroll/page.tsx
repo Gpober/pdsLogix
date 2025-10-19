@@ -207,10 +207,10 @@ export default function PayrollDashboard() {
 
       const { data: userData, error: userError } = await platformClient
         .from('users')
-        .select('role')
+        .select('role, organization_id')
         .eq('id', user.id)
         .single();
-
+      
       if (userError || !userData) {
         router.push('/dashboard');
         return;
