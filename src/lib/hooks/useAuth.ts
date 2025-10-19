@@ -91,6 +91,48 @@ export function useAuth() {
     [supabase]
   )
 
+  const handleAuthRedirect = useCallback(async () => {
+    if (typeof window === 'undefined') return false
+
+    const url = new URL(window.location.href)
+    const code = url.searchParams.get('code')
+    const error = url.searchParams.get('error')
+    const errorDescription = url.searchParams.get('error_description')
+
+    if (error || errorDescription) {
+      console.error('❌ Auth redirect error:', { error, errorDescription })
+    }
+
+    if (!code) {
+      return false
+    }
+
+    try {
+      const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+
+      if (exchangeError) {
+        throw exchangeError
+      }
+
+      url.searchParams.delete('code')
+      url.searchParams.delete('state')
+      url.searchParams.delete('error')
+      url.searchParams.delete('error_description')
+
+      const cleanUrl = `${url.pathname}${url.search}${url.hash}`
+      window.history.replaceState({}, document.title, cleanUrl)
+
+      if (data.session?.user) {
+        await loadUser(data.session.user.id)
+      }
+
+      return true
+    } catch (exchangeError) {
+      console.error('❌ Failed to exchange auth code for session:', exchangeError)
+      return false
+    }
+  }, [loadUser, supabase])
+
   const checkRouteAccess = useCallback((role: UserRole, path: string): boolean => {
     const allowedRoutes = ROLE_ROUTES[role]
     if (allowedRoutes.includes('*')) return true
@@ -115,6 +157,12 @@ export function useAuth() {
 
     const initializeSession = async () => {
       try {
+        const handledRedirect = await handleAuthRedirect()
+
+        if (handledRedirect) {
+          return
+        }
+
         const {
           data: { session },
         } = await supabase.auth.getSession()
@@ -172,7 +220,7 @@ export function useAuth() {
       ignore = true
       authListener?.subscription.unsubscribe()
     }
-  }, [loadUser, pathname, supabase])
+  }, [handleAuthRedirect, loadUser, pathname, supabase])
 
   useEffect(() => {
     if (!loading && user && pathname) {
