@@ -55,7 +55,6 @@ type Employee = {
   id: string;
   first_name: string;
   last_name: string;
-  employee_code: string;
   payroll_group: PayrollGroup;
   compensation_type: CompensationType;
   hourly_rate: number | null;
@@ -640,7 +639,6 @@ export default function DesktopPayrollSubmit() {
                             <div className="text-sm font-medium text-gray-900">
                               {emp.first_name} {emp.last_name}
                             </div>
-                            <div className="text-xs text-gray-500">{emp.employee_code}</div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span
