@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { authClient } from '@/lib/supabase/auth-client'
 import { useRouter, usePathname } from 'next/navigation'
 
 export type UserRole = 'owner' | 'admin' | 'member' | 'super_admin' | 'employee'
@@ -28,7 +29,6 @@ const ROLE_ROUTES: Record<UserRole, string[]> = {
     '/dashboard',
   ],
   admin: [
-    // Admins can access most routes
     '/',
     '/balance-sheet',
     '/financials',
@@ -41,30 +41,15 @@ const ROLE_ROUTES: Record<UserRole, string[]> = {
     '/comparative-analysis',
     '/settings',
   ],
-  owner: [
-    // Owners have full access
-    '*'
-  ],
-  super_admin: [
-    // Super admins have full access
-    '*'
-  ]
+  owner: ['*'],
+  super_admin: ['*']
 }
 
-// Improved mobile detection
 function isMobileDevice(): boolean {
   if (typeof window === 'undefined') return false
-  
-  // Check user agent
   const userAgent = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-  
-  // Check screen width
   const screenWidth = window.innerWidth < 768
-  
-  // Check for touch support
   const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0
-  
-  // Device is mobile if it has touch AND (small screen OR mobile user agent)
   return hasTouch && (screenWidth || userAgent)
 }
 
@@ -77,14 +62,14 @@ export function useAuth() {
   useEffect(() => {
     checkAuth()
 
-    const supabase = createClient()
-    const { data: authListener } = supabase.auth.onAuthStateChange(
+    // Listen to Platform auth changes
+    const { data: authListener } = authClient.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('🔐 Auth event:', event)
         if (event === 'SIGNED_IN' && session) {
           await fetchUserProfile(session.user.id, session.user.email)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
-          // Redirect to Platform login
           if (typeof window !== 'undefined') {
             window.location.href = 'https://iamcfo.com/login'
           }
@@ -97,31 +82,21 @@ export function useAuth() {
     }
   }, [])
 
-  // Check route access whenever pathname changes
   useEffect(() => {
     if (!loading && user && pathname) {
       console.log('🔒 Checking access:', { role: user.role, pathname })
       const hasAccess = checkRouteAccess(user.role, pathname)
-      console.log('🔒 Has access:', hasAccess)
       
       if (!hasAccess) {
         console.log('❌ Access denied, redirecting...')
         redirectToDefaultRoute(user.role)
-      } else {
-        // Special handling for employees on root/dashboard
-        if (user.role === 'employee') {
-          const isMobile = isMobileDevice()
-          console.log('📱 Mobile detection:', isMobile)
-          
-          // If employee is on desktop-only routes, redirect based on device
-          if (pathname === '/' || pathname === '/dashboard') {
-            if (isMobile) {
-              console.log('📱 Employee on mobile - redirecting to mobile payroll')
-              router.push('/mobile-dashboard/payroll/submit')
-            } else {
-              console.log('💻 Employee on desktop - redirecting to desktop payroll')
-              router.push('/payroll-submit')
-            }
+      } else if (user.role === 'employee') {
+        const isMobile = isMobileDevice()
+        if (pathname === '/' || pathname === '/dashboard') {
+          if (isMobile) {
+            router.push('/mobile-dashboard/payroll/submit')
+          } else {
+            router.push('/payroll-submit')
           }
         }
       }
@@ -130,144 +105,82 @@ export function useAuth() {
 
   async function checkAuth() {
     try {
-      const supabase = createClient()
+      console.log('🔍 Checking auth...')
       
-      // First, check if there's a session in the URL hash (from platform redirect)
-      if (typeof window !== 'undefined' && window.location.hash) {
-        const hashParams = new URLSearchParams(window.location.hash.substring(1))
-        const accessToken = hashParams.get('access_token')
-        const refreshToken = hashParams.get('refresh_token')
-        
-        if (accessToken && refreshToken) {
-          console.log('🔑 Found session tokens in URL, setting session...')
-          console.log('🔑 Access token length:', accessToken.length)
-          console.log('🔑 Refresh token length:', refreshToken.length)
-          
-          try {
-            // Set the session from URL tokens
-            const { data, error } = await supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            })
-            
-            console.log('🔑 setSession result:', { hasData: !!data, hasError: !!error })
-            
-            if (error) {
-              console.error('❌ Failed to set session from URL:', error)
-              // If session transfer fails, redirect to platform login
-              window.location.href = 'https://iamcfo.com/login'
-              return
-            }
-            
-            if (data?.session) {
-              console.log('✅ Session set successfully from URL')
-              console.log('✅ User ID:', data.session.user.id)
-              console.log('✅ User Email:', data.session.user.email)
-              await fetchUserProfile(data.session.user.id, data.session.user.email)
-              
-              // Clean up the URL hash
-              window.history.replaceState(null, '', window.location.pathname)
-              setLoading(false)
-              return
-            }
-          } catch (err) {
-            console.error('❌ Exception setting session:', err)
-            // On error, redirect to platform login
-            if (typeof window !== 'undefined') {
-              window.location.href = 'https://iamcfo.com/login'
-            }
-            return
+      // Check session in Platform Supabase (authClient)
+      const { data: { session } } = await authClient.auth.getSession()
+      
+      if (session?.user) {
+        console.log('✅ Found session in Platform Supabase:', session.user.id)
+        await fetchUserProfile(session.user.id, session.user.email || '')
+      } else {
+        console.log('❌ No session found')
+        if (!pathname?.startsWith('/login')) {
+          if (typeof window !== 'undefined') {
+            window.location.href = 'https://iamcfo.com/login'
           }
         }
       }
-      
-      // Otherwise, check for existing session
-      const { data: { session } } = await supabase.auth.getSession()
-      
-      if (session?.user) {
-        await fetchUserProfile(session.user.id, session.user.email)
-      } else if (!pathname?.startsWith('/login')) {
-        // Redirect to Platform login instead of local login
-        if (typeof window !== 'undefined') {
-          window.location.href = 'https://iamcfo.com/login'
-        }
-      }
     } catch (error) {
-      console.error('Auth check error:', error)
+      console.error('❌ Auth check error:', error)
     } finally {
       setLoading(false)
     }
   }
 
-  async function fetchUserProfile(userId: string, userEmail?: string) {
+  async function fetchUserProfile(userId: string, userEmail: string) {
     try {
-      const supabase = createClient()
-      
       console.log('🔍 Fetching profile for:', userId, userEmail)
       
-      // First, try to find user in the users table (owners/admins/super_admins)
-      const { data: userData, error: userError } = await supabase
+      // First check Platform Supabase users table using authClient
+      const { data: platformUser } = await authClient
         .from('users')
         .select('id, email, name, role, organization_id')
         .eq('id', userId)
         .maybeSingle()
 
-      if (userData) {
-        console.log('✅ Found user in users table:', { name: userData.name, role: userData.role })
-        setUser(userData as AuthUser)
-        return
-      }
-
-      console.log('🔍 User not in users table, checking employees table...')
-
-      // If not found in users, check employees table
-      const { data: employeeData, error: employeeError } = await supabase
-        .from('employees')
-        .select('user_id, email, first_name, last_name, organization_id')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .maybeSingle()
-
-      if (employeeData) {
-        console.log('✅ Found employee:', { 
-          name: `${employeeData.first_name} ${employeeData.last_name}`,
-          email: employeeData.email 
-        })
+      if (platformUser) {
+        console.log('✅ Found user in Platform:', platformUser.name, platformUser.role)
         
-        // Transform employee data to AuthUser format
-        const authUser: AuthUser = {
-          id: employeeData.user_id,
-          email: employeeData.email,
-          name: `${employeeData.first_name} ${employeeData.last_name}`,
-          role: 'employee',
-          organization_id: employeeData.organization_id
+        // If employee, also verify they exist in Client Supabase
+        if (platformUser.role === 'employee') {
+          const clientSupabase = createClient()
+          const { data: employeeData } = await clientSupabase
+            .from('employees')
+            .select('user_id, email, first_name, last_name, organization_id')
+            .eq('user_id', userId)
+            .eq('is_active', true)
+            .maybeSingle()
+
+          if (!employeeData) {
+            console.error('❌ Employee not found in Client database')
+            throw new Error('Employee record not found')
+          }
+          
+          console.log('✅ Verified employee in Client database')
         }
         
-        setUser(authUser)
+        setUser(platformUser as AuthUser)
         return
       }
 
-      console.error('❌ User not found in users or employees table')
+      console.error('❌ User not found in Platform')
       throw new Error('User profile not found')
 
     } catch (error) {
-      console.error('Error fetching user profile:', error)
+      console.error('❌ Error fetching user profile:', error)
       setUser(null)
+      if (typeof window !== 'undefined') {
+        window.location.href = 'https://iamcfo.com/login'
+      }
     }
   }
 
   function checkRouteAccess(role: UserRole, path: string): boolean {
     const allowedRoutes = ROLE_ROUTES[role]
-    
-    // Full access roles
-    if (allowedRoutes.includes('*')) {
-      return true
-    }
-
-    // Check if current path matches any allowed route
+    if (allowedRoutes.includes('*')) return true
     return allowedRoutes.some(route => {
       if (route === path) return true
-      // Allow sub-routes (e.g., /mobile-dashboard/payroll/submit)
       if (path.startsWith(route + '/')) return true
       return false
     })
@@ -275,36 +188,25 @@ export function useAuth() {
 
   function redirectToDefaultRoute(role: UserRole) {
     const allowedRoutes = ROLE_ROUTES[role]
-    
-    // Special handling for employees - check device type
     if (role === 'employee') {
       const isMobile = isMobileDevice()
       if (isMobile) {
-        console.log('📱 Redirecting employee to mobile payroll')
         router.push('/mobile-dashboard/payroll/submit')
-        return
       } else {
-        console.log('💻 Redirecting employee to desktop payroll')
         router.push('/payroll-submit')
-        return
       }
+      return
     }
-    
-    // For other roles, use first allowed route
     const defaultRoute = allowedRoutes[0] === '*' ? '/' : allowedRoutes[0]
     router.push(defaultRoute)
   }
 
   function getFilteredNavigation(navigation: any[]) {
     if (!user) return []
-
-    // Full access for owners and super_admins
     if (user.role === 'owner' || user.role === 'super_admin') {
       return navigation
     }
-
     const allowedRoutes = ROLE_ROUTES[user.role]
-    
     return navigation.filter(item => {
       return allowedRoutes.some(route => {
         return item.href === route || item.href.startsWith(route + '/')
@@ -313,10 +215,8 @@ export function useAuth() {
   }
 
   async function signOut() {
-    const supabase = createClient()
-    await supabase.auth.signOut()
+    await authClient.auth.signOut()
     setUser(null)
-    // Redirect to Platform login
     if (typeof window !== 'undefined') {
       window.location.href = 'https://iamcfo.com/login'
     }
