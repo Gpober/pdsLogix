@@ -205,7 +205,8 @@ export default function PayrollDashboard() {
         console.log('🌐 Detected subdomain:', subdomain);
 
         // Look up organization by subdomain
-        const { data: org, error } = await supabase
+        const platformClient = createClient();
+        const { data: org, error } = await platformClient
           .from('organizations')
           .select('id')
           .eq('subdomain', subdomain)
