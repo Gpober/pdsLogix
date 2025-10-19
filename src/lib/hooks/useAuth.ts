@@ -17,29 +17,9 @@ export interface AuthUser {
 
 // Define which routes each role can access
 const ROLE_ROUTES: Record<UserRole, string[]> = {
-  employee: [
-    '/payroll-submit',
-    '/mobile-dashboard',
-  ],
-  member: [
-    '/payroll-submit',
-    '/mobile-dashboard',
-    '/payroll',
-    '/dashboard',
-  ],
-  admin: [
-    '/',
-    '/balance-sheet',
-    '/financials',
-    '/cash-flow',
-    '/accounts-receivable',
-    '/accounts-payable',
-    '/payroll',
-    '/payroll-submit',
-    '/mobile-dashboard',
-    '/comparative-analysis',
-    '/settings',
-  ],
+  employee: ['/payroll-submit', '/mobile-dashboard'],
+  member: ['/payroll-submit', '/mobile-dashboard', '/payroll', '/dashboard'],
+  admin: ['/', '/balance-sheet', '/financials', '/cash-flow', '/accounts-receivable', '/accounts-payable', '/payroll', '/payroll-submit', '/mobile-dashboard', '/comparative-analysis', '/settings'],
   owner: ['*'],
   super_admin: ['*']
 }
@@ -66,7 +46,7 @@ export function useAuth() {
       async (event, session) => {
         console.log('🔐 Auth event:', event)
         if (event === 'SIGNED_IN' && session) {
-          await fetchUserProfile(session.user.id, session.user.email)
+          await loadUserFromSession(session)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
           if (typeof window !== 'undefined') {
@@ -107,50 +87,16 @@ export function useAuth() {
       console.log('🔍 Checking auth...')
       const supabase = createClient()
       
-      // First, check if there are session tokens in the URL hash (from Platform redirect)
-      if (typeof window !== 'undefined' && window.location.hash) {
-        const hashParams = new URLSearchParams(window.location.hash.substring(1))
-        const accessToken = hashParams.get('access_token')
-        const refreshToken = hashParams.get('refresh_token')
-        
-        if (accessToken && refreshToken) {
-          console.log('🔑 Found session tokens in URL, setting session...')
-          
-          try {
-            const { data, error } = await supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            })
-            
-            if (error) {
-              console.error('❌ Failed to set session:', error)
-            } else if (data?.session) {
-              console.log('✅ Session set successfully')
-              await fetchUserProfile(data.session.user.id, data.session.user.email || '')
-              
-              // Clean up URL hash
-              window.history.replaceState(null, '', window.location.pathname)
-              setLoading(false)
-              return
-            }
-          } catch (err) {
-            console.error('❌ Exception setting session:', err)
-          }
-        }
-      }
-      
-      // Otherwise, check for existing session
       const { data: { session } } = await supabase.auth.getSession()
       
-      console.log('🔍 Session check:', { hasSession: !!session, userId: session?.user?.id })
+      console.log('🔍 Session check:', { hasSession: !!session })
       
       if (session?.user) {
-        console.log('✅ Found session:', session.user.id)
-        await fetchUserProfile(session.user.id, session.user.email || '')
+        console.log('✅ Found session for:', session.user.id)
+        await loadUserFromSession(session)
       } else {
         console.log('❌ No session found')
         if (!pathname?.startsWith('/login')) {
-          console.log('🔄 Redirecting to Platform login...')
           if (typeof window !== 'undefined') {
             window.location.href = 'https://iamcfo.com/login'
           }
@@ -164,42 +110,44 @@ export function useAuth() {
     }
   }
 
-  async function fetchUserProfile(userId: string, userEmail: string) {
+  async function loadUserFromSession(session: any) {
     try {
-      console.log('🔍 Fetching profile for:', userId)
+      console.log('👤 Loading user from session')
       const supabase = createClient()
       
-      console.log('🔍 Querying users table...')
-      
-      // Get user from Platform Supabase users table
+      // Fetch user profile with role from Platform database
       const { data: userData, error } = await supabase
         .from('users')
         .select('id, email, name, role, organization_id')
-        .eq('id', userId)
-        .single()
-
-      console.log('🔍 Query result:', { hasData: !!userData, hasError: !!error })
+        .eq('id', session.user.id)
+        .maybeSingle()
 
       if (error) {
-        console.error('❌ Error fetching user:', error)
-        throw error
+        console.error('❌ Error loading user:', error)
+        // Fall back to session data if database query fails
+        const fallbackUser: AuthUser = {
+          id: session.user.id,
+          email: session.user.email || '',
+          name: session.user.email || 'User',
+          role: 'employee', // Default to employee if can't fetch
+          organization_id: ''
+        }
+        console.log('⚠️ Using fallback user data')
+        setUser(fallbackUser)
+        return
       }
 
       if (userData) {
-        console.log('✅ Found user:', userData.name, userData.role)
+        console.log('✅ User loaded:', userData.email, userData.role)
         setUser(userData as AuthUser)
       } else {
-        console.error('❌ No user data returned')
+        console.error('❌ User not found in database')
         throw new Error('User not found')
       }
 
     } catch (error) {
-      console.error('❌ Error fetching user profile:', error)
+      console.error('❌ Error loading user from session:', error)
       setUser(null)
-      if (typeof window !== 'undefined') {
-        console.log('🔄 Redirecting to Platform login due to profile fetch error')
-        window.location.href = 'https://iamcfo.com/login'
-      }
     }
   }
 
