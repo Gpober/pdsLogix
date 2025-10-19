@@ -142,6 +142,7 @@ export default function PayrollDashboard() {
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [subdomainOrgId, setSubdomainOrgId] = useState<string | null>(null);
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -192,189 +193,228 @@ export default function PayrollDashboard() {
     return { start: `${y}-01-01`, end: `${y}-12-31` };
   }, [reportPeriod, month, year, customStart, customEnd]);
 
+  useEffect(() => {
+    const getOrgFromSubdomain = async () => {
+      // Extract subdomain from URL
+      const hostname = window.location.hostname;
+      const parts = hostname.split('.');
+
+      // Check if we have a subdomain (e.g., pdslogix.iamcfo.com)
+      if (parts.length >= 3) {
+        const subdomain = parts[0];
+        console.log('🌐 Detected subdomain:', subdomain);
+
+        // Look up organization by subdomain
+        const { data: org, error } = await supabase
+          .from('organizations')
+          .select('id')
+          .eq('subdomain', subdomain)
+          .single();
+
+        if (!error && org) {
+          console.log('🏢 Found organization for subdomain:', org.id);
+          setSubdomainOrgId(org.id);
+        } else {
+          console.warn('⚠️ No organization found for subdomain:', subdomain);
+        }
+      }
+    };
+
+    getOrgFromSubdomain();
+  }, []);
+
   // Check auth and role
- useEffect(() => {
-  const checkAuth = async () => {
-    console.log('🔍 Starting auth check...');
-    const platformClient = createClient();
-    const { data: { user }, error: authError } = await platformClient.auth.getUser();
+  useEffect(() => {
+    const checkAuth = async () => {
+      console.log('🔍 Starting auth check...');
+      const platformClient = createClient();
+      const { data: { user }, error: authError } = await platformClient.auth.getUser();
 
-    if (authError || !user) {
-      console.log('❌ Auth error or no user:', authError);
-      router.push('/login');
-      return;
-    }
+      if (authError || !user) {
+        console.log('❌ Auth error or no user:', authError);
+        router.push('/login');
+        return;
+      }
 
-    console.log('👤 User ID:', user.id);
-    setUserId(user.id);
+      console.log('👤 User ID:', user.id);
+      setUserId(user.id);
 
-    const { data: userData, error: userError } = await platformClient
-      .from('users')
-      .select('role, organization_id')
-      .eq('id', user.id)
-      .single();
+      const { data: userData, error: userError } = await platformClient
+        .from('users')
+        .select('role, organization_id')
+        .eq('id', user.id)
+        .single();
 
-    console.log('📋 User data from database:', userData);
-    console.log('🏢 Organization ID:', userData?.organization_id);
-    console.log('👔 User role:', userData?.role);
-    
-    if (userError || !userData) {
-      console.error('❌ User error:', userError);
-      router.push('/dashboard');
-      return;
-    }
+      console.log('📋 User data from database:', userData);
+      console.log('🏢 Organization ID:', userData?.organization_id);
+      console.log('👔 User role:', userData?.role);
 
-    setUserRole(userData.role);
-    setOrganizationId(userData.organization_id);
+      if (userError || !userData) {
+        console.error('❌ User error:', userError);
+        router.push('/dashboard');
+        return;
+      }
 
-    console.log('✅ State will be set - userRole:', userData.role, 'orgId:', userData.organization_id);
+      setUserRole(userData.role);
+      setOrganizationId(userData.organization_id);
 
-    // Only allow admins/owners
-    if (userData.role !== 'super_admin' && userData.role !== 'admin' && userData.role !== 'owner') {
-      console.log('⛔ Access denied - role:', userData.role);
-      router.push('/dashboard');
-      return;
-    }
+      console.log('✅ State will be set - userRole:', userData.role, 'orgId:', userData.organization_id);
 
-    console.log('✅ Access granted, ready to load data');
-  };
+      // Only allow admins/owners
+      if (userData.role !== 'super_admin' && userData.role !== 'admin' && userData.role !== 'owner') {
+        console.log('⛔ Access denied - role:', userData.role);
+        router.push('/dashboard');
+        return;
+      }
 
-  checkAuth();
-}, [router]);
+      console.log('✅ Access granted, ready to load data');
+    };
+
+    checkAuth();
+  }, [router]);
 
   // Load pending submissions and all locations
   useEffect(() => {
-  console.log('🔄 useEffect triggered with:', { userRole, organizationId });
-  
-  if (userRole && organizationId) {
-    console.log('✅ Conditions met, loading data...');
-    loadPendingSubmissions();
-    loadAllLocations();
-  } else {
-    console.log('⚠️ Conditions NOT met:', { 
-      hasRole: !!userRole, 
-      hasOrgId: !!organizationId,
-      userRole,
-      organizationId
-    });
-  }
-}, [userRole, organizationId]);
+    console.log('🔄 useEffect triggered with:', { userRole, organizationId, subdomainOrgId });
 
-  const loadPendingSubmissions = async () => {
-  console.log('📥 Loading pending submissions...');
-  
-  const { data: submissions, error } = await supabase
-    .from('payroll_submissions')
-    .select('*')
-    .eq('status', 'pending')
-    .order('submitted_at', { ascending: false });
+    // For super_admin, use subdomain org; for others, use their org
+    const effectiveOrgId = userRole === 'super_admin' ? subdomainOrgId : organizationId;
 
-  if (error) {
-    console.error('❌ Error loading pending submissions:', error);
-    return;
-  }
+    if (userRole && effectiveOrgId) {
+      console.log('✅ Conditions met, loading data with org:', effectiveOrgId);
+      loadPendingSubmissions(effectiveOrgId);
+      loadAllLocations(effectiveOrgId);
+    } else {
+      console.log('⚠️ Conditions NOT met:', {
+        hasRole: !!userRole,
+        hasOrgId: !!organizationId,
+        hasSubdomainOrgId: !!subdomainOrgId,
+        effectiveOrgId,
+      });
+    }
+  }, [userRole, organizationId, subdomainOrgId]);
 
-  console.log('📊 Found submissions:', submissions?.length || 0, submissions);
+  const loadPendingSubmissions = async (orgId?: string) => {
+    console.log('📥 Loading pending submissions for org:', orgId);
 
-  // Get location names
-  const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
-  console.log('📍 Location IDs to fetch:', locationsIds);
-  
-  const { data: locations } = await supabase
-    .from('locations')
-    .select('id, name')
-    .in('id', locationsIds);
+    let query = supabase
+      .from('payroll_submissions')
+      .select('*')
+      .eq('status', 'pending')
+      .order('submitted_at', { ascending: false });
 
-  console.log('📍 Locations found:', locations);
+    if (orgId) {
+      query = query.eq('organization_id', orgId);
+    }
 
-  const locationsMap = new Map(locations?.map(l => [l.id, l.name]));
+    const { data: submissions, error } = await query;
 
-  const submissionsWithNames = (submissions || []).map(s => ({
-    ...s,
-    location_name: locationsMap.get(s.location_id) || 'Unknown Location'
-  }));
+    if (error) {
+      console.error('❌ Error loading pending submissions:', error);
+      return;
+    }
 
-  console.log('✅ Final submissions with names:', submissionsWithNames);
-  setPendingSubmissions(submissionsWithNames);
-};
+    console.log('📊 Found submissions:', submissions?.length || 0, submissions);
 
-  const loadAllLocations = async () => {
-  console.log('📥 Loading all locations for organization:', organizationId);
-  
-  if (!organizationId) {
-    console.warn('⚠️ No organizationId, skipping location load');
-    return;
-  }
+    // Get location names
+    const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
+    console.log('📍 Location IDs to fetch:', locationsIds);
 
-  // Get all locations
-  const { data: locations, error: locationsError } = await supabase
-    .from('locations')
-    .select('id, name')
-    .eq('organization_id', organizationId);
+    const { data: locations } = await supabase
+      .from('locations')
+      .select('id, name')
+      .in('id', locationsIds);
 
-  if (locationsError) {
-    console.error('❌ Error loading locations:', locationsError);
-    return;
-  }
+    console.log('📍 Locations found:', locations);
 
-  console.log('📍 Found locations:', locations?.length || 0, locations);
+    const locationsMap = new Map(locations?.map(l => [l.id, l.name]));
 
-  // Get next Friday for default pay date
-  const getNextFriday = () => {
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
-    const nextFriday = new Date(today);
-    nextFriday.setDate(today.getDate() + daysUntilFriday);
-    
-    const year = nextFriday.getFullYear();
-    const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
-    const day = String(nextFriday.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    const submissionsWithNames = (submissions || []).map(s => ({
+      ...s,
+      location_name: locationsMap.get(s.location_id) || 'Unknown Location'
+    }));
+
+    console.log('✅ Final submissions with names:', submissionsWithNames);
+    setPendingSubmissions(submissionsWithNames);
   };
 
-  const nextFriday = getNextFriday();
-  console.log('📅 Next Friday (pay date):', nextFriday);
+  const loadAllLocations = async (orgId?: string) => {
+    console.log('📥 Loading all locations for organization:', orgId);
 
-  // Get all submissions for this pay period
-  const { data: submissions } = await supabase
-    .from('payroll_submissions')
-    .select('*')
-    .eq('organization_id', organizationId)
-    .eq('pay_date', nextFriday);
-
-  console.log('📊 Submissions for this pay period:', submissions?.length || 0, submissions);
-
-  const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
-
-  // Build location status array
-  const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
-    const submission = submissionsMap.get(location.id);
-
-    if (submission) {
-      return {
-        location_id: location.id,
-        location_name: location.name,
-        submission_id: submission.id,
-        status: submission.status as 'approved' | 'pending',
-        total_amount: submission.total_amount,
-        employee_count: submission.employee_count,
-        pay_date: submission.pay_date,
-        payroll_group: submission.payroll_group as 'A' | 'B',
-        submitted_at: submission.submitted_at
-      };
-    } else {
-      return {
-        location_id: location.id,
-        location_name: location.name,
-        status: 'not_submitted' as const
-      };
+    if (!orgId) {
+      console.warn('⚠️ No organizationId, skipping location load');
+      return;
     }
-  });
 
-  console.log('✅ Final location statuses:', locationStatuses);
-  setAllLocations(locationStatuses);
-};
+    // Get all locations for this org
+    const { data: locations, error: locationsError } = await supabase
+      .from('locations')
+      .select('id, name')
+      .eq('organization_id', orgId);
+
+    if (locationsError) {
+      console.error('❌ Error loading locations:', locationsError);
+      return;
+    }
+
+    console.log('📍 Found locations:', locations?.length || 0, locations);
+
+    // Get next Friday for default pay date
+    const getNextFriday = () => {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+      const nextFriday = new Date(today);
+      nextFriday.setDate(today.getDate() + daysUntilFriday);
+
+      const year = nextFriday.getFullYear();
+      const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
+      const day = String(nextFriday.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const nextFriday = getNextFriday();
+    console.log('📅 Next Friday (pay date):', nextFriday);
+
+    // Get all submissions for this pay period
+    const { data: submissions } = await supabase
+      .from('payroll_submissions')
+      .select('*')
+      .eq('organization_id', orgId)
+      .eq('pay_date', nextFriday);
+
+    console.log('📊 Submissions for this pay period:', submissions?.length || 0, submissions);
+
+    const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
+
+    // Build location status array
+    const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
+      const submission = submissionsMap.get(location.id);
+
+      if (submission) {
+        return {
+          location_id: location.id,
+          location_name: location.name,
+          submission_id: submission.id,
+          status: submission.status as 'approved' | 'pending',
+          total_amount: submission.total_amount,
+          employee_count: submission.employee_count,
+          pay_date: submission.pay_date,
+          payroll_group: submission.payroll_group as 'A' | 'B',
+          submitted_at: submission.submitted_at
+        };
+      } else {
+        return {
+          location_id: location.id,
+          location_name: location.name,
+          status: 'not_submitted' as const
+        };
+      }
+    });
+
+    console.log('✅ Final location statuses:', locationStatuses);
+    setAllLocations(locationStatuses);
+  };
 
   const handleReviewSubmission = async (submission: PendingSubmission) => {
     setSelectedSubmission(submission);
@@ -523,8 +563,8 @@ export default function PayrollDashboard() {
     alert('✅ Payroll approved and posted successfully!');
     setShowApprovalModal(false);
     setSelectedSubmission(null);
-    loadPendingSubmissions();
-    loadAllLocations();
+    loadPendingSubmissions(locationData.organization_id);
+    loadAllLocations(locationData.organization_id);
     
     // Reload historical data
     const load = async () => {
@@ -619,8 +659,9 @@ export default function PayrollDashboard() {
     alert('❌ Payroll rejected. Location manager can resubmit.');
     setShowApprovalModal(false);
     setSelectedSubmission(null);
-    loadPendingSubmissions();
-    loadAllLocations();
+    const effectiveOrgId = locationData?.organization_id || (userRole === 'super_admin' ? subdomainOrgId : organizationId);
+    loadPendingSubmissions(effectiveOrgId || undefined);
+    loadAllLocations(effectiveOrgId || undefined);
 
   } catch (error) {
     console.error('Error rejecting payroll:', error);
