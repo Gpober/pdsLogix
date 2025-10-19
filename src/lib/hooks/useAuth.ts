@@ -2,7 +2,8 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { getAuthClient } from '@/lib/supabase/auth-client'
+import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 import { useRouter, usePathname } from 'next/navigation'
 
 export type UserRole = 'owner' | 'admin' | 'member' | 'super_admin' | 'employee'
@@ -36,7 +37,8 @@ export function useAuth() {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const pathname = usePathname()
-  const supabase = useMemo(() => createClient(), [])
+  const authClient = useMemo(() => getAuthClient(), [])
+  const dataClient = useMemo(() => getDataClient(), [])
   const isMountedRef = useRef(true)
   const lastLoadedUserId = useRef<string | null>(null)
 
@@ -59,7 +61,7 @@ export function useAuth() {
         console.log('👤 Loading user:', userId)
         console.log('👤 About to query users table...')
 
-        const { data, error } = await supabase
+        const { data, error } = await dataClient
           .from('users')
           .select('id, email, name, role, organization_id')
           .eq('id', userId)
@@ -88,7 +90,7 @@ export function useAuth() {
         }
       }
     },
-    [supabase]
+    [dataClient]
   )
 
   const handleAuthRedirect = useCallback(async () => {
@@ -108,7 +110,7 @@ export function useAuth() {
     }
 
     try {
-      const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+      const { data, error: exchangeError } = await authClient.auth.exchangeCodeForSession(code)
 
       if (exchangeError) {
         throw exchangeError
@@ -123,6 +125,7 @@ export function useAuth() {
       window.history.replaceState({}, document.title, cleanUrl)
 
       if (data.session?.user) {
+        await syncDataClientSession(data.session)
         await loadUser(data.session.user.id)
       }
 
@@ -131,7 +134,7 @@ export function useAuth() {
       console.error('❌ Failed to exchange auth code for session:', exchangeError)
       return false
     }
-  }, [loadUser, supabase])
+  }, [authClient, loadUser])
 
   const checkRouteAccess = useCallback((role: UserRole, path: string): boolean => {
     const allowedRoutes = ROLE_ROUTES[role]
@@ -165,9 +168,11 @@ export function useAuth() {
 
         const {
           data: { session },
-        } = await supabase.auth.getSession()
+        } = await authClient.auth.getSession()
 
         if (ignore || !isMountedRef.current) return
+
+        await syncDataClientSession(session ?? null)
 
         if (session?.user) {
           await loadUser(session.user.id)
@@ -187,28 +192,33 @@ export function useAuth() {
 
     initializeSession()
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: authListener } = authClient.auth.onAuthStateChange(async (event, session) => {
       if (!isMountedRef.current) return
 
       console.log('🔐 Auth event:', event)
 
       if (event === 'INITIAL_SESSION') {
         if (session?.user) {
+          await syncDataClientSession(session)
           await loadUser(session.user.id)
         } else {
+          await syncDataClientSession(null)
           setLoading(false)
         }
       }
 
       if (event === 'SIGNED_IN' && session?.user) {
+        await syncDataClientSession(session)
         await loadUser(session.user.id)
       }
 
       if (event === 'TOKEN_REFRESHED' && session?.user) {
+        await syncDataClientSession(session)
         await loadUser(session.user.id)
       }
 
       if (event === 'SIGNED_OUT') {
+        await syncDataClientSession(null)
         lastLoadedUserId.current = null
         setUser(null)
         setLoading(false)
@@ -220,7 +230,7 @@ export function useAuth() {
       ignore = true
       authListener?.subscription.unsubscribe()
     }
-  }, [handleAuthRedirect, loadUser, pathname, supabase])
+  }, [authClient, handleAuthRedirect, loadUser, pathname])
 
   useEffect(() => {
     if (!loading && user && pathname) {
@@ -244,7 +254,8 @@ export function useAuth() {
   }, [user])
 
   async function signOut() {
-    await supabase.auth.signOut()
+    await authClient.auth.signOut()
+    await syncDataClientSession(null)
     setUser(null)
     window.location.href = 'https://iamcfo.com/login'
   }

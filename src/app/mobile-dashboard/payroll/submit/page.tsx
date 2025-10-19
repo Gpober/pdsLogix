@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { supabase as dataSupabase } from '@/lib/supabaseClient'
+import { getAuthClient } from '@/lib/supabase/auth-client'
+import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar, MapPin, ChevronDown, RefreshCw } from 'lucide-react'
 
 // Simplified types - REMOVED employee_code
@@ -137,6 +137,8 @@ function generateFridayOptions(pastCount = 6, futureCount = 12) {
 
 export default function MobilePayrollSubmit() {
   const router = useRouter()
+  const authClient = useMemo(() => getAuthClient(), [])
+  const dataSupabase = useMemo(() => getDataClient(), [])
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
   const [userName, setUserName] = useState<string>('')
@@ -191,24 +193,27 @@ export default function MobilePayrollSubmit() {
   async function checkAuth() {
     console.log('📱 Mobile: Starting auth check...')
     try {
-      const authClient = createClient()
       console.log('📱 Mobile: Auth client created')
-      
-      const { data: { user }, error } = await authClient.auth.getUser()
-      console.log('📱 Mobile: getUser result:', { hasUser: !!user, hasError: !!error })
 
-      if (error || !user) {
+      const { data: { session }, error } = await authClient.auth.getSession()
+      console.log('📱 Mobile: getSession result:', { hasUser: !!session?.user, hasError: !!error })
+
+      if (error || !session?.user) {
         console.log('📱 Mobile: No user, redirecting to login')
         router.replace('/login')
         return
       }
 
+      await syncDataClientSession(session)
+
+      const user = session.user
+
       console.log('📱 Mobile: User found:', user.email)
       setUserId(user.id)
-      
+
       // Get user name
       console.log('📱 Mobile: Fetching user name...')
-      const { data: userRecord } = await authClient
+      const { data: userRecord } = await dataSupabase
         .from('users')
         .select('name')
         .eq('id', user.id)
@@ -234,10 +239,8 @@ export default function MobilePayrollSubmit() {
   async function loadLocations(uid: string) {
     console.log('📱 Mobile: loadLocations called for user:', uid)
     try {
-      const authClient = createClient()
-      
       // Get user role and organization
-      const { data: userData } = await authClient
+      const { data: userData } = await dataSupabase
         .from('users')
         .select('role, organization_id')
         .eq('id', uid)
@@ -256,9 +259,9 @@ export default function MobilePayrollSubmit() {
         if (parts.length >= 3) {
           const subdomain = parts[0]
           console.log('📱 Mobile: Detected subdomain:', subdomain)
-          
+
           // Get organization from subdomain
-          const { data: org, error: orgError } = await authClient
+          const { data: org, error: orgError } = await dataSupabase
             .from('organizations')
             .select('id')
             .eq('subdomain', subdomain)
@@ -601,8 +604,8 @@ export default function MobilePayrollSubmit() {
   }
 
   async function handleSignOut() {
-    const authClient = createClient()
     await authClient.auth.signOut()
+    await syncDataClientSession(null)
     router.push('/login')
   }
 

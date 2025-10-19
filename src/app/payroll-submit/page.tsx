@@ -2,8 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { supabase as dataSupabase } from "@/lib/supabaseClient";
+import { getAuthClient } from "@/lib/supabase/auth-client";
+import { getDataClient, syncDataClientSession } from "@/lib/supabase/client";
 import {
   LogOut,
   DollarSign,
@@ -115,6 +115,8 @@ const IAMCFOLogo = ({ className = "w-8 h-8" }: { className?: string }) => (
 
 export default function DesktopPayrollSubmit() {
   const router = useRouter();
+  const authClient = useMemo(() => getAuthClient(), []);
+  const dataSupabase = useMemo(() => getDataClient(), []);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -150,21 +152,24 @@ export default function DesktopPayrollSubmit() {
   const initializeUser = async () => {
     try {
       console.log('🔍 Desktop Payroll: Starting auth check...');
-      
-      const authClient = createClient();
-      const { data: { user }, error: authError } = await authClient.auth.getUser();
 
-      if (authError || !user) {
+      const { data: { session }, error: authError } = await authClient.auth.getSession();
+
+      if (authError || !session?.user) {
         console.log('❌ Desktop Payroll: No user found');
         router.push("/login");
         return;
       }
 
+      await syncDataClientSession(session);
+
+      const user = session.user;
+
       setUserId(user.id);
       console.log('✅ Desktop Payroll: User authenticated:', user.email);
 
       // Get user info from Auth Supabase
-      const { data: userRecord, error: userError } = await authClient
+      const { data: userRecord, error: userError } = await dataSupabase
         .from('users')
         .select('role, name')
         .eq('id', user.id)
@@ -405,8 +410,8 @@ export default function DesktopPayrollSubmit() {
   };
 
   const handleLogout = async () => {
-    const authClient = createClient();
     await authClient.auth.signOut();
+    await syncDataClientSession(null);
     router.push("/login");
   };
 
