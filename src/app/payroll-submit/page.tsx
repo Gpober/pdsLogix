@@ -150,7 +150,7 @@ export default function DesktopPayrollSubmit() {
 
   const initializeUser = async () => {
     try {
-      console.log('🔐 Desktop Payroll: Starting auth check...');
+      console.log('🔍 Desktop Payroll: Starting auth check...');
       
       const authClient = createClient();
       const { data: { user }, error: authError } = await authClient.auth.getUser();
@@ -368,24 +368,24 @@ export default function DesktopPayrollSubmit() {
 
       if (submissionError) throw submissionError;
 
-      // Create submission details
+      // ✅ FIXED: Use "payroll_entries" instead of "payroll_submission_details"
       const details = employeesWithData.map((emp) => ({
         submission_id: submission.id,
         employee_id: emp.id,
         hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
-        units:
-          emp.compensation_type === "production" ? parseFloat(emp.units) : null,
+        units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
         amount: emp.amount,
         notes: emp.notes || null,
+        status: 'pending'
       }));
 
       const { error: detailsError } = await dataSupabase
-        .from("payroll_submission_details")
+        .from("payroll_entries")  // ✅ CORRECT TABLE NAME
         .insert(details);
 
       if (detailsError) throw detailsError;
 
-      showAlert("Payroll submitted successfully!", "success");
+      showAlert("✅ Payroll submitted successfully!", "success");
       
       // Reset form
       setTimeout(() => {
