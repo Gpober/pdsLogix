@@ -12,28 +12,31 @@ if (!supabaseAnonKey) {
   throw new Error("Missing NEXT_PUBLIC_PLATFORM_SUPABASE_ANON_KEY environment variable")
 }
 
-// Singleton instance - only create once
-let authClientInstance: SupabaseClient | null = null
-
-function getAuthClient() {
-  if (!authClientInstance) {
-    console.log('🔧 Creating new auth client instance')
-    authClientInstance = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        flowType: 'pkce',
-        storage: typeof window !== 'undefined' ? window.localStorage : undefined,
-        storageKey: 'iamcfo-auth',
-      },
-    })
-  } else {
-    console.log('♻️ Reusing existing auth client instance')
-  }
-  return authClientInstance
+const globalForSupabase = globalThis as unknown as {
+  __IAMCFO_AUTH_CLIENT__?: SupabaseClient
 }
 
-// Export as both named export and default
-export const authClient = getAuthClient()
+function createAuthClient(): SupabaseClient {
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: "pkce",
+      storage: typeof window !== "undefined" ? window.localStorage : undefined,
+      storageKey: "iamcfo-auth",
+    },
+  })
+}
+
+if (!globalForSupabase.__IAMCFO_AUTH_CLIENT__) {
+  globalForSupabase.__IAMCFO_AUTH_CLIENT__ = createAuthClient()
+}
+
+export const authClient = globalForSupabase.__IAMCFO_AUTH_CLIENT__
+
+export function getAuthClient(): SupabaseClient {
+  return authClient
+}
+
 export default getAuthClient
