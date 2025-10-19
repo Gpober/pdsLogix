@@ -1,42 +1,29 @@
-// src/lib/supabase/auth-client.ts
 import { createClient, SupabaseClient } from "@supabase/supabase-js"
 
-const supabaseUrl = process.env.NEXT_PUBLIC_PLATFORM_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_PLATFORM_SUPABASE_ANON_KEY
+const supabaseUrl = process.env.NEXT_PUBLIC_PLATFORM_SUPABASE_URL!
+const supabaseAnonKey = process.env.NEXT_PUBLIC_PLATFORM_SUPABASE_ANON_KEY!
 
-if (!supabaseUrl) {
-  throw new Error("Missing NEXT_PUBLIC_PLATFORM_SUPABASE_URL environment variable")
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Missing Platform Supabase environment variables")
 }
 
-if (!supabaseAnonKey) {
-  throw new Error("Missing NEXT_PUBLIC_PLATFORM_SUPABASE_ANON_KEY environment variable")
-}
+let authClientInstance: SupabaseClient | null = null
 
-const globalForSupabase = globalThis as unknown as {
-  __IAMCFO_AUTH_CLIENT__?: SupabaseClient
-}
+export function getAuthClient(): SupabaseClient {
+  if (authClientInstance) {
+    return authClientInstance
+  }
 
-function createAuthClient(): SupabaseClient {
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  authClientInstance = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
       flowType: "pkce",
       storage: typeof window !== "undefined" ? window.localStorage : undefined,
-      storageKey: "iamcfo-auth",
+      storageKey: "iamcfo-platform-auth",
     },
   })
+
+  return authClientInstance
 }
-
-if (!globalForSupabase.__IAMCFO_AUTH_CLIENT__) {
-  globalForSupabase.__IAMCFO_AUTH_CLIENT__ = createAuthClient()
-}
-
-export const authClient = globalForSupabase.__IAMCFO_AUTH_CLIENT__
-
-export function getAuthClient(): SupabaseClient {
-  return authClient
-}
-
-export default getAuthClient
