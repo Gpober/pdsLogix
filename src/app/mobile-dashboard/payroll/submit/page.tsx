@@ -227,64 +227,133 @@ export default function MobilePayrollSubmit() {
   }
 
   async function loadLocations(uid: string) {
-    console.log('📱 Mobile: loadLocations called for user:', uid)
-    try {
-      const { data: locationManagerData, error: locError } = await dataSupabase
-        .from('location_managers')
-        .select('location_id')
-        .eq('user_id', uid)
+  console.log('📱 Mobile: loadLocations called for user:', uid)
+  try {
+    const authClient = createClient()
+    
+    // Get user role and organization
+    const { data: userData } = await authClient
+      .from('users')
+      .select('role, organization_id')
+      .eq('id', uid)
+      .single()
+    
+    console.log('📱 Mobile: User data:', userData)
 
-      console.log('📱 Mobile: location_managers query result:', { 
-        hasData: !!locationManagerData, 
-        count: locationManagerData?.length,
-        hasError: !!locError 
-      })
-
-      if (locError) {
-        console.error('📱 Mobile: Error fetching location_managers:', locError)
-        showAlert('error', 'Failed to load locations')
-        return
-      }
-
-      if (!locationManagerData || locationManagerData.length === 0) {
-        console.log('📱 Mobile: No locations found')
-        showAlert('error', 'No locations found. Please contact support.')
-        return
-      }
-
-      const locationIds = locationManagerData.map(lm => lm.location_id)
-      console.log('📱 Mobile: Location IDs:', locationIds)
-
-      const { data: locationsData, error: locationsError } = await dataSupabase
-        .from('locations')
-        .select('id, name')
-        .in('id', locationIds)
-        .order('name')
-
-      console.log('📱 Mobile: locations query result:', { 
-        hasData: !!locationsData, 
-        count: locationsData?.length,
-        hasError: !!locationsError 
-      })
-
-      if (locationsData) {
-        setAvailableLocations(locationsData)
-        console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
+    // If super_admin, get org from subdomain
+    if (userData?.role === 'super_admin') {
+      console.log('📱 Mobile: Super admin detected, using subdomain')
+      
+      // Extract subdomain
+      const hostname = window.location.hostname
+      const parts = hostname.split('.')
+      
+      if (parts.length >= 3) {
+        const subdomain = parts[0]
+        console.log('📱 Mobile: Detected subdomain:', subdomain)
         
-        if (locationsData.length === 1) {
-          console.log('📱 Mobile: Auto-selecting single location')
-          setSelectedLocationId(locationsData[0].id)
-          await loadEmployees(locationsData[0].id)
-        } else if (locationsData.length > 1) {
-          console.log('📱 Mobile: Multiple locations, showing picker')
-          setShowLocationPicker(true)
+        // Get organization from subdomain
+        const { data: org, error: orgError } = await authClient
+          .from('organizations')
+          .select('id')
+          .eq('subdomain', subdomain)
+          .single()
+        
+        if (orgError || !org) {
+          console.error('📱 Mobile: Error fetching org:', orgError)
+          showAlert('error', 'Could not find organization for this subdomain')
+          return
         }
+        
+        console.log('📱 Mobile: Found organization:', org.id)
+        
+        // Load ALL locations for this organization
+        const { data: locationsData, error: locationsError } = await dataSupabase
+          .from('locations')
+          .select('id, name')
+          .eq('organization_id', org.id)
+          .order('name')
+        
+        console.log('📱 Mobile: All locations for org:', locationsData?.length)
+        
+        if (locationsData && locationsData.length > 0) {
+          setAvailableLocations(locationsData)
+          console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
+          
+          if (locationsData.length === 1) {
+            console.log('📱 Mobile: Auto-selecting single location')
+            setSelectedLocationId(locationsData[0].id)
+            await loadEmployees(locationsData[0].id)
+          } else {
+            console.log('📱 Mobile: Multiple locations, showing picker')
+            setShowLocationPicker(true)
+          }
+        } else {
+          showAlert('error', 'No locations found for this organization')
+        }
+        
+        return
       }
-    } catch (error) {
-      console.error('📱 Mobile: Exception in loadLocations:', error)
-      showAlert('error', 'Failed to load locations')
     }
+
+    // Regular user - check location_managers
+    console.log('📱 Mobile: Regular user, checking location_managers')
+    const { data: locationManagerData, error: locError } = await dataSupabase
+      .from('location_managers')
+      .select('location_id')
+      .eq('user_id', uid)
+
+    console.log('📱 Mobile: location_managers query result:', { 
+      hasData: !!locationManagerData, 
+      count: locationManagerData?.length,
+      hasError: !!locError 
+    })
+
+    if (locError) {
+      console.error('📱 Mobile: Error fetching location_managers:', locError)
+      showAlert('error', 'Failed to load locations')
+      return
+    }
+
+    if (!locationManagerData || locationManagerData.length === 0) {
+      console.log('📱 Mobile: No locations found')
+      showAlert('error', 'No locations assigned. Please contact your administrator.')
+      return
+    }
+
+    const locationIds = locationManagerData.map(lm => lm.location_id)
+    console.log('📱 Mobile: Location IDs:', locationIds)
+
+    const { data: locationsData, error: locationsError } = await dataSupabase
+      .from('locations')
+      .select('id, name')
+      .in('id', locationIds)
+      .order('name')
+
+    console.log('📱 Mobile: locations query result:', { 
+      hasData: !!locationsData, 
+      count: locationsData?.length,
+      hasError: !!locationsError 
+    })
+
+    if (locationsData) {
+      setAvailableLocations(locationsData)
+      console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
+      
+      if (locationsData.length === 1) {
+        console.log('📱 Mobile: Auto-selecting single location')
+        setSelectedLocationId(locationsData[0].id)
+        await loadEmployees(locationsData[0].id)
+      } else if (locationsData.length > 1) {
+        console.log('📱 Mobile: Multiple locations, showing picker')
+        setShowLocationPicker(true)
+      }
+    }
+  } catch (error) {
+    console.error('📱 Mobile: Exception in loadLocations:', error)
+    showAlert('error', 'Failed to load locations')
   }
+}
 
   async function loadEmployees(locId: string) {
     try {
