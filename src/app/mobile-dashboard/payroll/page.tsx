@@ -1477,7 +1477,7 @@ export default function PayrollDashboard() {
                       {location.location_name}
                     </h3>
 
-                    {location.status !== 'not_submitted' && location.total_amount && (
+                   {location.status !== 'not_submitted' && location.total_amount !== undefined && (
                       <div style={{
                         display: 'grid',
                         gridTemplateColumns: '1fr 1fr',
@@ -1491,7 +1491,7 @@ export default function PayrollDashboard() {
                           textAlign: 'center'
                         }}>
                           <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
-                            {formatCurrency(location.total_amount)}
+                            {formatCurrency(location.total_amount || 0)}
                           </div>
                           <div style={{ fontSize: '11px', color: '#64748b' }}>Total</div>
                         </div>
@@ -1502,7 +1502,7 @@ export default function PayrollDashboard() {
                           textAlign: 'center'
                         }}>
                           <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
-                            {location.employee_count || 0}
+                            {location.employee_count !== undefined ? location.employee_count : 0}
                           </div>
                           <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
                         </div>
