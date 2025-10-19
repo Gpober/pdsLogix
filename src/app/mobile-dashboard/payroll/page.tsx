@@ -244,21 +244,21 @@ export default function PayrollDashboard() {
 
   // Load pending submissions and all locations
   useEffect(() => {
-    console.log('🔄 useEffect triggered with:', { userRole, organizationId });
-
-    if (userRole && organizationId) {
-      console.log('✅ Conditions met, loading data...');
-      loadPendingSubmissions();
-      loadAllLocations();
-    } else {
-      console.log('⚠️ Conditions NOT met:', {
-        hasRole: !!userRole,
-        hasOrgId: !!organizationId,
-        userRole,
-        organizationId
-      });
-    }
-  }, [userRole, organizationId]);
+  console.log('🔄 useEffect triggered with:', { userRole, organizationId });
+  
+  if (userRole && organizationId) {
+    console.log('✅ Conditions met, loading data...');
+    loadPendingSubmissions();
+    loadAllLocations();
+  } else {
+    console.log('⚠️ Conditions NOT met:', { 
+      hasRole: !!userRole, 
+      hasOrgId: !!organizationId,
+      userRole,
+      organizationId
+    });
+  }
+}, [userRole, organizationId]);
 
   const loadPendingSubmissions = async () => {
     console.log('📥 Loading pending submissions...');
