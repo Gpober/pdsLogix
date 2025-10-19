@@ -2,20 +2,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// Server-side only - use service role or anon key for Client Supabase
+// Server-side only - use service role for Client Supabase (business data)
+// This is safe because it only runs server-side, never in browser
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-// Create server-side client for Client Supabase (business data)
-const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: {
-    persistSession: false, // No session persistence on server
-    autoRefreshToken: false,
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error('Missing Supabase environment variables for API route')
+}
+
+// Create a singleton server-side client
+let serverDataClient: ReturnType<typeof createClient> | null = null
+
+function getServerDataClient() {
+  if (!serverDataClient) {
+    serverDataClient = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false, // No session on server
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      }
+    })
   }
-})
+  return serverDataClient
+}
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = getServerDataClient()
+    
     const body = await request.json()
     console.log('📥 Received payroll submission:', body)
 
