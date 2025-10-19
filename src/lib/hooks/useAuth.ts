@@ -40,20 +40,25 @@ export function useAuth() {
 
   useEffect(() => {
     // Let Supabase handle the URL session automatically
-    // Just wait a moment for it to process
+    // Give it more time to process the session from URL
     const timer = setTimeout(() => {
       checkSession()
-    }, 500)
+    }, 5000) // 5 seconds
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('🔐 Auth event:', event)
         if (event === 'SIGNED_IN' && session) {
           console.log('✅ Signed in, loading user profile')
+          clearTimeout(timer) // Cancel the timeout check
           await loadUser(session.user.id)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
           window.location.href = 'https://iamcfo.com/login'
+        } else if (event === 'INITIAL_SESSION' && session) {
+          console.log('✅ Initial session found')
+          clearTimeout(timer)
+          await loadUser(session.user.id)
         }
       }
     )
