@@ -55,20 +55,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const data = await response.json();
+    const timesheetData = await response.json();
 
-    // Process the timesheets data
-    // Map Connecteam data to our employee hours format
+    // Step 1: Get all users to map userId to email
+    const usersResponse = await fetch('https://api.connecteam.com/users/v1/users', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!usersResponse.ok) {
+      console.error('Failed to fetch users from Connecteam');
+      return NextResponse.json(
+        { error: 'Failed to fetch user data from Connecteam' },
+        { status: usersResponse.status }
+      );
+    }
+
+    const usersData = await usersResponse.json();
+    
+    // Create userId -> email mapping
+    const userIdToEmail: Record<number, string> = {};
+    if (usersData.data && Array.isArray(usersData.data)) {
+      usersData.data.forEach((user: any) => {
+        if (user.id && user.email) {
+          userIdToEmail[user.id] = user.email.toLowerCase();
+        }
+      });
+    }
+
+    // Step 2: Process timesheet data and map to emails
     const hoursMap: Record<string, number> = {};
 
-    // Connecteam returns timesheets with user info
-    if (data.timesheets && Array.isArray(data.timesheets)) {
-      data.timesheets.forEach((timesheet: any) => {
-        const email = timesheet.user?.email?.toLowerCase();
+    if (timesheetData.data && timesheetData.data.users && Array.isArray(timesheetData.data.users)) {
+      timesheetData.data.users.forEach((userRecord: any) => {
+        const userId = userRecord.userId;
+        const email = userIdToEmail[userId];
+        
         if (email && employeeEmails.includes(email)) {
-          // Sum up hours for this employee
-          const hours = timesheet.totalHours || 0;
-          hoursMap[email] = (hoursMap[email] || 0) + hours;
+          // Sum up daily hours for this user
+          let totalHours = 0;
+          if (userRecord.dailyRecords && Array.isArray(userRecord.dailyRecords)) {
+            userRecord.dailyRecords.forEach((day: any) => {
+              totalHours += day.dailyTotalWorkHours || 0;
+            });
+          }
+          hoursMap[email] = totalHours;
         }
       });
     }
