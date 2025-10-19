@@ -338,7 +338,7 @@ export default function PayrollDashboard() {
 
     // Load submission details
     const { data: details, error } = await supabase
-      .from('payroll_submission_details')
+      .from('payroll_entries')
       .select('*')
       .eq('submission_id', submission.id);
 
@@ -368,115 +368,224 @@ export default function PayrollDashboard() {
   };
 
   const handleApprove = async () => {
-    if (!selectedSubmission || !userId) return;
+  if (!selectedSubmission || !userId) return;
 
-    setIsApproving(true);
+  setIsApproving(true);
 
-    try {
-      // 1. Insert into payments table
-      const paymentsToInsert = submissionDetails.map(detail => ({
-        first_name: detail.employee_name.split(' ')[0],
-        last_name: detail.employee_name.split(' ').slice(1).join(' '),
-        department: selectedSubmission.location_name,
-        date: selectedSubmission.pay_date,
-        total_amount: detail.amount,
-        payment_method: 'Payroll'
-      }));
+  try {
+    // Get the location for this submission
+    const { data: locationData } = await supabase
+      .from('locations')
+      .select('id, name, organization_id')
+      .eq('id', selectedSubmission.location_id)
+      .single();
 
-      const { error: paymentsError } = await supabase
-        .from('payments')
-        .insert(paymentsToInsert);
+    if (!locationData) {
+      throw new Error('Location not found');
+    }
 
-      if (paymentsError) throw paymentsError;
+    // STEP 1: Update payroll_submissions status to 'approved'
+    const { error: updateSubmissionError } = await supabase
+      .from('payroll_submissions')
+      .update({
+        status: 'approved',
+        approved_by: userId,
+        approved_at: new Date().toISOString()
+      })
+      .eq('id', selectedSubmission.id);
 
-      // 2. Update submission status
-      const { error: updateError } = await supabase
-        .from('payroll_submissions')
-        .update({
-          status: 'approved',
-          approved_by: userId,
-          approved_at: new Date().toISOString()
-        })
-        .eq('id', selectedSubmission.id);
+    if (updateSubmissionError) throw updateSubmissionError;
 
-      if (updateError) throw updateError;
+    // STEP 2: Update all payroll_entries for this submission to 'approved'
+    const { error: updateEntriesError } = await supabase
+      .from('payroll_entries')
+      .update({
+        status: 'approved'
+      })
+      .eq('submission_id', selectedSubmission.id);
 
-      // Success!
-      alert('Payroll approved successfully!');
-      setShowApprovalModal(false);
-      setSelectedSubmission(null);
-      loadPendingSubmissions();
-      loadAllLocations();
+    if (updateEntriesError) throw updateEntriesError;
+
+    // STEP 3: Create approval audit log
+    const { error: approvalLogError } = await supabase
+      .from('payroll_approvals')
+      .insert({
+        organization_id: locationData.organization_id,
+        submission_id: selectedSubmission.id,
+        action: 'approved',
+        approved_by: userId,
+        previous_status: 'pending',
+        notes: `Approved via mobile dashboard`
+      });
+
+    if (approvalLogError) {
+      console.warn('Failed to create approval log:', approvalLogError);
+      // Don't fail the whole process if audit log fails
+    }
+
+    // STEP 4: Post to payments table with ALL required fields
+    const paymentsToInsert = submissionDetails.map(detail => ({
+      // Link back to source data
+      employee_id: detail.employee_id,
+      submission_id: selectedSubmission.id,
+      location_id: selectedSubmission.location_id,
+      organization_id: locationData.organization_id,
       
-      // Reload historical data
-      const load = async () => {
-        const { start, end } = getDateRange();
-        const { data } = await supabase
-          .from("payments")
-          .select("department, total_amount, date, first_name, last_name")
-          .gte("date", start)
-          .lte("date", end);
-          
-        const deptMap: Record<string, PropertySummary> = {};
-        const empMap: Record<string, Category> = {};
+      // Payment details
+      first_name: detail.employee_name.split(' ')[0],
+      last_name: detail.employee_name.split(' ').slice(1).join(' ') || detail.employee_name.split(' ')[0],
+      department: selectedSubmission.location_name,
+      date: selectedSubmission.pay_date,
+      total_amount: detail.amount,
+      payment_method: 'Direct Deposit',
+      
+      // Payroll details
+      payroll_group: selectedSubmission.payroll_group,
+      hours: detail.hours,
+      units: detail.units,
+      
+      // Tracking
+      source: 'system'
+    }));
+
+    const { error: paymentsError } = await supabase
+      .from('payments')
+      .insert(paymentsToInsert);
+
+    if (paymentsError) throw paymentsError;
+
+    // STEP 5: Update submission to 'posted' status
+    const { error: postedError } = await supabase
+      .from('payroll_submissions')
+      .update({
+        status: 'posted',
+        processed_by: userId,
+        processed_at: new Date().toISOString()
+      })
+      .eq('id', selectedSubmission.id);
+
+    if (postedError) throw postedError;
+
+    // STEP 6: Update entries to 'posted'
+    const { error: entriesPostedError } = await supabase
+      .from('payroll_entries')
+      .update({
+        status: 'posted'
+      })
+      .eq('submission_id', selectedSubmission.id);
+
+    if (entriesPostedError) throw entriesPostedError;
+
+    // Success!
+    alert('✅ Payroll approved and posted successfully!');
+    setShowApprovalModal(false);
+    setSelectedSubmission(null);
+    loadPendingSubmissions();
+    loadAllLocations();
+    
+    // Reload historical data
+    const load = async () => {
+      const { start, end } = getDateRange();
+      const { data } = await supabase
+        .from("payments")
+        .select("department, total_amount, date, first_name, last_name")
+        .gte("date", start)
+        .lte("date", end);
         
-        (data || []).forEach((rec: any) => {
-          const dept = rec.department || "Unknown";
-          if (!deptMap[dept]) {
-            deptMap[dept] = { name: dept, expenses: 0 };
-          }
-          deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
+      const deptMap: Record<string, PropertySummary> = {};
+      const empMap: Record<string, Category> = {};
+      
+      (data || []).forEach((rec: any) => {
+        const dept = rec.department || "Unknown";
+        if (!deptMap[dept]) {
+          deptMap[dept] = { name: dept, expenses: 0 };
+        }
+        deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
 
-          const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
-          if (!empMap[emp]) {
-            empMap[emp] = { name: emp, total: 0 };
-          }
-          empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
-        });
-        
-        setProperties(Object.values(deptMap));
-        setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
-      };
-      load();
+        const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
+        if (!empMap[emp]) {
+          empMap[emp] = { name: emp, total: 0 };
+        }
+        empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
+      });
+      
+      setProperties(Object.values(deptMap));
+      setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
+    };
+    load();
 
-    } catch (error) {
-      console.error('Error approving payroll:', error);
-      alert('Failed to approve payroll. Please try again.');
-    } finally {
-      setIsApproving(false);
+  } catch (error) {
+    console.error('Error approving payroll:', error);
+    alert('❌ Failed to approve payroll. Please try again.');
+  } finally {
+    setIsApproving(false);
+  }
+};
+
+ const handleReject = async () => {
+  if (!selectedSubmission || !userId) return;
+
+  setIsApproving(true);
+
+  try {
+    // Get organization_id
+    const { data: locationData } = await supabase
+      .from('locations')
+      .select('organization_id')
+      .eq('id', selectedSubmission.location_id)
+      .single();
+
+    // Update submission status
+    const { error: submissionError } = await supabase
+      .from('payroll_submissions')
+      .update({
+        status: 'rejected',
+        approved_by: userId,
+        approved_at: new Date().toISOString()
+      })
+      .eq('id', selectedSubmission.id);
+
+    if (submissionError) throw submissionError;
+
+    // Update entries status
+    const { error: entriesError } = await supabase
+      .from('payroll_entries')
+      .update({
+        status: 'rejected'
+      })
+      .eq('submission_id', selectedSubmission.id);
+
+    if (entriesError) throw entriesError;
+
+    // Log rejection
+    const { error: approvalLogError } = await supabase
+      .from('payroll_approvals')
+      .insert({
+        organization_id: locationData?.organization_id,
+        submission_id: selectedSubmission.id,
+        action: 'rejected',
+        approved_by: userId,
+        previous_status: 'pending',
+        notes: 'Rejected via mobile dashboard'
+      });
+
+    if (approvalLogError) {
+      console.warn('Failed to create rejection log:', approvalLogError);
     }
-  };
 
-  const handleReject = async () => {
-    if (!selectedSubmission || !userId) return;
+    alert('❌ Payroll rejected. Location manager can resubmit.');
+    setShowApprovalModal(false);
+    setSelectedSubmission(null);
+    loadPendingSubmissions();
+    loadAllLocations();
 
-    setIsApproving(true);
-
-    try {
-      const { error } = await supabase
-        .from('payroll_submissions')
-        .update({
-          status: 'rejected',
-          approved_by: userId,
-          approved_at: new Date().toISOString()
-        })
-        .eq('id', selectedSubmission.id);
-
-      if (error) throw error;
-
-      alert('Payroll rejected. Location manager can resubmit.');
-      setShowApprovalModal(false);
-      setSelectedSubmission(null);
-      loadPendingSubmissions();
-      loadAllLocations();
-
-    } catch (error) {
-      console.error('Error rejecting payroll:', error);
-      alert('Failed to reject payroll. Please try again.');
-    } finally {
-      setIsApproving(false);
-    }
-  };
+  } catch (error) {
+    console.error('Error rejecting payroll:', error);
+    alert('Failed to reject payroll. Please try again.');
+  } finally {
+    setIsApproving(false);
+  }
+};
 
   // Load payroll data for view mode
   useEffect(() => {
