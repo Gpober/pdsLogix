@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { supabase as dataSupabase } from '@/lib/supabaseClient'
-import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar, MapPin, ChevronDown } from 'lucide-react'
+import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar, MapPin, ChevronDown, RefreshCw } from 'lucide-react'
 
 // Simplified types - REMOVED employee_code
 type PayrollGroup = 'A' | 'B'
@@ -14,6 +14,7 @@ type Employee = {
   id: string
   first_name: string
   last_name: string
+  email: string | null
   payroll_group: PayrollGroup
   compensation_type: CompensationType
   hourly_rate: number | null
@@ -149,6 +150,7 @@ export default function MobilePayrollSubmit() {
   const [periodEnd, setPeriodEnd] = useState<string>('')
   const [alert, setAlert] = useState<Alert | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSyncingConnecteam, setIsSyncingConnecteam] = useState(false)
   const [showAddEmployee, setShowAddEmployee] = useState(false)
   const [showEditEmployee, setShowEditEmployee] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
@@ -158,6 +160,7 @@ export default function MobilePayrollSubmit() {
   const [newEmployee, setNewEmployee] = useState({
     first_name: '',
     last_name: '',
+    email: '',
     payroll_group: 'A' as PayrollGroup,
     compensation_type: 'hourly' as CompensationType,
     hourly_rate: '',
@@ -227,133 +230,133 @@ export default function MobilePayrollSubmit() {
   }
 
   async function loadLocations(uid: string) {
-  console.log('📱 Mobile: loadLocations called for user:', uid)
-  try {
-    const authClient = createClient()
-    
-    // Get user role and organization
-    const { data: userData } = await authClient
-      .from('users')
-      .select('role, organization_id')
-      .eq('id', uid)
-      .single()
-    
-    console.log('📱 Mobile: User data:', userData)
+    console.log('📱 Mobile: loadLocations called for user:', uid)
+    try {
+      const authClient = createClient()
+      
+      // Get user role and organization
+      const { data: userData } = await authClient
+        .from('users')
+        .select('role, organization_id')
+        .eq('id', uid)
+        .single()
+      
+      console.log('📱 Mobile: User data:', userData)
 
-    // If super_admin, get org from subdomain
-    if (userData?.role === 'super_admin') {
-      console.log('📱 Mobile: Super admin detected, using subdomain')
-      
-      // Extract subdomain
-      const hostname = window.location.hostname
-      const parts = hostname.split('.')
-      
-      if (parts.length >= 3) {
-        const subdomain = parts[0]
-        console.log('📱 Mobile: Detected subdomain:', subdomain)
+      // If super_admin, get org from subdomain
+      if (userData?.role === 'super_admin') {
+        console.log('📱 Mobile: Super admin detected, using subdomain')
         
-        // Get organization from subdomain
-        const { data: org, error: orgError } = await authClient
-          .from('organizations')
-          .select('id')
-          .eq('subdomain', subdomain)
-          .single()
+        // Extract subdomain
+        const hostname = window.location.hostname
+        const parts = hostname.split('.')
         
-        if (orgError || !org) {
-          console.error('📱 Mobile: Error fetching org:', orgError)
-          showAlert('error', 'Could not find organization for this subdomain')
+        if (parts.length >= 3) {
+          const subdomain = parts[0]
+          console.log('📱 Mobile: Detected subdomain:', subdomain)
+          
+          // Get organization from subdomain
+          const { data: org, error: orgError } = await authClient
+            .from('organizations')
+            .select('id')
+            .eq('subdomain', subdomain)
+            .single()
+          
+          if (orgError || !org) {
+            console.error('📱 Mobile: Error fetching org:', orgError)
+            showAlert('error', 'Could not find organization for this subdomain')
+            return
+          }
+          
+          console.log('📱 Mobile: Found organization:', org.id)
+          
+          // Load ALL locations for this organization
+          const { data: locationsData, error: locationsError } = await dataSupabase
+            .from('locations')
+            .select('id, name')
+            .eq('organization_id', org.id)
+            .order('name')
+          
+          console.log('📱 Mobile: All locations for org:', locationsData?.length)
+          
+          if (locationsData && locationsData.length > 0) {
+            setAvailableLocations(locationsData)
+            console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
+            
+            if (locationsData.length === 1) {
+              console.log('📱 Mobile: Auto-selecting single location')
+              setSelectedLocationId(locationsData[0].id)
+              await loadEmployees(locationsData[0].id)
+            } else {
+              console.log('📱 Mobile: Multiple locations, showing picker')
+              setShowLocationPicker(true)
+            }
+          } else {
+            showAlert('error', 'No locations found for this organization')
+          }
+          
           return
         }
-        
-        console.log('📱 Mobile: Found organization:', org.id)
-        
-        // Load ALL locations for this organization
-        const { data: locationsData, error: locationsError } = await dataSupabase
-          .from('locations')
-          .select('id, name')
-          .eq('organization_id', org.id)
-          .order('name')
-        
-        console.log('📱 Mobile: All locations for org:', locationsData?.length)
-        
-        if (locationsData && locationsData.length > 0) {
-          setAvailableLocations(locationsData)
-          console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
-          
-          if (locationsData.length === 1) {
-            console.log('📱 Mobile: Auto-selecting single location')
-            setSelectedLocationId(locationsData[0].id)
-            await loadEmployees(locationsData[0].id)
-          } else {
-            console.log('📱 Mobile: Multiple locations, showing picker')
-            setShowLocationPicker(true)
-          }
-        } else {
-          showAlert('error', 'No locations found for this organization')
-        }
-        
+      }
+
+      // Regular user - check location_managers
+      console.log('📱 Mobile: Regular user, checking location_managers')
+      const { data: locationManagerData, error: locError } = await dataSupabase
+        .from('location_managers')
+        .select('location_id')
+        .eq('user_id', uid)
+
+      console.log('📱 Mobile: location_managers query result:', { 
+        hasData: !!locationManagerData, 
+        count: locationManagerData?.length,
+        hasError: !!locError 
+      })
+
+      if (locError) {
+        console.error('📱 Mobile: Error fetching location_managers:', locError)
+        showAlert('error', 'Failed to load locations')
         return
       }
-    }
 
-    // Regular user - check location_managers
-    console.log('📱 Mobile: Regular user, checking location_managers')
-    const { data: locationManagerData, error: locError } = await dataSupabase
-      .from('location_managers')
-      .select('location_id')
-      .eq('user_id', uid)
-
-    console.log('📱 Mobile: location_managers query result:', { 
-      hasData: !!locationManagerData, 
-      count: locationManagerData?.length,
-      hasError: !!locError 
-    })
-
-    if (locError) {
-      console.error('📱 Mobile: Error fetching location_managers:', locError)
-      showAlert('error', 'Failed to load locations')
-      return
-    }
-
-    if (!locationManagerData || locationManagerData.length === 0) {
-      console.log('📱 Mobile: No locations found')
-      showAlert('error', 'No locations assigned. Please contact your administrator.')
-      return
-    }
-
-    const locationIds = locationManagerData.map(lm => lm.location_id)
-    console.log('📱 Mobile: Location IDs:', locationIds)
-
-    const { data: locationsData, error: locationsError } = await dataSupabase
-      .from('locations')
-      .select('id, name')
-      .in('id', locationIds)
-      .order('name')
-
-    console.log('📱 Mobile: locations query result:', { 
-      hasData: !!locationsData, 
-      count: locationsData?.length,
-      hasError: !!locationsError 
-    })
-
-    if (locationsData) {
-      setAvailableLocations(locationsData)
-      console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
-      
-      if (locationsData.length === 1) {
-        console.log('📱 Mobile: Auto-selecting single location')
-        setSelectedLocationId(locationsData[0].id)
-        await loadEmployees(locationsData[0].id)
-      } else if (locationsData.length > 1) {
-        console.log('📱 Mobile: Multiple locations, showing picker')
-        setShowLocationPicker(true)
+      if (!locationManagerData || locationManagerData.length === 0) {
+        console.log('📱 Mobile: No locations found')
+        showAlert('error', 'No locations assigned. Please contact your administrator.')
+        return
       }
+
+      const locationIds = locationManagerData.map(lm => lm.location_id)
+      console.log('📱 Mobile: Location IDs:', locationIds)
+
+      const { data: locationsData, error: locationsError } = await dataSupabase
+        .from('locations')
+        .select('id, name')
+        .in('id', locationIds)
+        .order('name')
+
+      console.log('📱 Mobile: locations query result:', { 
+        hasData: !!locationsData, 
+        count: locationsData?.length,
+        hasError: !!locationsError 
+      })
+
+      if (locationsData) {
+        setAvailableLocations(locationsData)
+        console.log('📱 Mobile: Locations set:', locationsData.map(l => l.name))
+        
+        if (locationsData.length === 1) {
+          console.log('📱 Mobile: Auto-selecting single location')
+          setSelectedLocationId(locationsData[0].id)
+          await loadEmployees(locationsData[0].id)
+        } else if (locationsData.length > 1) {
+          console.log('📱 Mobile: Multiple locations, showing picker')
+          setShowLocationPicker(true)
+        }
+      }
+    } catch (error) {
+      console.error('📱 Mobile: Exception in loadLocations:', error)
+      showAlert('error', 'Failed to load locations')
     }
-  } catch (error) {
-    console.error('📱 Mobile: Exception in loadLocations:', error)
-    showAlert('error', 'Failed to load locations')
   }
-}
 
   async function loadEmployees(locId: string) {
     try {
@@ -451,6 +454,85 @@ export default function MobilePayrollSubmit() {
     setSelectedEmployee(null)
   }
 
+  async function handleSyncConnecteam() {
+    if (!periodStart || !periodEnd) {
+      showAlert('error', 'Please select a pay date first')
+      return
+    }
+
+    if (filteredEmployees.length === 0) {
+      showAlert('error', 'No employees found for this payroll group')
+      return
+    }
+
+    setIsSyncingConnecteam(true)
+
+    try {
+      // Get all employee emails
+      const employeeEmails = filteredEmployees
+        .filter(emp => emp.email)
+        .map(emp => emp.email!.toLowerCase())
+
+      if (employeeEmails.length === 0) {
+        showAlert('error', 'No employees have email addresses. Please add emails to sync with Connecteam.')
+        setIsSyncingConnecteam(false)
+        return
+      }
+
+      // Call our API to fetch hours from Connecteam
+      const response = await fetch('/api/connecteam/hours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          periodStart,
+          periodEnd,
+          employeeEmails,
+          payrollGroup, // Include payroll group to select correct time clock
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to sync with Connecteam')
+      }
+
+      const data = await response.json()
+      const hoursMap = data.hours
+
+      // Update employees with synced hours
+      let syncedCount = 0
+      const updatedEmployees = employees.map((emp) => {
+        // Only update if employee is in current payroll group
+        if (emp.payroll_group !== payrollGroup) return emp
+        
+        const email = emp.email?.toLowerCase()
+        if (email && hoursMap[email]) {
+          syncedCount++
+          const hours = hoursMap[email].toFixed(2)
+          const amount = emp.compensation_type === 'hourly' 
+            ? parseFloat(hours) * (emp.hourly_rate || 0)
+            : emp.amount
+          
+          return {
+            ...emp,
+            hours: emp.compensation_type === 'hourly' ? hours : emp.hours,
+            amount,
+          }
+        }
+        return emp
+      })
+
+      setEmployees(updatedEmployees)
+      showAlert('success', `✓ Synced ${syncedCount} employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`)
+
+    } catch (error: any) {
+      console.error('Connecteam sync error:', error)
+      showAlert('error', error.message || 'Failed to sync with Connecteam. You can still enter hours manually.')
+    } finally {
+      setIsSyncingConnecteam(false)
+    }
+  }
+
   async function handleSubmit() {
     if (!selectedLocationId || !userId) {
       showAlert('error', 'Missing required information')
@@ -526,7 +608,6 @@ export default function MobilePayrollSubmit() {
       return
     }
 
-    // Validation - REMOVED employee_code check
     if (!newEmployee.first_name || !newEmployee.last_name) {
       showAlert('error', 'Please fill in all required fields')
       return
@@ -551,6 +632,7 @@ export default function MobilePayrollSubmit() {
             location_id: selectedLocationId,
             first_name: newEmployee.first_name,
             last_name: newEmployee.last_name,
+            email: newEmployee.email || null,
             payroll_group: newEmployee.payroll_group,
             compensation_type: newEmployee.compensation_type,
             hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
@@ -568,6 +650,7 @@ export default function MobilePayrollSubmit() {
       setNewEmployee({
         first_name: '',
         last_name: '',
+        email: '',
         payroll_group: 'A',
         compensation_type: 'hourly',
         hourly_rate: '',
@@ -594,6 +677,7 @@ export default function MobilePayrollSubmit() {
         .update({
           first_name: editingEmployee.first_name,
           last_name: editingEmployee.last_name,
+          email: editingEmployee.email,
           payroll_group: editingEmployee.payroll_group,
           compensation_type: editingEmployee.compensation_type,
           hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
@@ -653,10 +737,8 @@ export default function MobilePayrollSubmit() {
     const deltaX = currentX - touchStart.x
     const deltaY = currentY - touchStart.y
 
-    // Only allow horizontal swipe (not vertical scroll)
     if (Math.abs(deltaX) > Math.abs(deltaY)) {
       e.preventDefault()
-      // Limit swipe to -150px (left) max
       const offset = Math.max(-150, Math.min(0, deltaX))
       setTouchOffset(offset)
     }
@@ -664,10 +746,8 @@ export default function MobilePayrollSubmit() {
 
   function handleTouchEnd() {
     if (touchOffset < -75) {
-      // Swipe threshold reached, keep it swiped
       setTouchOffset(-150)
     } else {
-      // Reset
       setTouchOffset(0)
       setSwipedEmployeeId(null)
     }
@@ -768,6 +848,17 @@ export default function MobilePayrollSubmit() {
             </div>
 
             <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Email</label>
+              <input
+                type="email"
+                value={editingEmployee.email || ''}
+                onChange={(e) => setEditingEmployee({ ...editingEmployee, email: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                placeholder="employee@example.com"
+              />
+            </div>
+
+            <div>
               <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group</label>
               <select
                 value={editingEmployee.payroll_group}
@@ -862,6 +953,17 @@ export default function MobilePayrollSubmit() {
                 onChange={(e) => setNewEmployee({ ...newEmployee, last_name: e.target.value })}
                 className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
                 placeholder="Doe"
+              />
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block">Email (for Connecteam sync)</label>
+              <input
+                type="email"
+                value={newEmployee.email}
+                onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                placeholder="john.doe@example.com"
               />
             </div>
 
@@ -1032,7 +1134,11 @@ export default function MobilePayrollSubmit() {
               <h1 className="text-white text-xl font-bold">Payroll Submit</h1>
               {availableLocations.length > 1 ? (
                 <button
-                  onClick={() => setShowLocationPicker(true)}
+                  onClick={() => {
+                    setShowLocationPicker(true)
+                    setSelectedLocationId(null)
+                    setEmployees([])
+                  }}
                   className="flex items-center gap-2 text-blue-200 text-sm hover:text-blue-100 transition"
                 >
                   <MapPin className="w-4 h-4" />
@@ -1145,6 +1251,27 @@ export default function MobilePayrollSubmit() {
               </div>
             </div>
 
+            {/* Connecteam Sync Button */}
+            {filteredEmployees.length > 0 && (
+              <button
+                onClick={handleSyncConnecteam}
+                disabled={isSyncingConnecteam}
+                className="w-full mb-3 bg-gradient-to-r from-purple-500 to-purple-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isSyncingConnecteam ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    Syncing from Connecteam...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-5 h-5" />
+                    Sync Hours from Connecteam
+                  </>
+                )}
+              </button>
+            )}
+
             <div className="space-y-3">
               {filteredEmployees.length === 0 ? (
                 <div className="text-center py-12">
@@ -1158,7 +1285,6 @@ export default function MobilePayrollSubmit() {
                   
                   return (
                     <div key={emp.id} className="relative overflow-hidden rounded-xl">
-                      {/* Action buttons (revealed on swipe) */}
                       <div className="absolute inset-y-0 right-0 flex">
                         <button
                           onClick={() => {
@@ -1179,7 +1305,6 @@ export default function MobilePayrollSubmit() {
                         </button>
                       </div>
 
-                      {/* Employee card (swipeable) - NO employee_code display */}
                       <button
                         onTouchStart={(e) => handleTouchStart(e, emp.id)}
                         onTouchMove={handleTouchMove}
@@ -1200,6 +1325,9 @@ export default function MobilePayrollSubmit() {
                             <h3 className="text-white font-semibold">
                               {emp.first_name} {emp.last_name}
                             </h3>
+                            {emp.email && (
+                              <p className="text-blue-300 text-xs mt-1">{emp.email}</p>
+                            )}
                           </div>
                           <span
                             className={`px-2 py-1 rounded-full text-xs font-semibold ${
@@ -1233,7 +1361,6 @@ export default function MobilePayrollSubmit() {
                 })
               )}
               
-              {/* Add Employee Button */}
               <button
                 onClick={() => setShowAddEmployee(true)}
                 className="w-full bg-white/5 border-2 border-dashed border-white/20 hover:border-blue-400 hover:bg-white/10 rounded-xl p-4 text-center transition-all group"
