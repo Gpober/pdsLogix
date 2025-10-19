@@ -193,50 +193,54 @@ export default function PayrollDashboard() {
   }, [reportPeriod, month, year, customStart, customEnd]);
 
   // Check auth and role
-  useEffect(() => {
-    const checkAuth = async () => {
-      const platformClient = createClient();
-      const { data: { user }, error: authError } = await platformClient.auth.getUser();
-      console.log('🔍 Starting auth check...');
+ useEffect(() => {
+  const checkAuth = async () => {
+    console.log('🔍 Starting auth check...');
+    const platformClient = createClient();
+    const { data: { user }, error: authError } = await platformClient.auth.getUser();
 
-      if (authError || !user) {
-        console.log('❌ Auth error or no user:', authError);
-        router.push('/login');
-        return;
-      }
+    if (authError || !user) {
+      console.log('❌ Auth error or no user:', authError);
+      router.push('/login');
+      return;
+    }
 
-      setUserId(user.id);
-      console.log('👤 User ID:', user.id);
+    console.log('👤 User ID:', user.id);
+    setUserId(user.id);
 
-      const { data: userData, error: userError } = await platformClient
-        .from('users')
-        .select('role, organization_id')
-        .eq('id', user.id)
-        .single();
-      console.log('📋 User data from database:', userData);
-      console.log('🏢 Organization ID:', userData?.organization_id);
-      console.log('👔 User role:', userData?.role);
+    const { data: userData, error: userError } = await platformClient
+      .from('users')
+      .select('role, organization_id')
+      .eq('id', user.id)
+      .single();
 
-      if (userError || !userData) {
-        router.push('/dashboard');
-        return;
-      }
+    console.log('📋 User data from database:', userData);
+    console.log('🏢 Organization ID:', userData?.organization_id);
+    console.log('👔 User role:', userData?.role);
+    
+    if (userError || !userData) {
+      console.error('❌ User error:', userError);
+      router.push('/dashboard');
+      return;
+    }
 
-      setUserRole(userData.role);
-      setOrganizationId(userData.organization_id);
-      console.log('✅ State will be set - userRole:', userData.role, 'orgId:', userData.organization_id);
+    setUserRole(userData.role);
+    setOrganizationId(userData.organization_id);
 
-      // Only allow admins/owners
-      if (userData.role !== 'super_admin' && userData.role !== 'admin' && userData.role !== 'owner') {
-        router.push('/dashboard');
-        return;
-      }
+    console.log('✅ State will be set - userRole:', userData.role, 'orgId:', userData.organization_id);
 
-      console.log('✅ Access granted, ready to load data');
-    };
+    // Only allow admins/owners
+    if (userData.role !== 'super_admin' && userData.role !== 'admin' && userData.role !== 'owner') {
+      console.log('⛔ Access denied - role:', userData.role);
+      router.push('/dashboard');
+      return;
+    }
 
-    checkAuth();
-  }, [router]);
+    console.log('✅ Access granted, ready to load data');
+  };
+
+  checkAuth();
+}, [router]);
 
   // Load pending submissions and all locations
   useEffect(() => {
