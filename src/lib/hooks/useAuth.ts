@@ -84,7 +84,10 @@ export function useAuth() {
           await fetchUserProfile(session.user.id, session.user.email)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
-          router.push('/login')
+          // Redirect to Platform login
+          if (typeof window !== 'undefined') {
+            window.location.href = 'https://iamcfo.com/login'
+          }
         }
       }
     )
@@ -151,6 +154,9 @@ export function useAuth() {
             
             if (error) {
               console.error('❌ Failed to set session from URL:', error)
+              // If session transfer fails, redirect to platform login
+              window.location.href = 'https://iamcfo.com/login'
+              return
             }
             
             if (data?.session) {
@@ -166,6 +172,11 @@ export function useAuth() {
             }
           } catch (err) {
             console.error('❌ Exception setting session:', err)
+            // On error, redirect to platform login
+            if (typeof window !== 'undefined') {
+              window.location.href = 'https://iamcfo.com/login'
+            }
+            return
           }
         }
       }
@@ -176,7 +187,10 @@ export function useAuth() {
       if (session?.user) {
         await fetchUserProfile(session.user.id, session.user.email)
       } else if (!pathname?.startsWith('/login')) {
-        router.push('/login')
+        // Redirect to Platform login instead of local login
+        if (typeof window !== 'undefined') {
+          window.location.href = 'https://iamcfo.com/login'
+        }
       }
     } catch (error) {
       console.error('Auth check error:', error)
@@ -302,7 +316,10 @@ export function useAuth() {
     const supabase = createClient()
     await supabase.auth.signOut()
     setUser(null)
-    router.push('/login')
+    // Redirect to Platform login
+    if (typeof window !== 'undefined') {
+      window.location.href = 'https://iamcfo.com/login'
+    }
   }
 
   return {
