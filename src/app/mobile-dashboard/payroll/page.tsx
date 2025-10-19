@@ -261,38 +261,42 @@ export default function PayrollDashboard() {
 }, [userRole, organizationId]);
 
   const loadPendingSubmissions = async () => {
-    console.log('📥 Loading pending submissions...');
-    const { data: submissions, error } = await supabase
-      .from('payroll_submissions')
-      .select('*')
-      .eq('status', 'pending')
-      .order('submitted_at', { ascending: false });
-    console.log('📊 Found submissions:', submissions?.length || 0, submissions);
+  console.log('📥 Loading pending submissions...');
+  
+  const { data: submissions, error } = await supabase
+    .from('payroll_submissions')
+    .select('*')
+    .eq('status', 'pending')
+    .order('submitted_at', { ascending: false });
 
-    if (error) {
-      console.error('Error loading pending submissions:', error);
-      return;
-    }
+  if (error) {
+    console.error('❌ Error loading pending submissions:', error);
+    return;
+  }
 
-    // Get location names
-    const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
-    console.log('📍 Location IDs to fetch:', locationsIds);
-    const { data: locations } = await supabase
-      .from('locations')
-      .select('id, name')
-      .in('id', locationsIds);
-    console.log('📍 Locations found:', locations);
+  console.log('📊 Found submissions:', submissions?.length || 0, submissions);
 
-    const locationsMap = new Map(locations?.map(l => [l.id, l.name]));
+  // Get location names
+  const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
+  console.log('📍 Location IDs to fetch:', locationsIds);
+  
+  const { data: locations } = await supabase
+    .from('locations')
+    .select('id, name')
+    .in('id', locationsIds);
 
-    const submissionsWithNames = (submissions || []).map(s => ({
-      ...s,
-      location_name: locationsMap.get(s.location_id) || 'Unknown Location'
-    }));
-    console.log('✅ Final submissions with names:', submissionsWithNames);
+  console.log('📍 Locations found:', locations);
 
-    setPendingSubmissions(submissionsWithNames);
-  };
+  const locationsMap = new Map(locations?.map(l => [l.id, l.name]));
+
+  const submissionsWithNames = (submissions || []).map(s => ({
+    ...s,
+    location_name: locationsMap.get(s.location_id) || 'Unknown Location'
+  }));
+
+  console.log('✅ Final submissions with names:', submissionsWithNames);
+  setPendingSubmissions(submissionsWithNames);
+};
 
   const loadAllLocations = async () => {
     console.log('📥 Loading all locations for organization:', organizationId);
