@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { supabase as dataSupabase } from '@/lib/supabaseClient'
 import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar, MapPin, ChevronDown } from 'lucide-react'
 
-// Simplified types
+// Simplified types - REMOVED employee_code
 type PayrollGroup = 'A' | 'B'
 type CompensationType = 'hourly' | 'production'
 
@@ -14,7 +14,6 @@ type Employee = {
   id: string
   first_name: string
   last_name: string
-  employee_code: string
   payroll_group: PayrollGroup
   compensation_type: CompensationType
   hourly_rate: number | null
@@ -159,7 +158,6 @@ export default function MobilePayrollSubmit() {
   const [newEmployee, setNewEmployee] = useState({
     first_name: '',
     last_name: '',
-    employee_code: '',
     payroll_group: 'A' as PayrollGroup,
     compensation_type: 'hourly' as CompensationType,
     hourly_rate: '',
@@ -459,8 +457,8 @@ export default function MobilePayrollSubmit() {
       return
     }
 
-    // Validation
-    if (!newEmployee.first_name || !newEmployee.last_name || !newEmployee.employee_code) {
+    // Validation - REMOVED employee_code check
+    if (!newEmployee.first_name || !newEmployee.last_name) {
       showAlert('error', 'Please fill in all required fields')
       return
     }
@@ -482,7 +480,6 @@ export default function MobilePayrollSubmit() {
           {
             organization_id: 'ba5ac7ab-ff03-42c8-9e63-3a5a444449ca',
             location_id: selectedLocationId,
-            employee_code: newEmployee.employee_code,
             first_name: newEmployee.first_name,
             last_name: newEmployee.last_name,
             payroll_group: newEmployee.payroll_group,
@@ -502,7 +499,6 @@ export default function MobilePayrollSubmit() {
       setNewEmployee({
         first_name: '',
         last_name: '',
-        employee_code: '',
         payroll_group: 'A',
         compensation_type: 'hourly',
         hourly_rate: '',
@@ -529,7 +525,6 @@ export default function MobilePayrollSubmit() {
         .update({
           first_name: editingEmployee.first_name,
           last_name: editingEmployee.last_name,
-          employee_code: editingEmployee.employee_code,
           payroll_group: editingEmployee.payroll_group,
           compensation_type: editingEmployee.compensation_type,
           hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
@@ -704,16 +699,6 @@ export default function MobilePayrollSubmit() {
             </div>
 
             <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Employee Code</label>
-              <input
-                type="text"
-                value={editingEmployee.employee_code}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, employee_code: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              />
-            </div>
-
-            <div>
               <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group</label>
               <select
                 value={editingEmployee.payroll_group}
@@ -812,17 +797,6 @@ export default function MobilePayrollSubmit() {
             </div>
 
             <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Employee Code *</label>
-              <input
-                type="text"
-                value={newEmployee.employee_code}
-                onChange={(e) => setNewEmployee({ ...newEmployee, employee_code: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="EMP001"
-              />
-            </div>
-
-            <div>
               <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group *</label>
               <select
                 value={newEmployee.payroll_group}
@@ -905,7 +879,6 @@ export default function MobilePayrollSubmit() {
                 <h3 className="text-white text-xl font-bold">
                   {selectedEmployee.first_name} {selectedEmployee.last_name}
                 </h3>
-                <p className="text-blue-200 text-sm">{selectedEmployee.employee_code}</p>
               </div>
               <span
                 className={`px-3 py-1 rounded-full text-xs font-semibold ${
@@ -1137,7 +1110,7 @@ export default function MobilePayrollSubmit() {
                         </button>
                       </div>
 
-                      {/* Employee card (swipeable) */}
+                      {/* Employee card (swipeable) - NO employee_code display */}
                       <button
                         onTouchStart={(e) => handleTouchStart(e, emp.id)}
                         onTouchMove={handleTouchMove}
@@ -1158,7 +1131,6 @@ export default function MobilePayrollSubmit() {
                             <h3 className="text-white font-semibold">
                               {emp.first_name} {emp.last_name}
                             </h3>
-                            <p className="text-blue-200 text-sm">{emp.employee_code}</p>
                           </div>
                           <span
                             className={`px-2 py-1 rounded-full text-xs font-semibold ${
