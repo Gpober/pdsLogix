@@ -30,7 +30,8 @@ export function useAuth() {
 
   const loadUserProfile = useCallback(async (userId: string) => {
     try {
-      const { data, error } = await dataClient
+      // Load user profile from PLATFORM Supabase (where users table exists)
+      const { data, error } = await authClient
         .from('users')
         .select('*')
         .eq('id', userId)
@@ -43,7 +44,7 @@ export function useAuth() {
       console.error('Error loading user profile:', error)
       return null
     }
-  }, [dataClient])
+  }, [authClient])
 
   const handleAuthStateChange = useCallback(async (session: Session | null) => {
     if (session?.user) {
@@ -54,7 +55,7 @@ export function useAuth() {
       // Role-based redirects for employees
       if (userProfile?.role === 'employee') {
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-        if (pathname === '/login' || pathname === '/') {
+        if (pathname === '/login' || pathname === '/' || pathname === '/dashboard') {
           router.push(isMobile ? '/mobile-dashboard/payroll/submit' : '/payroll-submit')
         }
       }
@@ -64,7 +65,7 @@ export function useAuth() {
       await syncDataClientSession(null)
     }
     setLoading(false)
-  }, [loadUserProfile, router, pathname, dataClient])
+  }, [loadUserProfile, router, pathname])
 
   useEffect(() => {
     // Get initial session
