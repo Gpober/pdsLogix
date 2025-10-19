@@ -2,19 +2,23 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { getAuthClient } from '@/lib/supabase/auth-client'
+import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 
 export default function HomePage() {
   const router = useRouter()
-  const supabase = createClient()
+  const authClient = getAuthClient()
+  const dataClient = getDataClient()
 
   useEffect(() => {
     checkAuthAndRedirect()
   }, [])
 
   async function checkAuthAndRedirect() {
-    const { data: { session } } = await supabase.auth.getSession()
-    
+    const { data: { session } } = await authClient.auth.getSession()
+
+    await syncDataClientSession(session ?? null)
+
     if (!session) {
       // User is not logged in, redirect to login
       router.push('/login')
@@ -22,7 +26,7 @@ export default function HomePage() {
     }
 
     // User is logged in - check if super admin or regular user
-    const { data: userData } = await supabase
+    const { data: userData } = await dataClient
       .from('users')
       .select('role, organization_id')
       .eq('id', session.user.id)

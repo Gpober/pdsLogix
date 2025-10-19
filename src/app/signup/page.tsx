@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { getAuthClient } from '@/lib/supabase/auth-client'
+import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 
 export default function ClientSignupPage() {
   const [name, setName] = useState('')
@@ -12,7 +13,8 @@ export default function ClientSignupPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-  const supabase = createClient()
+  const authClient = getAuthClient()
+  const dataClient = getDataClient()
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault()
@@ -24,7 +26,7 @@ export default function ClientSignupPage() {
       const currentSubdomain = window.location.hostname.split('.')[0]
 
       // Find organization by subdomain
-      const { data: orgData, error: orgError } = await supabase
+      const { data: orgData, error: orgError } = await dataClient
         .from('organizations')
         .select('id, invite_code')
         .eq('subdomain', currentSubdomain)
@@ -44,7 +46,7 @@ export default function ClientSignupPage() {
       }
 
       // Create auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { data: authData, error: authError } = await authClient.auth.signUp({
         email,
         password,
         options: {
@@ -66,8 +68,12 @@ export default function ClientSignupPage() {
         return
       }
 
+      if (authData.session) {
+        await syncDataClientSession(authData.session)
+      }
+
       // Create user record in database
-      const { error: userError } = await supabase
+      const { error: userError } = await dataClient
         .from('users')
         .insert({
           id: authData.user.id,

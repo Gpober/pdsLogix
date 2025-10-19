@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { getAuthClient } from '@/lib/supabase/auth-client'
+import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 
 export default function DashboardLayout({
   children,
@@ -11,15 +12,22 @@ export default function DashboardLayout({
 }) {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
-  const supabase = createClient()
+  const authClient = getAuthClient()
+  const dataClient = getDataClient()
 
   useEffect(() => {
     checkAuthAndRoute()
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = authClient.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
+        await syncDataClientSession(null)
         router.push('/login')
+        return
+      }
+
+      if (session) {
+        await syncDataClientSession(session)
       }
     })
 
@@ -29,15 +37,17 @@ export default function DashboardLayout({
   async function checkAuthAndRoute() {
     try {
       // Get current session
-      const { data: { session } } = await supabase.auth.getSession()
-      
+      const { data: { session } } = await authClient.auth.getSession()
+
       if (!session) {
         router.push('/login')
         return
       }
 
+      await syncDataClientSession(session)
+
       // Get user data including role and organization
-      const { data: userData, error } = await supabase
+      const { data: userData, error } = await dataClient
         .from('users')
         .select('role, organization_id, organizations(subdomain, status)')
         .eq('id', session.user.id)
@@ -45,7 +55,8 @@ export default function DashboardLayout({
 
       if (error || !userData) {
         console.error('Failed to load user data:', error)
-        await supabase.auth.signOut()
+        await authClient.auth.signOut()
+        await syncDataClientSession(null)
         router.push('/login')
         return
       }
@@ -103,7 +114,8 @@ export default function DashboardLayout({
         
         if (orgSubdomain !== currentSubdomain) {
           console.error('❌ Subdomain mismatch')
-          await supabase.auth.signOut()
+          await authClient.auth.signOut()
+          await syncDataClientSession(null)
           router.push('/login')
           return
         }
@@ -111,7 +123,8 @@ export default function DashboardLayout({
         // Check if organization is suspended or cancelled
         if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
           console.error('❌ Organization suspended or cancelled')
-          await supabase.auth.signOut()
+          await authClient.auth.signOut()
+          await syncDataClientSession(null)
           router.push('/login')
           return
         }
@@ -149,7 +162,8 @@ export default function DashboardLayout({
         
         if (orgSubdomain !== currentSubdomain) {
           console.error('❌ Subdomain mismatch')
-          await supabase.auth.signOut()
+          await authClient.auth.signOut()
+          await syncDataClientSession(null)
           router.push('/login')
           return
         }
@@ -157,7 +171,8 @@ export default function DashboardLayout({
         // Check if organization is suspended or cancelled
         if (orgStatus === 'suspended' || orgStatus === 'cancelled') {
           console.error('❌ Organization suspended or cancelled')
-          await supabase.auth.signOut()
+          await authClient.auth.signOut()
+          await syncDataClientSession(null)
           router.push('/login')
           return
         }
@@ -171,7 +186,8 @@ export default function DashboardLayout({
       // UNKNOWN ROLE - Deny access
       // =================================================================
       console.error('❌ Unknown user role:', userRole)
-      await supabase.auth.signOut()
+      await authClient.auth.signOut()
+      await syncDataClientSession(null)
       router.push('/login')
 
     } catch (error) {

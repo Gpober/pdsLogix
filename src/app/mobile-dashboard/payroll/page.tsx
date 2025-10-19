@@ -23,8 +23,8 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { createClient } from '@/lib/supabase/client';
-import { supabase } from "@/lib/supabaseClient";
+import { getAuthClient } from '@/lib/supabase/auth-client';
+import { getDataClient, syncDataClientSession } from '@/lib/supabase/client';
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -114,6 +114,8 @@ const formatDate = (date: string) =>
 
 export default function PayrollDashboard() {
   const router = useRouter();
+  const authClient = useMemo(() => getAuthClient(), []);
+  const dataClient = useMemo(() => getDataClient(), []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportPeriod, setReportPeriod] = useState<
     "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
@@ -204,9 +206,16 @@ export default function PayrollDashboard() {
         const subdomain = parts[0];
         console.log('🌐 Detected subdomain:', subdomain);
 
+        const { data: { session } } = await authClient.auth.getSession();
+
+        if (!session) {
+          return;
+        }
+
+        await syncDataClientSession(session);
+
         // Look up organization by subdomain
-        const platformClient = createClient();
-        const { data: org, error } = await platformClient
+        const { data: org, error } = await dataClient
           .from('organizations')
           .select('id')
           .eq('subdomain', subdomain)
@@ -228,19 +237,22 @@ export default function PayrollDashboard() {
   useEffect(() => {
     const checkAuth = async () => {
       console.log('🔍 Starting auth check...');
-      const platformClient = createClient();
-      const { data: { user }, error: authError } = await platformClient.auth.getUser();
+      const { data: { session }, error: authError } = await authClient.auth.getSession();
 
-      if (authError || !user) {
+      if (authError || !session?.user) {
         console.log('❌ Auth error or no user:', authError);
         router.push('/login');
         return;
       }
 
+      await syncDataClientSession(session);
+
+      const user = session.user;
+
       console.log('👤 User ID:', user.id);
       setUserId(user.id);
 
-      const { data: userData, error: userError } = await platformClient
+      const { data: userData, error: userError } = await dataClient
         .from('users')
         .select('role, organization_id')
         .eq('id', user.id)
@@ -298,7 +310,7 @@ export default function PayrollDashboard() {
   const loadPendingSubmissions = async (orgId?: string) => {
     console.log('📥 Loading pending submissions for org:', orgId);
 
-    let query = supabase
+    let query = dataClient
       .from('payroll_submissions')
       .select('*')
       .eq('status', 'pending')
@@ -321,7 +333,7 @@ export default function PayrollDashboard() {
     const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
     console.log('📍 Location IDs to fetch:', locationsIds);
 
-    const { data: locations } = await supabase
+    const { data: locations } = await dataClient
       .from('locations')
       .select('id, name')
       .in('id', locationsIds);
@@ -348,7 +360,7 @@ export default function PayrollDashboard() {
     }
 
     // Get all locations for this org
-    const { data: locations, error: locationsError } = await supabase
+    const { data: locations, error: locationsError } = await dataClient
       .from('locations')
       .select('id, name')
       .eq('organization_id', orgId);
@@ -378,7 +390,7 @@ export default function PayrollDashboard() {
     console.log('📅 Next Friday (pay date):', nextFriday);
 
     // Get all submissions for this pay period
-    const { data: submissions } = await supabase
+    const { data: submissions } = await dataClient
       .from('payroll_submissions')
       .select('*')
       .eq('organization_id', orgId)
@@ -421,7 +433,7 @@ export default function PayrollDashboard() {
     setSelectedSubmission(submission);
 
     // Load submission details
-    const { data: details, error } = await supabase
+    const { data: details, error } = await dataClient
       .from('payroll_entries')
       .select('*')
       .eq('submission_id', submission.id);
@@ -433,7 +445,7 @@ export default function PayrollDashboard() {
 
     // Get employee names
     const employeeIds = details?.map(d => d.employee_id) || [];
-    const { data: employees } = await supabase
+    const { data: employees } = await dataClient
       .from('employees')
       .select('id, first_name, last_name')
       .in('id', employeeIds);
@@ -458,7 +470,7 @@ export default function PayrollDashboard() {
 
   try {
     // Get the location for this submission
-    const { data: locationData } = await supabase
+    const { data: locationData } = await dataClient
       .from('locations')
       .select('id, name, organization_id')
       .eq('id', selectedSubmission.location_id)
@@ -469,7 +481,7 @@ export default function PayrollDashboard() {
     }
 
     // STEP 1: Update payroll_submissions status to 'approved'
-    const { error: updateSubmissionError } = await supabase
+    const { error: updateSubmissionError } = await dataClient
       .from('payroll_submissions')
       .update({
         status: 'approved',
@@ -481,7 +493,7 @@ export default function PayrollDashboard() {
     if (updateSubmissionError) throw updateSubmissionError;
 
     // STEP 2: Update all payroll_entries for this submission to 'approved'
-    const { error: updateEntriesError } = await supabase
+    const { error: updateEntriesError } = await dataClient
       .from('payroll_entries')
       .update({
         status: 'approved'
@@ -491,7 +503,7 @@ export default function PayrollDashboard() {
     if (updateEntriesError) throw updateEntriesError;
 
     // STEP 3: Create approval audit log
-    const { error: approvalLogError } = await supabase
+    const { error: approvalLogError } = await dataClient
       .from('payroll_approvals')
       .insert({
         organization_id: locationData.organization_id,
@@ -532,14 +544,14 @@ export default function PayrollDashboard() {
       source: 'system'
     }));
 
-    const { error: paymentsError } = await supabase
+    const { error: paymentsError } = await dataClient
       .from('payments')
       .insert(paymentsToInsert);
 
     if (paymentsError) throw paymentsError;
 
     // STEP 5: Update submission to 'posted' status
-    const { error: postedError } = await supabase
+    const { error: postedError } = await dataClient
       .from('payroll_submissions')
       .update({
         status: 'posted',
@@ -551,7 +563,7 @@ export default function PayrollDashboard() {
     if (postedError) throw postedError;
 
     // STEP 6: Update entries to 'posted'
-    const { error: entriesPostedError } = await supabase
+    const { error: entriesPostedError } = await dataClient
       .from('payroll_entries')
       .update({
         status: 'posted'
@@ -570,7 +582,7 @@ export default function PayrollDashboard() {
     // Reload historical data
     const load = async () => {
       const { start, end } = getDateRange();
-      const { data } = await supabase
+      const { data } = await dataClient
         .from("payments")
         .select("department, total_amount, date, first_name, last_name")
         .gte("date", start)
@@ -613,14 +625,14 @@ export default function PayrollDashboard() {
 
   try {
     // Get organization_id
-    const { data: locationData } = await supabase
+    const { data: locationData } = await dataClient
       .from('locations')
       .select('organization_id')
       .eq('id', selectedSubmission.location_id)
       .single();
 
     // Update submission status
-    const { error: submissionError } = await supabase
+    const { error: submissionError } = await dataClient
       .from('payroll_submissions')
       .update({
         status: 'rejected',
@@ -632,7 +644,7 @@ export default function PayrollDashboard() {
     if (submissionError) throw submissionError;
 
     // Update entries status
-    const { error: entriesError } = await supabase
+    const { error: entriesError } = await dataClient
       .from('payroll_entries')
       .update({
         status: 'rejected'
@@ -642,7 +654,7 @@ export default function PayrollDashboard() {
     if (entriesError) throw entriesError;
 
     // Log rejection
-    const { error: approvalLogError } = await supabase
+    const { error: approvalLogError } = await dataClient
       .from('payroll_approvals')
       .insert({
         organization_id: locationData?.organization_id,
@@ -677,7 +689,7 @@ export default function PayrollDashboard() {
     const load = async () => {
       const { start, end } = getDateRange();
 
-      const { data } = await supabase
+      const { data } = await dataClient
         .from("payments")
         .select("department, total_amount, date, first_name, last_name")
         .gte("date", start)
@@ -781,7 +793,7 @@ export default function PayrollDashboard() {
   const loadPayroll = async (department: string | null = selectedProperty) => {
     const { start, end } = getDateRange();
 
-    let query = supabase
+    let query = dataClient
       .from("payments")
       .select("date, total_amount, first_name, last_name, department")
       .gte("date", start)
