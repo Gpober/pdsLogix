@@ -1,42 +1,78 @@
 // src/lib/supabase/client.ts
+// Main Supabase client exports for the I AM CFO platform
+// Two Supabase instances: Platform (auth) + Client (data)
+
 import { createClient as createSupabaseClient, SupabaseClient, type Session } from "@supabase/supabase-js"
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+// ============================================
+// PLATFORM SUPABASE - Authentication
+// ============================================
 
-if (!supabaseUrl) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL environment variable")
+const platformUrl = process.env.NEXT_PUBLIC_PLATFORM_SUPABASE_URL!
+const platformAnonKey = process.env.NEXT_PUBLIC_PLATFORM_SUPABASE_ANON_KEY!
+
+if (!platformUrl || !platformAnonKey) {
+  throw new Error("Missing NEXT_PUBLIC_PLATFORM_SUPABASE_URL or NEXT_PUBLIC_PLATFORM_SUPABASE_ANON_KEY")
 }
 
-if (!supabaseAnonKey) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable")
+let authClientInstance: SupabaseClient | null = null
+
+export function getAuthClient(): SupabaseClient {
+  if (authClientInstance) {
+    return authClientInstance
+  }
+
+  authClientInstance = createSupabaseClient(platformUrl, platformAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: "pkce",
+      storage: typeof window !== "undefined" ? window.localStorage : undefined,
+      storageKey: "iamcfo-platform-auth",
+    },
+  })
+
+  return authClientInstance
 }
 
-const globalForSupabase = globalThis as unknown as {
-  __IAMCFO_DATA_CLIENT__?: SupabaseClient
+// ============================================
+// CLIENT SUPABASE - Business Data
+// ============================================
+
+const clientUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const clientAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+if (!clientUrl || !clientAnonKey) {
+  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY")
 }
 
-function createDataClient(): SupabaseClient {
-  return createSupabaseClient(supabaseUrl, supabaseAnonKey, {
+let dataClientInstance: SupabaseClient | null = null
+
+export function getDataClient(): SupabaseClient {
+  if (dataClientInstance) {
+    return dataClientInstance
+  }
+
+  dataClientInstance = createSupabaseClient(clientUrl, clientAnonKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
+      detectSessionInUrl: false,
     },
   })
+
+  return dataClientInstance
 }
 
-export function getDataClient(): SupabaseClient {
-  if (!globalForSupabase.__IAMCFO_DATA_CLIENT__) {
-    globalForSupabase.__IAMCFO_DATA_CLIENT__ = createDataClient()
-  }
-
-  return globalForSupabase.__IAMCFO_DATA_CLIENT__
-}
+// ============================================
+// SESSION SYNC - Bridge Platform auth to Client data
+// ============================================
 
 export async function syncDataClientSession(session: Session | null): Promise<void> {
   const dataClient = getDataClient()
 
-  if (!session || !session.access_token) {
+  if (!session?.access_token) {
     await dataClient.auth.signOut()
     return
   }
@@ -47,15 +83,18 @@ export async function syncDataClientSession(session: Session | null): Promise<vo
         access_token: session.access_token,
         refresh_token: session.refresh_token,
       })
-    } else {
-      await dataClient.auth.setAuth(session.access_token)
     }
   } catch (error) {
-    console.error("❌ Failed to sync session with data Supabase:", error)
+    console.error("❌ Failed to sync session with data client:", error)
   }
 }
 
-export function createClient(): SupabaseClient {
+// ============================================
+// BACKWARDS COMPATIBILITY
+// ============================================
+
+// For any code still using createClient()
+export function createClient() {
   return getDataClient()
 }
 
