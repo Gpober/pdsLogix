@@ -299,80 +299,82 @@ export default function PayrollDashboard() {
 };
 
   const loadAllLocations = async () => {
-    console.log('📥 Loading all locations for organization:', organizationId);
-    if (!organizationId) {
-      console.warn('⚠️ No organizationId, skipping location load');
-      return;
-    }
+  console.log('📥 Loading all locations for organization:', organizationId);
+  
+  if (!organizationId) {
+    console.warn('⚠️ No organizationId, skipping location load');
+    return;
+  }
 
-    // Get all locations
-    const { data: locations, error: locationsError } = await supabase
-      .from('locations')
-      .select('id, name')
-      .eq('organization_id', organizationId);
-    console.log('📍 Found locations:', locations?.length || 0, locations);
+  // Get all locations
+  const { data: locations, error: locationsError } = await supabase
+    .from('locations')
+    .select('id, name')
+    .eq('organization_id', organizationId);
 
-    if (locationsError) {
-      console.error('Error loading locations:', locationsError);
-      return;
-    }
+  if (locationsError) {
+    console.error('❌ Error loading locations:', locationsError);
+    return;
+  }
 
-    // Get next Friday for default pay date
-    const getNextFriday = () => {
-      const today = new Date();
-      const dayOfWeek = today.getDay();
-      const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
-      const nextFriday = new Date(today);
-      nextFriday.setDate(today.getDate() + daysUntilFriday);
+  console.log('📍 Found locations:', locations?.length || 0, locations);
 
-      const year = nextFriday.getFullYear();
-      const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
-      const day = String(nextFriday.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-
-    const nextFriday = getNextFriday();
-    console.log('📅 Next Friday (pay date):', nextFriday);
-
-    // Get all submissions for this pay period
-    const { data: submissions } = await supabase
-      .from('payroll_submissions')
-      .select('*')
-      .eq('organization_id', organizationId)
-      .eq('pay_date', nextFriday);
-    console.log('📊 Submissions for this pay period:', submissions?.length || 0, submissions);
-
-    const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
-
-    // Build location status array
-    const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
-      const submission = submissionsMap.get(location.id);
-
-      if (submission) {
-        return {
-          location_id: location.id,
-          location_name: location.name,
-          submission_id: submission.id,
-          status: submission.status as 'approved' | 'pending',
-          total_amount: submission.total_amount,
-          employee_count: submission.employee_count,
-          pay_date: submission.pay_date,
-          payroll_group: submission.payroll_group as 'A' | 'B',
-          submitted_at: submission.submitted_at
-        };
-      } else {
-        return {
-          location_id: location.id,
-          location_name: location.name,
-          status: 'not_submitted' as const
-        };
-      }
-    });
-
-    console.log('✅ Final location statuses:', locationStatuses);
-
-    setAllLocations(locationStatuses);
+  // Get next Friday for default pay date
+  const getNextFriday = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+    const nextFriday = new Date(today);
+    nextFriday.setDate(today.getDate() + daysUntilFriday);
+    
+    const year = nextFriday.getFullYear();
+    const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
+    const day = String(nextFriday.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
+
+  const nextFriday = getNextFriday();
+  console.log('📅 Next Friday (pay date):', nextFriday);
+
+  // Get all submissions for this pay period
+  const { data: submissions } = await supabase
+    .from('payroll_submissions')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .eq('pay_date', nextFriday);
+
+  console.log('📊 Submissions for this pay period:', submissions?.length || 0, submissions);
+
+  const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
+
+  // Build location status array
+  const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
+    const submission = submissionsMap.get(location.id);
+
+    if (submission) {
+      return {
+        location_id: location.id,
+        location_name: location.name,
+        submission_id: submission.id,
+        status: submission.status as 'approved' | 'pending',
+        total_amount: submission.total_amount,
+        employee_count: submission.employee_count,
+        pay_date: submission.pay_date,
+        payroll_group: submission.payroll_group as 'A' | 'B',
+        submitted_at: submission.submitted_at
+      };
+    } else {
+      return {
+        location_id: location.id,
+        location_name: location.name,
+        status: 'not_submitted' as const
+      };
+    }
+  });
+
+  console.log('✅ Final location statuses:', locationStatuses);
+  setAllLocations(locationStatuses);
+};
 
   const handleReviewSubmission = async (submission: PendingSubmission) => {
     setSelectedSubmission(submission);
