@@ -1028,7 +1028,7 @@ export default function MobilePayrollSubmit() {
                   placeholder="25.00"
                 />
               </div>
-            ) : (
+            ) : newEmployee.compensation_type === 'production' ? (
               <div>
                 <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate * ($)</label>
                 <input
@@ -1038,6 +1038,18 @@ export default function MobilePayrollSubmit() {
                   onChange={(e) => setNewEmployee({ ...newEmployee, piece_rate: e.target.value })}
                   className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
                   placeholder="5.00"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="text-blue-200 text-sm font-medium mb-2 block">Fixed Pay Amount * ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newEmployee.fixed_pay}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, fixed_pay: e.target.value })}
+                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                  placeholder="750.00"
                 />
               </div>
             )}
