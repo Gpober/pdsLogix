@@ -8,7 +8,7 @@ import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calenda
 
 // Simplified types - REMOVED employee_code
 type PayrollGroup = 'A' | 'B'
-type CompensationType = 'hourly' | 'production'
+type CompensationType = 'hourly' | 'production' | 'fixed'
 
 type Employee = {
   id: string
@@ -19,6 +19,7 @@ type Employee = {
   compensation_type: CompensationType
   hourly_rate: number | null
   piece_rate: number | null
+  fixed_pay: number | null
 }
 
 type EmployeeRow = Employee & {
@@ -165,6 +166,7 @@ export default function MobilePayrollSubmit() {
     compensation_type: 'hourly' as CompensationType,
     hourly_rate: '',
     piece_rate: '',
+    fixed_pay: '',
   })
 
   const fridayOptions = useMemo(() => generateFridayOptions(), [])
@@ -441,8 +443,10 @@ export default function MobilePayrollSubmit() {
       const numValue = parseFloat(value) || 0
       if (updated.compensation_type === 'hourly') {
         updated.amount = numValue * (updated.hourly_rate || 0)
-      } else {
+      } else if (updated.compensation_type === 'production') {
         updated.amount = numValue * (updated.piece_rate || 0)
+      } else if (updated.compensation_type === 'fixed') {
+        updated.amount = updated.fixed_pay || 0
       }
     }
 
@@ -623,6 +627,11 @@ export default function MobilePayrollSubmit() {
       return
     }
 
+    if (newEmployee.compensation_type === 'fixed' && !newEmployee.fixed_pay) {
+      showAlert('error', 'Please enter fixed pay amount')
+      return
+    }
+
     try {
       const { data, error } = await dataSupabase
         .from('employees')
@@ -637,6 +646,7 @@ export default function MobilePayrollSubmit() {
             compensation_type: newEmployee.compensation_type,
             hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
             piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
+            fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
             is_active: true,
             hire_date: new Date().toISOString().split('T')[0],
           },
@@ -655,6 +665,7 @@ export default function MobilePayrollSubmit() {
         compensation_type: 'hourly',
         hourly_rate: '',
         piece_rate: '',
+        fixed_pay: '',
       })
       
       setShowAddEmployee(false)
@@ -682,6 +693,7 @@ export default function MobilePayrollSubmit() {
           compensation_type: editingEmployee.compensation_type,
           hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
           piece_rate: editingEmployee.compensation_type === 'production' ? editingEmployee.piece_rate : null,
+          fixed_pay: editingEmployee.compensation_type === 'fixed' ? editingEmployee.fixed_pay : null,
         })
         .eq('id', editingEmployee.id)
 
@@ -879,6 +891,7 @@ export default function MobilePayrollSubmit() {
               >
                 <option value="hourly" className="bg-slate-900">Hourly</option>
                 <option value="production" className="bg-slate-900">Production</option>
+                <option value="fixed" className="bg-slate-900">Fixed Pay</option>
               </select>
             </div>
 
@@ -893,7 +906,7 @@ export default function MobilePayrollSubmit() {
                   className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
                 />
               </div>
-            ) : (
+            ) : editingEmployee.compensation_type === 'production' ? (
               <div>
                 <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate ($)</label>
                 <input
@@ -901,6 +914,17 @@ export default function MobilePayrollSubmit() {
                   step="0.01"
                   value={editingEmployee.piece_rate || ''}
                   onChange={(e) => setEditingEmployee({ ...editingEmployee, piece_rate: parseFloat(e.target.value) || null })}
+                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="text-blue-200 text-sm font-medium mb-2 block">Fixed Pay Amount ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editingEmployee.fixed_pay || ''}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, fixed_pay: parseFloat(e.target.value) || null })}
                   className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
                 />
               </div>
@@ -988,6 +1012,7 @@ export default function MobilePayrollSubmit() {
               >
                 <option value="hourly" className="bg-slate-900">Hourly</option>
                 <option value="production" className="bg-slate-900">Production</option>
+                <option value="fixed" className="bg-slate-900">Fixed Pay</option>
               </select>
             </div>
 
@@ -1055,56 +1080,88 @@ export default function MobilePayrollSubmit() {
                 className={`px-3 py-1 rounded-full text-xs font-semibold ${
                   selectedEmployee.compensation_type === 'hourly'
                     ? 'bg-blue-500/20 text-blue-200'
-                    : 'bg-purple-500/20 text-purple-200'
+                    : selectedEmployee.compensation_type === 'production'
+                    ? 'bg-purple-500/20 text-purple-200'
+                    : 'bg-green-500/20 text-green-200'
                 }`}
               >
-                {selectedEmployee.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
+                {selectedEmployee.compensation_type === 'hourly' ? 'Hourly' : selectedEmployee.compensation_type === 'production' ? 'Production' : 'Fixed Pay'}
               </span>
             </div>
 
             <div className="bg-white/5 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">Rate</p>
+              <p className="text-blue-200 text-sm mb-1">
+                {selectedEmployee.compensation_type === 'fixed' ? 'Fixed Amount' : 'Rate'}
+              </p>
               <p className="text-white text-2xl font-bold">
-                ${selectedEmployee.compensation_type === 'hourly'
-                  ? selectedEmployee.hourly_rate?.toFixed(2)
-                  : selectedEmployee.piece_rate?.toFixed(2)}
-                <span className="text-blue-200 text-sm font-normal ml-2">
-                  {selectedEmployee.compensation_type === 'hourly' ? '/ hour' : '/ unit'}
-                </span>
+                {selectedEmployee.compensation_type === 'fixed' 
+                  ? `${selectedEmployee.fixed_pay?.toFixed(2) || '0.00'}`
+                  : `${selectedEmployee.compensation_type === 'hourly'
+                    ? selectedEmployee.hourly_rate?.toFixed(2)
+                    : selectedEmployee.piece_rate?.toFixed(2)}`}
+                {selectedEmployee.compensation_type !== 'fixed' && (
+                  <span className="text-blue-200 text-sm font-normal ml-2">
+                    {selectedEmployee.compensation_type === 'hourly' ? '/ hour' : '/ unit'}
+                  </span>
+                )}
               </p>
             </div>
           </div>
 
           <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
-            <label className="block mb-4">
-              <span className="text-blue-200 text-sm font-medium mb-2 block">
-                {selectedEmployee.compensation_type === 'hourly' ? 'Hours Worked' : 'Units Produced'}
-              </span>
-              <input
-                type="number"
-                step="0.01"
-                value={selectedEmployee.compensation_type === 'hourly' ? selectedEmployee.hours : selectedEmployee.units}
-                onChange={(e) =>
-                  handleInputChange(
-                    selectedEmployee.compensation_type === 'hourly' ? 'hours' : 'units',
-                    e.target.value
-                  )
-                }
-                className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="0"
-              />
-            </label>
+            {selectedEmployee.compensation_type !== 'fixed' ? (
+              <>
+                <label className="block mb-4">
+                  <span className="text-blue-200 text-sm font-medium mb-2 block">
+                    {selectedEmployee.compensation_type === 'hourly' ? 'Hours Worked' : 'Units Produced'}
+                  </span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={selectedEmployee.compensation_type === 'hourly' ? selectedEmployee.hours : selectedEmployee.units}
+                    onChange={(e) =>
+                      handleInputChange(
+                        selectedEmployee.compensation_type === 'hourly' ? 'hours' : 'units',
+                        e.target.value
+                      )
+                    }
+                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                    placeholder="0"
+                  />
+                </label>
 
-            <label className="block mb-6">
-              <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
-              <textarea
-                value={selectedEmployee.notes}
-                onChange={(e) => handleInputChange('notes', e.target.value)}
-                rows={3}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
-                placeholder="Add any notes..."
-              />
-            </label>
+                <label className="block mb-6">
+                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
+                  <textarea
+                    value={selectedEmployee.notes}
+                    onChange={(e) => handleInputChange('notes', e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
+                    placeholder="Add any notes..."
+                  />
+                </label>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-blue-200 text-lg mb-2">Fixed Pay Employee</p>
+                <p className="text-white text-3xl font-bold mb-4">
+                  ${selectedEmployee.fixed_pay?.toFixed(2) || '0.00'}
+                </p>
+                <p className="text-blue-300 text-sm">
+                  This employee receives a fixed amount per pay period.
+                </p>
+                <label className="block mt-6">
+                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
+                  <textarea
+                    value={selectedEmployee.notes}
+                    onChange={(e) => handleInputChange('notes', e.target.value)}
+                    rows={3}
+                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
+                    placeholder="Add any notes..."
+                  />
+                </label>
+              </div>
+            )}
 
             <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4">
               <p className="text-blue-200 text-sm mb-1">Total Amount</p>
@@ -1333,22 +1390,26 @@ export default function MobilePayrollSubmit() {
                             className={`px-2 py-1 rounded-full text-xs font-semibold ${
                               emp.compensation_type === 'hourly'
                                 ? 'bg-blue-500/20 text-blue-200'
-                                : 'bg-purple-500/20 text-purple-200'
+                                : emp.compensation_type === 'production'
+                                ? 'bg-purple-500/20 text-purple-200'
+                                : 'bg-green-500/20 text-green-200'
                             }`}
                           >
-                            {emp.compensation_type === 'hourly' ? 'Hourly' : 'Production'}
+                            {emp.compensation_type === 'hourly' ? 'Hourly' : emp.compensation_type === 'production' ? 'Production' : 'Fixed'}
                           </span>
                         </div>
 
                         <div className="flex items-center justify-between">
                           <div className="text-sm">
                             <span className="text-blue-200">
-                              {emp.compensation_type === 'hourly' ? 'Hours: ' : 'Units: '}
+                              {emp.compensation_type === 'hourly' ? 'Hours: ' : emp.compensation_type === 'production' ? 'Units: ' : 'Amount: '}
                             </span>
                             <span className="text-white font-semibold">
                               {emp.compensation_type === 'hourly'
                                 ? emp.hours || '0'
-                                : emp.units || '0'}
+                                : emp.compensation_type === 'production'
+                                ? emp.units || '0'
+                                : emp.fixed_pay ? `${emp.fixed_pay.toFixed(2)}` : '$0.00'}
                             </span>
                           </div>
                           <div className="text-white font-bold text-lg">
