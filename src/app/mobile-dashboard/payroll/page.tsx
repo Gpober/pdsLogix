@@ -197,20 +197,26 @@ export default function PayrollDashboard() {
     const checkAuth = async () => {
       const platformClient = createClient();
       const { data: { user }, error: authError } = await platformClient.auth.getUser();
+      console.log('🔍 Starting auth check...');
 
       if (authError || !user) {
+        console.log('❌ Auth error or no user:', authError);
         router.push('/login');
         return;
       }
 
       setUserId(user.id);
+      console.log('👤 User ID:', user.id);
 
       const { data: userData, error: userError } = await platformClient
         .from('users')
         .select('role, organization_id')
         .eq('id', user.id)
         .single();
-      
+      console.log('📋 User data from database:', userData);
+      console.log('🏢 Organization ID:', userData?.organization_id);
+      console.log('👔 User role:', userData?.role);
+
       if (userError || !userData) {
         router.push('/dashboard');
         return;
@@ -218,12 +224,15 @@ export default function PayrollDashboard() {
 
       setUserRole(userData.role);
       setOrganizationId(userData.organization_id);
+      console.log('✅ State will be set - userRole:', userData.role, 'orgId:', userData.organization_id);
 
       // Only allow admins/owners
       if (userData.role !== 'super_admin' && userData.role !== 'admin' && userData.role !== 'owner') {
         router.push('/dashboard');
         return;
       }
+
+      console.log('✅ Access granted, ready to load data');
     };
 
     checkAuth();
@@ -231,18 +240,30 @@ export default function PayrollDashboard() {
 
   // Load pending submissions and all locations
   useEffect(() => {
+    console.log('🔄 useEffect triggered with:', { userRole, organizationId });
+
     if (userRole && organizationId) {
+      console.log('✅ Conditions met, loading data...');
       loadPendingSubmissions();
       loadAllLocations();
+    } else {
+      console.log('⚠️ Conditions NOT met:', {
+        hasRole: !!userRole,
+        hasOrgId: !!organizationId,
+        userRole,
+        organizationId
+      });
     }
   }, [userRole, organizationId]);
 
   const loadPendingSubmissions = async () => {
+    console.log('📥 Loading pending submissions...');
     const { data: submissions, error } = await supabase
       .from('payroll_submissions')
       .select('*')
       .eq('status', 'pending')
       .order('submitted_at', { ascending: false });
+    console.log('📊 Found submissions:', submissions?.length || 0, submissions);
 
     if (error) {
       console.error('Error loading pending submissions:', error);
@@ -251,10 +272,12 @@ export default function PayrollDashboard() {
 
     // Get location names
     const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
+    console.log('📍 Location IDs to fetch:', locationsIds);
     const { data: locations } = await supabase
       .from('locations')
       .select('id, name')
       .in('id', locationsIds);
+    console.log('📍 Locations found:', locations);
 
     const locationsMap = new Map(locations?.map(l => [l.id, l.name]));
 
@@ -262,18 +285,24 @@ export default function PayrollDashboard() {
       ...s,
       location_name: locationsMap.get(s.location_id) || 'Unknown Location'
     }));
+    console.log('✅ Final submissions with names:', submissionsWithNames);
 
     setPendingSubmissions(submissionsWithNames);
   };
 
   const loadAllLocations = async () => {
-    if (!organizationId) return;
+    console.log('📥 Loading all locations for organization:', organizationId);
+    if (!organizationId) {
+      console.warn('⚠️ No organizationId, skipping location load');
+      return;
+    }
 
     // Get all locations
     const { data: locations, error: locationsError } = await supabase
       .from('locations')
       .select('id, name')
       .eq('organization_id', organizationId);
+    console.log('📍 Found locations:', locations?.length || 0, locations);
 
     if (locationsError) {
       console.error('Error loading locations:', locationsError);
@@ -287,7 +316,7 @@ export default function PayrollDashboard() {
       const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
       const nextFriday = new Date(today);
       nextFriday.setDate(today.getDate() + daysUntilFriday);
-      
+
       const year = nextFriday.getFullYear();
       const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
       const day = String(nextFriday.getDate()).padStart(2, '0');
@@ -295,6 +324,7 @@ export default function PayrollDashboard() {
     };
 
     const nextFriday = getNextFriday();
+    console.log('📅 Next Friday (pay date):', nextFriday);
 
     // Get all submissions for this pay period
     const { data: submissions } = await supabase
@@ -302,6 +332,7 @@ export default function PayrollDashboard() {
       .select('*')
       .eq('organization_id', organizationId)
       .eq('pay_date', nextFriday);
+    console.log('📊 Submissions for this pay period:', submissions?.length || 0, submissions);
 
     const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
 
@@ -329,6 +360,8 @@ export default function PayrollDashboard() {
         };
       }
     });
+
+    console.log('✅ Final location statuses:', locationStatuses);
 
     setAllLocations(locationStatuses);
   };
