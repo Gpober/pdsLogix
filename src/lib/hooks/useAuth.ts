@@ -169,12 +169,16 @@ export function useAuth() {
       console.log('🔍 Fetching profile for:', userId)
       const supabase = createClient()
       
+      console.log('🔍 Querying users table...')
+      
       // Get user from Platform Supabase users table
       const { data: userData, error } = await supabase
         .from('users')
         .select('id, email, name, role, organization_id')
         .eq('id', userId)
         .single()
+
+      console.log('🔍 Query result:', { hasData: !!userData, hasError: !!error })
 
       if (error) {
         console.error('❌ Error fetching user:', error)
@@ -185,6 +189,7 @@ export function useAuth() {
         console.log('✅ Found user:', userData.name, userData.role)
         setUser(userData as AuthUser)
       } else {
+        console.error('❌ No user data returned')
         throw new Error('User not found')
       }
 
@@ -192,6 +197,7 @@ export function useAuth() {
       console.error('❌ Error fetching user profile:', error)
       setUser(null)
       if (typeof window !== 'undefined') {
+        console.log('🔄 Redirecting to Platform login due to profile fetch error')
         window.location.href = 'https://iamcfo.com/login'
       }
     }
