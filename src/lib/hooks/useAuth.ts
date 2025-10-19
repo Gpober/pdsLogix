@@ -81,7 +81,7 @@ export function useAuth() {
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' && session) {
-          await fetchUserProfile(session.user.id)
+          await fetchUserProfile(session.user.id, session.user.email)
         } else if (event === 'SIGNED_OUT') {
           setUser(null)
           router.push('/login')
@@ -156,7 +156,8 @@ export function useAuth() {
             if (data?.session) {
               console.log('✅ Session set successfully from URL')
               console.log('✅ User ID:', data.session.user.id)
-              await fetchUserProfile(data.session.user.id)
+              console.log('✅ User Email:', data.session.user.email)
+              await fetchUserProfile(data.session.user.id, data.session.user.email)
               
               // Clean up the URL hash
               window.history.replaceState(null, '', window.location.pathname)
@@ -173,7 +174,7 @@ export function useAuth() {
       const { data: { session } } = await supabase.auth.getSession()
       
       if (session?.user) {
-        await fetchUserProfile(session.user.id)
+        await fetchUserProfile(session.user.id, session.user.email)
       } else if (!pathname?.startsWith('/login')) {
         router.push('/login')
       }
@@ -184,21 +185,57 @@ export function useAuth() {
     }
   }
 
-  async function fetchUserProfile(userId: string) {
+  async function fetchUserProfile(userId: string, userEmail?: string) {
     try {
       const supabase = createClient()
-      const { data, error } = await supabase
+      
+      console.log('🔍 Fetching profile for:', userId, userEmail)
+      
+      // First, try to find user in the users table (owners/admins/super_admins)
+      const { data: userData, error: userError } = await supabase
         .from('users')
         .select('id, email, name, role, organization_id')
         .eq('id', userId)
-        .single()
+        .maybeSingle()
 
-      if (error) throw error
-
-      if (data) {
-        console.log('✅ User profile loaded:', { name: data.name, role: data.role })
-        setUser(data as AuthUser)
+      if (userData) {
+        console.log('✅ Found user in users table:', { name: userData.name, role: userData.role })
+        setUser(userData as AuthUser)
+        return
       }
+
+      console.log('🔍 User not in users table, checking employees table...')
+
+      // If not found in users, check employees table
+      const { data: employeeData, error: employeeError } = await supabase
+        .from('employees')
+        .select('user_id, email, first_name, last_name, organization_id')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (employeeData) {
+        console.log('✅ Found employee:', { 
+          name: `${employeeData.first_name} ${employeeData.last_name}`,
+          email: employeeData.email 
+        })
+        
+        // Transform employee data to AuthUser format
+        const authUser: AuthUser = {
+          id: employeeData.user_id,
+          email: employeeData.email,
+          name: `${employeeData.first_name} ${employeeData.last_name}`,
+          role: 'employee',
+          organization_id: employeeData.organization_id
+        }
+        
+        setUser(authUser)
+        return
+      }
+
+      console.error('❌ User not found in users or employees table')
+      throw new Error('User profile not found')
+
     } catch (error) {
       console.error('Error fetching user profile:', error)
       setUser(null)
