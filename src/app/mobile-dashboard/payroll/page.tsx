@@ -1208,7 +1208,7 @@ export default function PayrollDashboard() {
                       textAlign: 'center'
                     }}>
                       <div style={{ fontSize: '18px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
-                        {submission.employee_count}
+                        {submission.employee_count || 0}
                       </div>
                       <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
                     </div>
