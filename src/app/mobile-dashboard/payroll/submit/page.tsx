@@ -53,7 +53,28 @@ function formatInputDate(date: Date): string {
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const d = String(date.getDate()).padStart(2, '0')
-  return \`\${y}-\${m}-\${d}\`
+  return `${y}-${m}-${d}`
+}
+
+function formatCurrency(
+  value: number | string | null | undefined,
+  fractionDigits = 2,
+): string {
+  const numericValue =
+    typeof value === 'string'
+      ? Number.parseFloat(value)
+      : typeof value === 'number'
+      ? value
+      : 0
+
+  const safeValue = Number.isFinite(numericValue) ? numericValue : 0
+
+  return safeValue.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })
 }
 
 function calculatePayrollInfo(payDateStr: string): {
@@ -96,7 +117,7 @@ function getNextFriday(): string {
 function formatDateRange(startDate: string, endDate: string): string {
   const start = parseLocalDate(startDate)
   const end = parseLocalDate(endDate)
-  if (!start || !end) return \`\${startDate} - \${endDate}\`
+  if (!start || !end) return `${startDate} - ${endDate}`
 
   const startMonth = start.toLocaleDateString('en-US', { month: 'short' })
   const startDay = start.getDate()
@@ -104,9 +125,9 @@ function formatDateRange(startDate: string, endDate: string): string {
   const endDay = end.getDate()
 
   if (startMonth === endMonth) {
-    return \`\${startMonth} \${startDay}-\${endDay}\`
+    return `${startMonth} ${startDay}-${endDay}`
   } else {
-    return \`\${startMonth} \${startDay} - \${endMonth} \${endDay}\`
+    return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
   }
 }
 
@@ -284,6 +305,12 @@ export default function MobilePayrollSubmit() {
     }
   }, [filteredEmployees])
 
+  const selectedEmployeeAdjustment =
+    selectedEmployee ? Number.parseFloat(selectedEmployee.adjustment || '0') || 0 : 0
+
+  const selectedEmployeeCount =
+    selectedEmployee ? Number.parseInt(selectedEmployee.count || '1', 10) || 0 : 0
+
   function showAlert(type: 'success' | 'error', message: string) {
     setAlert({ type, message })
     setTimeout(() => setAlert(null), 4000)
@@ -346,7 +373,7 @@ export default function MobilePayrollSubmit() {
     setEmployees(updatedEmployees)
     setSelectedEmployee(null)
     
-    showAlert('success', \`✓ \${selectedEmployee.first_name} \${selectedEmployee.last_name} updated!\`)
+    showAlert('success', `✓ ${selectedEmployee.first_name} ${selectedEmployee.last_name} updated!`)
   }
 
   async function handleSyncConnecteam() {
@@ -385,7 +412,7 @@ export default function MobilePayrollSubmit() {
         })
         
         setEmployees(updatedEmployees)
-        showAlert('success', \`✓ Synced hours for \${result.synced_count} employees from Connecteam!\`)
+        showAlert('success', `✓ Synced hours for ${result.synced_count} employees from Connecteam!`)
       }
     } catch (error: any) {
       console.error('Connecteam sync error:', error)
@@ -519,7 +546,7 @@ export default function MobilePayrollSubmit() {
 
       if (error) throw error
 
-      showAlert('success', \`✓ Employee \${newEmployee.first_name} \${newEmployee.last_name} added!\`)
+      showAlert('success', `✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added!`)
       
       setNewEmployee({
         first_name: '',
@@ -950,13 +977,13 @@ export default function MobilePayrollSubmit() {
                 )}
               </div>
               <span
-                className={\`px-3 py-1 rounded-full text-xs font-semibold \${
+                className={`px-3 py-1 rounded-full text-xs font-semibold ${
                   selectedEmployee.compensation_type === 'hourly'
                     ? 'bg-blue-500/20 text-blue-200'
                     : selectedEmployee.compensation_type === 'production'
                     ? 'bg-purple-500/20 text-purple-200'
                     : 'bg-green-500/20 text-green-200'
-                }\`}
+                }`}
               >
                 {selectedEmployee.compensation_type === 'hourly' ? 'Hourly' : selectedEmployee.compensation_type === 'production' ? 'Production' : 'Fixed Pay'}
               </span>
@@ -967,11 +994,13 @@ export default function MobilePayrollSubmit() {
                 {selectedEmployee.compensation_type === 'fixed' ? 'Fixed Amount' : 'Rate'}
               </p>
               <p className="text-white text-2xl font-bold">
-                \${selectedEmployee.compensation_type === 'fixed' 
-                  ? selectedEmployee.fixed_pay?.toFixed(2) || '0.00'
-                  : selectedEmployee.compensation_type === 'hourly'
-                  ? selectedEmployee.hourly_rate?.toFixed(2) || '0.00'
-                  : selectedEmployee.piece_rate?.toFixed(2) || '0.00'}
+                {formatCurrency(
+                  selectedEmployee.compensation_type === 'fixed'
+                    ? selectedEmployee.fixed_pay
+                    : selectedEmployee.compensation_type === 'hourly'
+                    ? selectedEmployee.hourly_rate
+                    : selectedEmployee.piece_rate,
+                )}
                 {selectedEmployee.compensation_type !== 'fixed' && (
                   <span className="text-blue-200 text-sm font-normal ml-2">
                     {selectedEmployee.compensation_type === 'hourly' ? '/ hour' : '/ unit'}
@@ -1050,7 +1079,7 @@ export default function MobilePayrollSubmit() {
                   <div className="bg-gradient-to-br from-green-500/10 to-blue-500/10 rounded-xl p-6 border border-green-400/20">
                     <p className="text-green-200 text-sm mb-2">Base Fixed Pay</p>
                     <p className="text-white text-4xl font-bold mb-1">
-                      \${selectedEmployee.fixed_pay?.toFixed(2) || '0.00'}
+                      {formatCurrency(selectedEmployee.fixed_pay)}
                     </p>
                     <p className="text-blue-300 text-xs">per pay period</p>
                   </div>
@@ -1115,14 +1144,14 @@ export default function MobilePayrollSubmit() {
                       onClick={() => handleInputChange('adjustment', '-100')}
                       className="flex-1 px-3 py-2 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-sm hover:bg-red-500/30 transition"
                     >
-                      -\$100 (Missed Day)
+                      -$100 (Missed Day)
                     </button>
                     <button
                       type="button"
                       onClick={() => handleInputChange('adjustment', '-200')}
                       className="flex-1 px-3 py-2 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-sm hover:bg-red-500/30 transition"
                     >
-                      -\$200 (2 Days)
+                      -$200 (2 Days)
                     </button>
                   </div>
                   <div className="mt-2 flex gap-2">
@@ -1131,7 +1160,7 @@ export default function MobilePayrollSubmit() {
                       onClick={() => handleInputChange('adjustment', '100')}
                       className="flex-1 px-3 py-2 bg-green-500/20 border border-green-400/30 rounded-lg text-green-200 text-sm hover:bg-green-500/30 transition"
                     >
-                      +\$100 (Bonus)
+                      +$100 (Bonus)
                     </button>
                     <button
                       type="button"
@@ -1159,19 +1188,25 @@ export default function MobilePayrollSubmit() {
             <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4">
               <p className="text-blue-200 text-sm mb-1">Total Amount</p>
               <p className="text-white text-3xl font-bold">
-                \${selectedEmployee.amount.toFixed(2)}
+                {formatCurrency(selectedEmployee.amount)}
               </p>
               {selectedEmployee.compensation_type === 'fixed' && (
                 <div className="text-blue-300 text-xs mt-2 space-y-1">
                   <div className="flex justify-between">
-                    <span>Base: \${selectedEmployee.fixed_pay?.toFixed(2)} × {selectedEmployee.count}</span>
-                    <span>\${((selectedEmployee.fixed_pay || 0) * parseInt(selectedEmployee.count || '1')).toFixed(2)}</span>
+                    <span>
+                      Base: {formatCurrency(selectedEmployee.fixed_pay)} × {selectedEmployee.count}
+                    </span>
+                    <span>
+                      {formatCurrency((selectedEmployee.fixed_pay || 0) * selectedEmployeeCount)}
+                    </span>
                   </div>
                   {parseFloat(selectedEmployee.adjustment || '0') !== 0 && (
                     <div className="flex justify-between">
                       <span>Adjustment:</span>
                       <span className={parseFloat(selectedEmployee.adjustment) > 0 ? 'text-green-300' : 'text-red-300'}>
-                        {parseFloat(selectedEmployee.adjustment) > 0 ? '+' : ''}\${parseFloat(selectedEmployee.adjustment).toFixed(2)}
+                        {`${selectedEmployeeAdjustment > 0 ? '+' : ''}${formatCurrency(
+                          selectedEmployeeAdjustment,
+                        )}`}
                       </span>
                     </div>
                   )}
@@ -1228,18 +1263,18 @@ export default function MobilePayrollSubmit() {
       <div className="max-w-lg mx-auto p-4 pb-32">
         {alert && (
           <div
-            className={\`mb-4 p-4 rounded-xl flex items-start gap-3 \${
+            className={`mb-4 p-4 rounded-xl flex items-start gap-3 ${
               alert.type === 'success'
                 ? 'bg-green-500/20 border border-green-400/30'
                 : 'bg-red-500/20 border border-red-400/30'
-            }\`}
+            }`}
           >
             {alert.type === 'success' ? (
               <CheckCircle2 className="w-5 h-5 text-green-300 flex-shrink-0 mt-0.5" />
             ) : (
               <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
             )}
-            <p className={\`flex-1 text-sm \${alert.type === 'success' ? 'text-green-100' : 'text-red-100'}\`}>
+            <p className={`flex-1 text-sm ${alert.type === 'success' ? 'text-green-100' : 'text-red-100'}`}>
               {alert.message}
             </p>
             <button
@@ -1305,7 +1340,7 @@ export default function MobilePayrollSubmit() {
                 </div>
                 <div className="bg-white/5 rounded-lg p-3 text-center">
                   <DollarSign className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-                  <p className="text-white text-lg font-bold">\${totals.totalAmount.toFixed(0)}</p>
+                  <p className="text-white text-lg font-bold">{formatCurrency(totals.totalAmount, 0)}</p>
                   <p className="text-blue-200 text-xs">Total</p>
                 </div>
               </div>
@@ -1374,7 +1409,7 @@ export default function MobilePayrollSubmit() {
                           }
                         }}
                         style={{
-                          transform: \`translateX(\${offset}px)\`,
+                          transform: `translateX(${offset}px)`,
                           transition: touchStart ? 'none' : 'transform 0.3s ease',
                         }}
                         className="w-full bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 hover:bg-white/15 transition text-left relative"
@@ -1389,13 +1424,13 @@ export default function MobilePayrollSubmit() {
                             )}
                           </div>
                           <span
-                            className={\`px-2 py-1 rounded-full text-xs font-semibold \${
+                            className={`px-2 py-1 rounded-full text-xs font-semibold ${
                               emp.compensation_type === 'hourly'
                                 ? 'bg-blue-500/20 text-blue-200'
                                 : emp.compensation_type === 'production'
                                 ? 'bg-purple-500/20 text-purple-200'
                                 : 'bg-green-500/20 text-green-200'
-                            }\`}
+                            }`}
                           >
                             {emp.compensation_type === 'hourly' ? 'Hourly' : emp.compensation_type === 'production' ? 'Production' : 'Fixed'}
                           </span>
@@ -1419,7 +1454,7 @@ export default function MobilePayrollSubmit() {
                             </span>
                           </div>
                           <div className="text-white font-bold text-lg">
-                            \${emp.amount.toFixed(2)}
+                            {formatCurrency(emp.amount)}
                           </div>
                         </div>
                       </button>
@@ -1456,7 +1491,7 @@ export default function MobilePayrollSubmit() {
                   Submitting...
                 </span>
               ) : (
-                \`Submit Payroll (\${totals.employees} employees)\`
+                `Submit Payroll (${totals.employees} employees)`
               )}
             </button>
           </div>
