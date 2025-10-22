@@ -44,7 +44,7 @@ const BRAND_COLORS = {
 };
 
 type PayrollGroup = "A" | "B";
-type CompensationType = "hourly" | "production";
+type CompensationType = "hourly" | "production" | "fixed";
 
 type Location = {
   id: string;
@@ -59,11 +59,14 @@ type Employee = {
   compensation_type: CompensationType;
   hourly_rate: number | null;
   piece_rate: number | null;
+  fixed_pay: number | null;
 };
 
 type EmployeeRow = Employee & {
   hours: string;
   units: string;
+  count: string;
+  adjustment: string;
   notes: string;
   amount: number;
 };
@@ -74,42 +77,12 @@ type Alert = {
 };
 
 const IAMCFOLogo = ({ className = "w-8 h-8" }: { className?: string }) => (
-  <div className={`${className} flex items-center justify-center relative`}>
-    <svg viewBox="0 0 120 120" className="w-full h-full">
-      <circle cx="60" cy="60" r="55" fill="#E2E8F0" stroke="#CBD5E1" strokeWidth="2" />
-      <circle cx="60" cy="60" r="42" fill={BRAND_COLORS.primary} />
-      <g fill="white">
-        <rect x="35" y="70" width="6" height="15" rx="1" />
-        <rect x="44" y="65" width="6" height="20" rx="1" />
-        <rect x="53" y="55" width="6" height="30" rx="1" />
-        <rect x="62" y="50" width="6" height="35" rx="1" />
-        <rect x="71" y="60" width="6" height="25" rx="1" />
-        <rect x="80" y="45" width="6" height="40" rx="1" />
-        <path
-          d="M35 72 L44 67 L53 57 L62 52 L71 62 L80 47"
-          stroke="#FFFFFF"
-          strokeWidth="2.5"
-          fill="none"
-        />
-        <circle cx="35" cy="72" r="2.5" fill="#FFFFFF" />
-        <circle cx="44" cy="67" r="2.5" fill="#FFFFFF" />
-        <circle cx="53" cy="57" r="2.5" fill="#FFFFFF" />
-        <circle cx="62" cy="52" r="2.5" fill="#FFFFFF" />
-        <circle cx="71" cy="62" r="2.5" fill="#FFFFFF" />
-        <circle cx="80" cy="47" r="2.5" fill="#FFFFFF" />
-      </g>
-      <text
-        x="60"
-        y="95"
-        textAnchor="middle"
-        fill="white"
-        fontSize="11"
-        fontWeight="bold"
-        fontFamily="Arial, sans-serif"
-      >
-        CFO
-      </text>
-    </svg>
+  <div className={`${className} flex items-center justify-center`}>
+    <img 
+      src="/apple-touch-icon.png" 
+      alt="I AM CFO Logo" 
+      className="w-full h-full object-contain"
+    />
   </div>
 );
 
@@ -138,6 +111,17 @@ export default function DesktopPayrollSubmit() {
   const [payrollGroup, setPayrollGroup] = useState<PayrollGroup>("A");
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [alert, setAlert] = useState<Alert | null>(null);
+  const [showAddEmployee, setShowAddEmployee] = useState(false);
+  const [newEmployee, setNewEmployee] = useState({
+    first_name: '',
+    last_name: '',
+    email: '',
+    payroll_group: 'A' as PayrollGroup,
+    compensation_type: 'hourly' as CompensationType,
+    hourly_rate: '',
+    piece_rate: '',
+    fixed_pay: '',
+  });
 
   // Get selected location name
   const selectedLocationName = useMemo(() => {
@@ -275,6 +259,8 @@ export default function DesktopPayrollSubmit() {
         ...emp,
         hours: "",
         units: "",
+        count: "1",
+        adjustment: "0",
         notes: "",
         amount: 0,
       }));
@@ -298,7 +284,7 @@ export default function DesktopPayrollSubmit() {
       const updated = [...prev];
       const emp = { ...updated[index] };
 
-      if (field === "hours" || field === "units" || field === "notes") {
+      if (field === "hours" || field === "units" || field === "count" || field === "adjustment" || field === "notes") {
         emp[field] = value;
       }
 
@@ -307,10 +293,15 @@ export default function DesktopPayrollSubmit() {
         const hours = parseFloat(emp.hours) || 0;
         const rate = emp.hourly_rate || 0;
         emp.amount = hours * rate;
-      } else {
+      } else if (emp.compensation_type === "production") {
         const units = parseFloat(emp.units) || 0;
         const rate = emp.piece_rate || 0;
         emp.amount = units * rate;
+      } else if (emp.compensation_type === "fixed") {
+        const count = parseFloat(emp.count) || 0;
+        const adjustment = parseFloat(emp.adjustment) || 0;
+        const baseAmount = count * (emp.fixed_pay || 0);
+        emp.amount = baseAmount + adjustment;
       }
 
       updated[index] = emp;
@@ -322,6 +313,89 @@ export default function DesktopPayrollSubmit() {
     return employees.reduce((sum, emp) => sum + emp.amount, 0);
   }, [employees]);
 
+
+  const handleAddEmployee = async () => {
+    if (!selectedLocationId) {
+      showAlert("Please select a location first", "error");
+      return;
+    }
+
+    if (!newEmployee.first_name || !newEmployee.last_name) {
+      showAlert("Please fill in all required fields", "error");
+      return;
+    }
+
+    if (newEmployee.compensation_type === 'hourly' && !newEmployee.hourly_rate) {
+      showAlert("Please enter hourly rate", "error");
+      return;
+    }
+
+    if (newEmployee.compensation_type === 'production' && !newEmployee.piece_rate) {
+      showAlert("Please enter piece rate", "error");
+      return;
+    }
+
+    if (newEmployee.compensation_type === 'fixed' && !newEmployee.fixed_pay) {
+      showAlert("Please enter fixed pay amount", "error");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // Get organization_id from user's profile
+      const { data: userData } = await authClient
+        .from('users')
+        .select('organization_id')
+        .eq('id', userId)
+        .single();
+
+      const { data, error } = await dataSupabase
+        .from('employees')
+        .insert([
+          {
+            organization_id: userData?.organization_id || 'ba5ac7ab-ff03-42c8-9e63-3a5a444449ca',
+            location_id: selectedLocationId,
+            first_name: newEmployee.first_name,
+            last_name: newEmployee.last_name,
+            email: newEmployee.email || null,
+            payroll_group: newEmployee.payroll_group,
+            compensation_type: newEmployee.compensation_type,
+            hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
+            piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
+            fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
+            is_active: true,
+            hire_date: new Date().toISOString().split('T')[0],
+          },
+        ])
+        .select();
+
+      if (error) throw error;
+
+      showAlert(`✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added successfully!`, "success");
+      
+      // Reset form
+      setNewEmployee({
+        first_name: '',
+        last_name: '',
+        email: '',
+        payroll_group: 'A',
+        compensation_type: 'hourly',
+        hourly_rate: '',
+        piece_rate: '',
+        fixed_pay: '',
+      });
+      
+      // Close modal and reload employees
+      setShowAddEmployee(false);
+      await loadEmployees();
+    } catch (error: any) {
+      console.error('Add employee error:', error);
+      showAlert(error.message || 'Failed to add employee', "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!selectedLocationId || !userId) {
       showAlert("Missing location or user information", "error");
@@ -331,7 +405,8 @@ export default function DesktopPayrollSubmit() {
     const employeesWithData = employees.filter(
       (emp) =>
         (emp.compensation_type === "hourly" && parseFloat(emp.hours) > 0) ||
-        (emp.compensation_type === "production" && parseFloat(emp.units) > 0)
+        (emp.compensation_type === "production" && parseFloat(emp.units) > 0) ||
+        (emp.compensation_type === "fixed" && parseFloat(emp.count) > 0)
     );
 
     if (employeesWithData.length === 0) {
@@ -378,6 +453,8 @@ export default function DesktopPayrollSubmit() {
         employee_id: emp.id,
         hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
         units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
+        count: emp.compensation_type === "fixed" ? parseFloat(emp.count) : null,
+        adjustment: emp.compensation_type === "fixed" ? parseFloat(emp.adjustment) : null,
         amount: emp.amount,
         notes: emp.notes || null,
         status: 'pending'
@@ -614,7 +691,10 @@ export default function DesktopPayrollSubmit() {
                         Rate
                       </th>
                       <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                        Hours/Units
+                        Hours/Units/Count
+                      </th>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Adjustment
                       </th>
                       <th className="px-6 py-4 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                         Amount
@@ -627,13 +707,13 @@ export default function DesktopPayrollSubmit() {
                   <tbody className="divide-y" style={{ divideColor: BRAND_COLORS.gray[200] }}>
                     {isLoading ? (
                       <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                        <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
                           Loading employees...
                         </td>
                       </tr>
                     ) : employees.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                        <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
                           No employees found for Group {payrollGroup}
                         </td>
                       </tr>
@@ -652,42 +732,80 @@ export default function DesktopPayrollSubmit() {
                                 backgroundColor:
                                   emp.compensation_type === "hourly"
                                     ? BRAND_COLORS.primary + "20"
-                                    : BRAND_COLORS.warning + "20",
+                                    : emp.compensation_type === "production"
+                                    ? BRAND_COLORS.warning + "20"
+                                    : BRAND_COLORS.success + "20",
                                 color:
                                   emp.compensation_type === "hourly"
                                     ? BRAND_COLORS.primary
-                                    : BRAND_COLORS.warning,
+                                    : emp.compensation_type === "production"
+                                    ? BRAND_COLORS.warning
+                                    : BRAND_COLORS.success,
                               }}
                             >
                               {emp.compensation_type}
                             </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                            {formatCurrency(
-                              emp.compensation_type === "hourly"
-                                ? emp.hourly_rate || 0
-                                : emp.piece_rate || 0
+                            {emp.compensation_type === "fixed" 
+                              ? formatCurrency(emp.fixed_pay || 0)
+                              : formatCurrency(
+                                  emp.compensation_type === "hourly"
+                                    ? emp.hourly_rate || 0
+                                    : emp.piece_rate || 0
+                                )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {emp.compensation_type === "fixed" ? (
+                              <input
+                                type="number"
+                                step="1"
+                                min="1"
+                                value={emp.count}
+                                onChange={(e) =>
+                                  updateEmployeeRow(idx, "count", e.target.value)
+                                }
+                                placeholder="1"
+                                className="w-20 px-3 py-2 border rounded-lg text-sm"
+                                style={{ borderColor: BRAND_COLORS.gray[300] }}
+                              />
+                            ) : (
+                              <input
+                                type="number"
+                                step="0.5"
+                                min="0"
+                                value={
+                                  emp.compensation_type === "hourly" ? emp.hours : emp.units
+                                }
+                                onChange={(e) =>
+                                  updateEmployeeRow(
+                                    idx,
+                                    emp.compensation_type === "hourly" ? "hours" : "units",
+                                    e.target.value
+                                  )
+                                }
+                                placeholder={emp.compensation_type === "hourly" ? "0.0" : "0"}
+                                className="w-24 px-3 py-2 border rounded-lg text-sm"
+                                style={{ borderColor: BRAND_COLORS.gray[300] }}
+                              />
                             )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <input
-                              type="number"
-                              step="0.5"
-                              min="0"
-                              value={
-                                emp.compensation_type === "hourly" ? emp.hours : emp.units
-                              }
-                              onChange={(e) =>
-                                updateEmployeeRow(
-                                  idx,
-                                  emp.compensation_type === "hourly" ? "hours" : "units",
-                                  e.target.value
-                                )
-                              }
-                              placeholder={emp.compensation_type === "hourly" ? "0.0" : "0"}
-                              className="w-24 px-3 py-2 border rounded-lg text-sm"
-                              style={{ borderColor: BRAND_COLORS.gray[300] }}
-                            />
+                            {emp.compensation_type === "fixed" ? (
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={emp.adjustment}
+                                onChange={(e) =>
+                                  updateEmployeeRow(idx, "adjustment", e.target.value)
+                                }
+                                placeholder="0.00"
+                                className="w-24 px-3 py-2 border rounded-lg text-sm"
+                                style={{ borderColor: BRAND_COLORS.gray[300] }}
+                              />
+                            ) : (
+                              <span className="text-sm text-gray-400">—</span>
+                            )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span
@@ -721,10 +839,18 @@ export default function DesktopPayrollSubmit() {
                 className="px-6 py-4 border-t flex items-center justify-between"
                 style={{ borderColor: BRAND_COLORS.gray[200] }}
               >
-                <div>
+                <div className="flex items-center gap-4">
                   <p className="text-sm text-gray-600">
                     {employees.filter((e) => e.amount > 0).length} employees with pay
                   </p>
+                  <button
+                    onClick={() => setShowAddEmployee(true)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium"
+                    style={{ backgroundColor: BRAND_COLORS.primary }}
+                  >
+                    <Plus size={18} />
+                    Add Employee
+                  </button>
                 </div>
                 <button
                   onClick={handleSubmit}
@@ -751,6 +877,171 @@ export default function DesktopPayrollSubmit() {
           </>
         )}
       </div>
+    </div>
+      {/* Add Employee Modal */}
+      {showAddEmployee && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between" style={{ borderColor: BRAND_COLORS.gray[200] }}>
+              <h2 className="text-xl font-bold text-gray-900">Add New Employee</h2>
+              <button
+                onClick={() => setShowAddEmployee(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    First Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={newEmployee.first_name}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, first_name: e.target.value })}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                    placeholder="John"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Last Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={newEmployee.last_name}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, last_name: e.target.value })}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                    placeholder="Doe"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Email (Optional)
+                </label>
+                <input
+                  type="email"
+                  value={newEmployee.email}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
+                  className="w-full px-4 py-2 border-2 rounded-lg"
+                  style={{ borderColor: BRAND_COLORS.gray[300] }}
+                  placeholder="john.doe@example.com"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Payroll Group *
+                  </label>
+                  <select
+                    value={newEmployee.payroll_group}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, payroll_group: e.target.value as PayrollGroup })}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                  >
+                    <option value="A">Group A</option>
+                    <option value="B">Group B</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Compensation Type *
+                  </label>
+                  <select
+                    value={newEmployee.compensation_type}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, compensation_type: e.target.value as CompensationType })}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                  >
+                    <option value="hourly">Hourly</option>
+                    <option value="production">Production</option>
+                    <option value="fixed">Fixed Pay</option>
+                  </select>
+                </div>
+              </div>
+
+              {newEmployee.compensation_type === 'hourly' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Hourly Rate ($) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newEmployee.hourly_rate}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, hourly_rate: e.target.value })}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                    placeholder="25.00"
+                  />
+                </div>
+              )}
+
+              {newEmployee.compensation_type === 'production' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Piece Rate ($) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newEmployee.piece_rate}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, piece_rate: e.target.value })}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                    placeholder="5.00"
+                  />
+                </div>
+              )}
+
+              {newEmployee.compensation_type === 'fixed' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Fixed Pay Amount ($) *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newEmployee.fixed_pay}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, fixed_pay: e.target.value })}
+                    className="w-full px-4 py-2 border-2 rounded-lg"
+                    style={{ borderColor: BRAND_COLORS.gray[300] }}
+                    placeholder="1000.00"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="sticky bottom-0 bg-gray-50 px-6 py-4 flex gap-3 border-t" style={{ borderColor: BRAND_COLORS.gray[200] }}>
+              <button
+                onClick={() => setShowAddEmployee(false)}
+                className="flex-1 px-6 py-3 border-2 rounded-lg font-semibold text-gray-700 hover:bg-gray-100"
+                style={{ borderColor: BRAND_COLORS.gray[300] }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddEmployee}
+                disabled={isSubmitting}
+                className="flex-1 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50"
+                style={{ backgroundColor: BRAND_COLORS.success }}
+              >
+                {isSubmitting ? 'Adding...' : 'Add Employee'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
