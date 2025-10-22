@@ -214,7 +214,9 @@ export default function MobilePayrollSubmit() {
       try {
         const { data: { session }, error } = await authClient.auth.getSession()
         
-        if (error || !session) {
+        // Only redirect if there's truly no session
+        if (!session) {
+          console.log('No session found, redirecting to login')
           router.push('/login')
           return
         }
@@ -222,28 +224,36 @@ export default function MobilePayrollSubmit() {
         setUserId(session.user.id)
         setUserName(session.user.email || 'User')
 
-        const { data: userLocations, error: locError } = await dataSupabase
-          .from('user_locations')
+        // FIX 1: Use location_managers table (not user_locations)
+        const { data: locationManagers, error: locError } = await dataSupabase
+          .from('location_managers')
           .select('location_id, locations(id, name)')
           .eq('user_id', session.user.id)
 
-        if (locError) throw locError
+        if (locError) {
+          console.error('Error loading locations:', locError)
+          // Don't throw - just log and continue
+        }
 
-        const locations = userLocations
-          ?.map((ul: any) => ul.locations)
+        const locations = locationManagers
+          ?.map((lm: any) => lm.locations)
           .filter(Boolean) as Location[]
 
+        console.log('Loaded locations for user:', locations)
         setAvailableLocations(locations || [])
 
         if (locations && locations.length === 1) {
           setSelectedLocationId(locations[0].id)
           await loadEmployees(locations[0].id)
+        } else if (locations && locations.length > 1) {
+          setShowLocationPicker(true)
         } else {
+          console.warn('No locations found for user')
           setShowLocationPicker(true)
         }
       } catch (error) {
         console.error('Auth error:', error)
-        router.push('/login')
+        // FIX 2: Don't redirect on error - just finish loading
       } finally {
         setLoading(false)
       }
