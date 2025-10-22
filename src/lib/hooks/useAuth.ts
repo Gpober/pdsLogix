@@ -24,7 +24,6 @@ export function useAuth() {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const pathname = usePathname()
-
   const authClient = getAuthClient()
   const dataClient = getDataClient()
 
@@ -51,12 +50,19 @@ export function useAuth() {
       setUser(session.user)
       await syncDataClientSession(session)
       const userProfile = await loadUserProfile(session.user.id)
-
+      
       // Role-based redirects for employees
       if (userProfile?.role === 'employee') {
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-        if (pathname === '/login' || pathname === '/' || pathname === '/dashboard') {
-          router.push(isMobile ? '/mobile-dashboard/payroll/submit' : '/payroll-submit')
+        
+        // Check if user is NOT already on a payroll page
+        const isOnPayrollPage = pathname?.includes('/payroll')
+        
+        if (!isOnPayrollPage) {
+          // Redirect to appropriate payroll page based on device
+          const targetPath = isMobile ? '/mobile-dashboard/payroll/submit' : '/payroll-submit'
+          console.log('Redirecting employee to:', targetPath, 'Mobile:', isMobile)
+          router.push(targetPath)
         }
       }
     } else {
@@ -65,7 +71,7 @@ export function useAuth() {
       await syncDataClientSession(null)
     }
     setLoading(false)
-  }, [loadUserProfile, router, pathname])
+  }, [loadUserProfile, router, pathname, authClient])
 
   useEffect(() => {
     // Get initial session
