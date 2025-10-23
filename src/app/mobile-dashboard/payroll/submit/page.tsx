@@ -391,7 +391,7 @@ export default function MobilePayrollSubmit() {
 
     setIsSyncingConnecteam(true)
     try {
-      const response = await fetch('/api/connecteam/sync-hours', {
+      const response = await fetch('/api/connecteam/hours', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
