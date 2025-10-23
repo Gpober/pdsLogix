@@ -1095,45 +1095,6 @@ export default function MobilePayrollSubmit() {
                   </div>
                 </div>
 
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <Hash className="w-4 h-4" />
-                    Count (how many times to pay)
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const currentCount = parseInt(selectedEmployee.count) || 1
-                        if (currentCount > 1) {
-                          handleInputChange('count', (currentCount - 1).toString())
-                        }
-                      }}
-                      className="w-14 h-14 bg-white/5 border-2 border-white/20 rounded-xl text-white font-bold text-2xl hover:bg-white/10 transition"
-                    >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      value={selectedEmployee.count}
-                      onChange={(e) => handleInputChange('count', e.target.value)}
-                      className="flex-1 px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white text-center focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                      placeholder="1"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const currentCount = parseInt(selectedEmployee.count) || 1
-                        handleInputChange('count', (currentCount + 1).toString())
-                      }}
-                      className="w-14 h-14 bg-white/5 border-2 border-white/20 rounded-xl text-white font-bold text-2xl hover:bg-white/10 transition"
-                    >
-                      +
-                    </button>
-                  </div>
-                </label>
 
                 <label className="block mb-4">
                   <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
