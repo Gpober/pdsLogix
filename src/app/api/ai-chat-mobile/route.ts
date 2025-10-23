@@ -3,41 +3,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 type QueryResult = Record<string, unknown>
 
-interface JournalEntryRow extends QueryResult {
-  account_type?: string | null
-  credit?: number | null
-  debit?: number | null
-  customer?: string | null
-  vendor?: string | null
-  department?: string | null
-  first_name?: string | null
-  last_name?: string | null
-  total_amount?: number | null
-  open_balance?: number | null
-  due_date?: string | null
-}
-
-interface PayrollSubmissionRow extends QueryResult {
-  id?: string
-  submission_number?: number
-  location_name?: string
-  pay_date?: string
-  payroll_group?: string
-  total_amount?: number
-  total_employees?: number
-  status?: string
-  submitted_at?: string
-}
-
-interface OpenAIChoice {
-  message?: {
-    content?: string
-  }
-}
-
-interface OpenAIResponse {
-  choices?: OpenAIChoice[]
-}
+const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 
 interface RequestPayload {
   message?: string
@@ -45,53 +12,41 @@ interface RequestPayload {
   context?: unknown
 }
 
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
-
-// Compact database schema for AI
+// Comprehensive database schema for Claude
 const DATABASE_SCHEMA = `
-Available Supabase tables:
+You have access to a PostgreSQL database with these tables:
 
-1. journal_entry_lines - All financial GL transactions
-   Columns: date, account, account_type, debit, credit, customer, memo, vendor, entry_number, report_category, normal_balance, entry_bank_account, is_cash_account
-   - Revenue: account_type contains 'Income' or 'Revenue', amount = credit - debit
-   - COGS: account_type contains 'Cost of Goods Sold' or 'COGS', amount = debit - credit
-   - Expenses: account_type contains 'Expense', amount = debit - credit
-   - Net Income = Revenue - COGS - Expenses
-   - Cash Flow: filter by entry_bank_account IS NOT NULL and is_cash_account = false
+1. journal_entry_lines - Financial transactions (GL)
+   - Columns: date, account, account_type, debit, credit, customer, vendor, memo
+   - For revenue: WHERE account_type ILIKE '%income%' OR account_type ILIKE '%revenue%'
+   - For expenses: WHERE account_type ILIKE '%expense%'
+   - Revenue = SUM(credit - debit), Expenses = SUM(debit - credit)
 
 2. ar_aging_detail - Accounts Receivable
-   Columns: customer, number (invoice #), date, due_date, open_balance, memo
-   - Filter: open_balance > 0 for outstanding invoices
-   - Aging: calculate days between due_date and current date
+   - Columns: customer, number, date, due_date, open_balance, memo
+   - Outstanding invoices: WHERE open_balance > 0
 
 3. ap_aging - Accounts Payable
-   Columns: vendor, number (bill #), date, due_date, open_balance, memo
-   - Filter: open_balance > 0 for outstanding bills
+   - Columns: vendor, number, date, due_date, open_balance, memo
+   - Outstanding bills: WHERE open_balance > 0
 
-4. payments - Historical Payroll Data (approved payrolls only)
-   Columns: date, first_name, last_name, department, total_amount, hours, units, rate, payroll_group, submission_id
-   - Combine first_name + last_name for employee name
-   - This contains APPROVED payroll that has been processed
-   - For historical payroll analysis
+4. payments - Historical Payroll (approved only)
+   - Columns: date, first_name, last_name, department, total_amount, hours, units, rate, payroll_group
+   - Employee name = first_name || ' ' || last_name
 
-5. payroll_submissions - Payroll Submission Records
-   Columns: id, submission_number, location_id, pay_date, payroll_group, period_start, period_end, total_amount, total_employees, total_hours, total_units, status, submitted_at, approved_at, submitted_by, approved_by
-   - Status: 'pending', 'approved', 'rejected'
-   - Join with locations table for location_name
-   - Use for tracking submission status and approval workflow
+5. payroll_submissions - Payroll Submission Tracking
+   - Columns: id, submission_number, location_id, pay_date, payroll_group (A/B), total_amount, total_employees, status, submitted_at, approved_at
+   - Status values: 'pending', 'approved', 'rejected'
+   - JOIN locations ON location_id for location name
 
-6. payroll_entries - Individual Employee Payroll Entries
-   Columns: submission_id, employee_id, employee_name, employee_type, hours, units, rate, amount, notes
-   - Join with payroll_submissions for full context
+6. payroll_entries - Employee Payroll Details
+   - Columns: submission_id, employee_id, employee_name, employee_type, hours, units, rate, amount
    - employee_type: 'hourly' or 'production'
-   - Contains detailed breakdown of each submission
 
-7. payroll_approvals - Payroll Approval History
-   Columns: submission_id, approved_by, action, notes, created_at
-   - action: 'approved' or 'rejected'
-   - Audit trail for all approval actions
+7. locations - Business Locations
+   - Columns: id, name, organization_id
 
-Today's date: ${new Date().toISOString().split('T')[0]}
+Current date: ${new Date().toISOString().split('T')[0]}
 `
 
 let cachedSupabase: SupabaseClient | null = null
@@ -111,26 +66,26 @@ function getSupabaseClient(): SupabaseClient {
   return cachedSupabase
 }
 
-function getOpenAIApiKey(): string {
-  const openaiApiKey = process.env.OPENAI_API_KEY
-  if (!openaiApiKey) {
-    throw new Error('OPENAI_API_KEY is not configured')
+function getAnthropicApiKey(): string {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is not configured')
   }
-  return openaiApiKey
+  return apiKey
 }
 
-function sanitizeSqlOutput(rawSql: string): string {
-  return rawSql
-    .replace(/```sql\n?/gi, '')
-    .replace(/```\n?/g, '')
-    .replace(/^SELECT/i, 'SELECT')
-    .trim()
+function getOpenAIApiKey(): string {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not configured')
+  }
+  return apiKey
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const supabase = getSupabaseClient()
-    const openaiApiKey = getOpenAIApiKey()
+    const anthropicKey = getAnthropicApiKey()
 
     let body: RequestPayload = {}
     try {
@@ -145,672 +100,404 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 })
     }
 
-    const queryType = detectQueryType(message)
+    console.log('💬 User question:', message)
 
-    console.log('🎯 Query Type:', queryType, '| Message:', message)
+    // Step 1: Let Claude analyze the question and determine what data to fetch
+    const analysisPrompt = `${DATABASE_SCHEMA}
 
-    // Step 1: Generate SQL query
-    const sqlPrompt = `${DATABASE_SCHEMA}
+User question: "${message}"
 
-Question: "${message}"
-
-Generate a PostgreSQL query to answer this question.
-
-Requirements:
-- Return ONLY the SQL query, no explanations or markdown
-- Use proper aggregations (SUM, COUNT, AVG)
-- Include GROUP BY when aggregating
-- Order results by most relevant field
-- Limit to 100 rows unless specifically asked for more
-- Use COALESCE for NULL handling
-- For date ranges: use >= and <= with proper date format
-- For payroll submissions: JOIN with locations table to get location_name
+Analyze this question and respond with JSON containing:
+{
+  "table": "table_name",
+  "filters": "WHERE clause conditions",
+  "aggregation": "SUM/COUNT/AVG or null",
+  "groupBy": "column to group by or null",
+  "orderBy": "column to order by or null",
+  "limit": number
+}
 
 Examples:
-Q: "What's our revenue this month?"
-A: SELECT SUM(credit - debit) as revenue FROM journal_entry_lines WHERE account_type ILIKE '%income%' AND date >= DATE_TRUNC('month', CURRENT_DATE) AND date < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'
+Q: "What's my revenue this month?"
+A: {"table":"journal_entry_lines","filters":"account_type ILIKE '%income%' AND date >= DATE_TRUNC('month', CURRENT_DATE)","aggregation":"SUM(credit - debit)","groupBy":null,"orderBy":null,"limit":1}
 
-Q: "Which customer owes us the most?"
-A: SELECT customer, SUM(open_balance) as total FROM ar_aging_detail WHERE open_balance > 0 GROUP BY customer ORDER BY total DESC LIMIT 10
+Q: "Show pending payroll"
+A: {"table":"payroll_submissions","filters":"status = 'pending'","aggregation":null,"groupBy":null,"orderBy":"submitted_at DESC","limit":20}
 
-Q: "Top 5 customers by revenue"
-A: SELECT customer, SUM(credit - debit) as revenue FROM journal_entry_lines WHERE account_type ILIKE '%income%' AND customer IS NOT NULL GROUP BY customer ORDER BY revenue DESC LIMIT 5
+Q: "Who owes me money?"
+A: {"table":"ar_aging_detail","filters":"open_balance > 0","aggregation":null,"groupBy":"customer","orderBy":"open_balance DESC","limit":10}
 
-Q: "Show me pending payroll submissions"
-A: SELECT ps.submission_number, l.name as location_name, ps.pay_date, ps.payroll_group, ps.total_amount, ps.total_employees, ps.status FROM payroll_submissions ps LEFT JOIN locations l ON ps.location_id = l.id WHERE ps.status = 'pending' ORDER BY ps.submitted_at DESC LIMIT 20
+Respond ONLY with the JSON, no other text.`
 
-Q: "What's the total payroll for this month?"
-A: SELECT SUM(total_amount) as total FROM payroll_submissions WHERE pay_date >= DATE_TRUNC('month', CURRENT_DATE) AND pay_date < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month' AND status = 'approved'
-
-SQL:`
-
-    const sqlResponse = await fetch(OPENAI_API_URL, {
+    const analysisResponse = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${openaiApiKey}`,
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL_LATEST || 'gpt-4o',
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
         messages: [
           {
-            role: 'system',
-            content: 'You are a SQL expert. Generate clean PostgreSQL queries. Return ONLY the SQL with no markdown formatting or explanations.'
-          },
-          { role: 'user', content: sqlPrompt }
-        ],
-        temperature: 0.1,
-        max_tokens: 400,
-      }),
+            role: 'user',
+            content: analysisPrompt
+          }
+        ]
+      })
     })
 
-    if (!sqlResponse.ok) {
-      throw new Error('Failed to generate SQL')
+    if (!analysisResponse.ok) {
+      throw new Error(`Claude API error: ${analysisResponse.statusText}`)
     }
 
-    const sqlData = (await sqlResponse.json()) as OpenAIResponse
-    const sqlContent = sqlData.choices?.[0]?.message?.content?.trim()
+    const analysisData = await analysisResponse.json()
+    const analysisText = analysisData.content?.[0]?.text || '{}'
+    
+    console.log('🤖 Claude analysis:', analysisText)
 
-    if (!sqlContent) {
-      throw new Error('SQL response from OpenAI was empty')
-    }
-
-    const sqlQuery = sanitizeSqlOutput(sqlContent)
-
-    console.log('📊 Generated SQL:', sqlQuery)
-
-    // Step 2: Execute query
-    let queryResults: QueryResult[] = []
+    // Parse the query plan
+    let queryPlan: any
     try {
-      queryResults = await executeSmartQuery(sqlQuery, message, supabase)
-    } catch (queryError) {
-      const err = queryError instanceof Error ? queryError : new Error('Unknown query execution error')
-      console.error('❌ Query execution failed:', err)
-      // Fallback to simple data fetch
-      queryResults = await getFallbackData(queryType, supabase)
+      // Extract JSON from response (in case Claude added explanation)
+      const jsonMatch = analysisText.match(/\{[\s\S]*\}/)
+      queryPlan = JSON.parse(jsonMatch ? jsonMatch[0] : analysisText)
+    } catch (parseError) {
+      console.error('❌ Failed to parse Claude response, using fallback')
+      queryPlan = { table: 'journal_entry_lines', filters: null, limit: 100 }
     }
 
-    console.log('✅ Query returned', queryResults.length, 'rows')
+    // Step 2: Execute the query based on Claude's plan
+    let queryResults: QueryResult[] = []
+    
+    try {
+      queryResults = await executeQueryPlan(queryPlan, supabase)
+      console.log('✅ Query returned', queryResults.length, 'rows')
+    } catch (queryError) {
+      console.error('❌ Query execution failed:', queryError)
+      // Fallback: try to get some relevant data
+      queryResults = await getFallbackData(queryPlan.table || 'journal_entry_lines', supabase)
+      console.log('🔄 Fallback returned', queryResults.length, 'rows')
+    }
+
+    // Step 3: If we have no data, get SOMETHING to show
+    if (queryResults.length === 0) {
+      console.log('⚠️ No results, trying broader query')
+      queryResults = await getAnyRelevantData(message, supabase)
+    }
 
     const truncatedResults = queryResults.slice(0, 20)
 
-    // Step 3: Generate natural language response
-    const responsePrompt = `You are a friendly AI CFO assistant for a construction/property management company called "I AM CFO".
+    // Step 4: Have Claude generate the response based on actual data
+    const responsePrompt = queryResults.length === 0
+      ? `User asked: "${message}"
 
-User asked: "${message}"
+No data was found in the database. Explain that there's no data for this query in a friendly way and suggest what data might be available. Keep it under 50 words.`
+      : `User asked: "${message}"
 
-Data returned from database:
+Database results:
 ${JSON.stringify(truncatedResults, null, 2)}
 
-Generate a concise, conversational response (2-4 sentences max):
-1. Directly answer their question with specific numbers
-2. Format currency as $X,XXX or $X.XK / $X.XM for large amounts
-3. Provide ONE brief insight or recommendation if relevant
-4. Be professional but friendly - like a helpful CFO colleague
+You are a friendly CFO assistant. Answer their question directly using the data above. Format currency clearly. Keep response under 100 words. Be conversational and helpful.`
 
-Keep it SHORT and actionable. No fluff or preambles.`
-
-    const responseGen = await fetch(OPENAI_API_URL, {
+    const responseGen = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${openaiApiKey}`,
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: process.env.OPENAI_MODEL_LATEST || 'gpt-4o',
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 300,
         messages: [
           {
-            role: 'system',
-            content: 'You are a helpful AI CFO. Give concise, actionable insights. Format numbers clearly. Keep responses under 100 words.'
-          },
-          { role: 'user', content: responsePrompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 250,
-      }),
+            role: 'user',
+            content: responsePrompt
+          }
+        ]
+      })
     })
 
     if (!responseGen.ok) {
-      throw new Error('Failed to generate response')
+      throw new Error(`Claude API error: ${responseGen.statusText}`)
     }
 
-    const responseData = (await responseGen.json()) as OpenAIResponse
-    const aiResponse = responseData.choices?.[0]?.message?.content?.trim()
+    const responseData = await responseGen.json()
+    const aiResponse = responseData.content?.[0]?.text || 'I apologize, but I had trouble generating a response. Please try again.'
 
-    if (!aiResponse) {
-      throw new Error('OpenAI response was empty')
-    }
+    console.log('✅ Final response generated')
 
     return NextResponse.json({
       response: aiResponse,
       context: {
-        queryType,
-        platform: 'mobile',
         dataPoints: queryResults.length,
-        sql: sqlQuery // Include for debugging
+        table: queryPlan.table,
+        platform: 'mobile'
       }
     })
 
   } catch (error) {
     console.error('❌ API Error:', error)
-    return NextResponse.json(
-      {
-        error: 'Failed to process request',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    )
+    
+    // ALWAYS return something useful, never crash
+    return NextResponse.json({
+      response: "I'm having trouble connecting to the database right now. Please try again in a moment, or try asking a different question.",
+      context: {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        platform: 'mobile'
+      }
+    })
   }
 }
 
-// Smart query executor with multiple strategies
-async function executeSmartQuery(
-  sqlQuery: string,
-  question: string,
-  supabase: SupabaseClient
-): Promise<QueryResult[]> {
-  const questionLower = question.toLowerCase()
-
-  // Route to specialized handlers
-  if (questionLower.includes('payroll submission') || questionLower.includes('pending payroll') || 
-      questionLower.includes('submitted payroll')) {
-    return await executePayrollSubmissionQuery(question, supabase)
-  }
-
-  if (questionLower.includes('payroll') || questionLower.includes('employee pay')) {
-    return await executePayrollQuery(question, supabase)
-  }
-
-  if (questionLower.includes('accounts receivable') || questionLower.includes('a/r') || questionLower.includes('invoice')) {
-    return await executeARQuery(question, supabase)
-  }
-
-  if (questionLower.includes('accounts payable') || questionLower.includes('a/p') || questionLower.includes('vendor')) {
-    return await executeAPQuery(question, supabase)
-  }
-
-  // Try direct SQL execution for complex queries
-  try {
-    const { data, error } = await supabase.rpc('execute_sql', { query: sqlQuery })
-    if (!error && data) {
-      return data as QueryResult[]
-    }
-  } catch {
-    // Fall through to manual parsing
-  }
-
-  // Manual query parsing for P&L type questions
-  if (questionLower.includes('revenue') || questionLower.includes('income')) {
-    return await executeRevenueQuery(question, supabase)
-  }
-
-  if (questionLower.includes('expense')) {
-    return await executeExpenseQuery(question, supabase)
-  }
-
-  if (questionLower.includes('customer')) {
-    return await executeCustomerQuery(question, supabase)
-  }
-
-  // Default fallback
-  return await getFallbackData('general', supabase)
-}
-
-// Execute revenue query
-async function executeRevenueQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  let query = supabase
-    .from('journal_entry_lines')
-    .select('*')
-    .or('account_type.ilike.%income%,account_type.ilike.%revenue%')
-
-  const questionLower = question.toLowerCase()
-
-  // Date filters
-  if (questionLower.includes('this month')) {
-    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
-    query = query.gte('date', startOfMonth)
-  }
-
-  if (questionLower.includes('this year')) {
-    const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
-    query = query.gte('date', startOfYear)
-  }
-
-  query = query.limit(500)
-
-  const { data, error } = await query
-  if (error) throw new Error(error.message)
-
-  const records = (data ?? []) as JournalEntryRow[]
-
-  // Group by customer if needed
-  if (questionLower.includes('customer') || questionLower.includes('which')) {
-    return aggregateByCustomer(records)
-  }
-
-  // Return total if asking for a sum
-  if (questionLower.includes('total') || questionLower.includes('how much')) {
-    return aggregateTotals(records, question)
-  }
-
-  return records
-}
-
-// Execute expense query
-async function executeExpenseQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  let query = supabase
-    .from('journal_entry_lines')
-    .select('*')
-    .ilike('account_type', '%expense%')
-
-  const questionLower = question.toLowerCase()
-
-  if (questionLower.includes('this month')) {
-    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
-    query = query.gte('date', startOfMonth)
-  }
-
-  query = query.limit(500)
-
-  const { data, error } = await query
-  if (error) throw new Error(error.message)
-
-  const records = (data ?? []) as JournalEntryRow[]
-
-  if (questionLower.includes('total') || questionLower.includes('how much')) {
-    return aggregateTotals(records, question)
-  }
-
-  return records
-}
-
-// Execute customer query
-async function executeCustomerQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  const { data, error } = await supabase
-    .from('journal_entry_lines')
-    .select('*')
-    .or('account_type.ilike.%income%,account_type.ilike.%revenue%')
-    .not('customer', 'is', null)
-    .limit(1000)
-
-  if (error) throw new Error(error.message)
-
-  const records = (data ?? []) as JournalEntryRow[]
-  return aggregateByCustomer(records)
-}
-
-// Execute AR query
-async function executeARQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  let query = supabase
-    .from('ar_aging_detail')
-    .select('*')
-    .gt('open_balance', 0)
-
-  const questionLower = question.toLowerCase()
-
-  if (questionLower.includes('overdue')) {
-    query = query.lt('due_date', new Date().toISOString().split('T')[0])
-  }
-
-  query = query.limit(100)
-
-  const { data, error } = await query
-  if (error) throw new Error(error.message)
-
-  const records = (data ?? []) as JournalEntryRow[]
-
-  // Group by customer if needed
-  if (questionLower.includes('customer') || questionLower.includes('which')) {
-    return aggregateARByCustomer(records)
-  }
-
-  return records
-}
-
-// Execute AP query
-async function executeAPQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  let query = supabase
-    .from('ap_aging')
-    .select('*')
-    .gt('open_balance', 0)
-
-  const questionLower = question.toLowerCase()
-
-  if (questionLower.includes('overdue')) {
-    query = query.lt('due_date', new Date().toISOString().split('T')[0])
-  }
-
-  query = query.limit(100)
-
-  const { data, error } = await query
-  if (error) throw new Error(error.message)
-
-  const records = (data ?? []) as JournalEntryRow[]
-
-  // Group by vendor if needed
-  if (questionLower.includes('vendor') || questionLower.includes('which')) {
-    return aggregateAPByVendor(records)
-  }
-
-  return records
-}
-
-// NEW: Execute payroll submission query
-async function executePayrollSubmissionQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  const questionLower = question.toLowerCase()
+// Execute query based on Claude's plan
+async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<QueryResult[]> {
+  const { table, filters, aggregation, groupBy, orderBy, limit } = plan
   
-  // Build query with location join
-  let query = supabase
-    .from('payroll_submissions')
-    .select(`
-      id,
-      submission_number,
-      location_id,
-      pay_date,
-      payroll_group,
-      period_start,
-      period_end,
-      total_amount,
-      total_employees,
-      total_hours,
-      total_units,
-      status,
-      submitted_at,
-      approved_at,
-      locations!inner(name)
-    `)
+  console.log('📊 Executing query plan:', plan)
 
-  // Status filters
-  if (questionLower.includes('pending')) {
-    query = query.eq('status', 'pending')
-  } else if (questionLower.includes('approved')) {
-    query = query.eq('status', 'approved')
-  } else if (questionLower.includes('rejected')) {
-    query = query.eq('status', 'rejected')
+  // Handle joins for payroll_submissions
+  if (table === 'payroll_submissions') {
+    let query = supabase
+      .from('payroll_submissions')
+      .select(`
+        id,
+        submission_number,
+        pay_date,
+        payroll_group,
+        total_amount,
+        total_employees,
+        total_hours,
+        total_units,
+        status,
+        submitted_at,
+        approved_at,
+        locations!inner(name)
+      `)
+
+    // Apply filters
+    if (filters) {
+      if (filters.includes("status = 'pending'")) query = query.eq('status', 'pending')
+      else if (filters.includes("status = 'approved'")) query = query.eq('status', 'approved')
+      else if (filters.includes("status = 'rejected'")) query = query.eq('status', 'rejected')
+      
+      if (filters.includes('this month') || filters.includes('CURRENT_DATE')) {
+        const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+        query = query.gte('pay_date', startOfMonth)
+      }
+    }
+
+    if (orderBy) {
+      const desc = orderBy.toLowerCase().includes('desc')
+      const col = orderBy.replace(/DESC|ASC/gi, '').trim()
+      query = query.order(col, { ascending: !desc })
+    }
+
+    query = query.limit(limit || 50)
+
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+
+    // Flatten location data
+    return (data || []).map(record => ({
+      ...record,
+      location_name: (record.locations as any)?.name || 'Unknown',
+      locations: undefined
+    }))
   }
 
-  // Date filters
-  if (questionLower.includes('this month')) {
-    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
-    query = query.gte('pay_date', startOfMonth)
+  // Handle standard tables
+  let query = supabase.from(table).select('*')
+
+  // Apply filters manually for common patterns
+  if (filters) {
+    const filterLower = filters.toLowerCase()
+    
+    // Revenue filters
+    if (filterLower.includes('income') || filterLower.includes('revenue')) {
+      query = query.or('account_type.ilike.%income%,account_type.ilike.%revenue%')
+    }
+    
+    // Expense filters
+    if (filterLower.includes('expense')) {
+      query = query.ilike('account_type', '%expense%')
+    }
+    
+    // Open balance filters
+    if (filterLower.includes('open_balance > 0')) {
+      query = query.gt('open_balance', 0)
+    }
+    
+    // Date filters
+    if (filterLower.includes('this month') || filterLower.includes('current_date')) {
+      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+      query = query.gte('date', startOfMonth)
+    }
+    
+    if (filterLower.includes('this year')) {
+      const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
+      query = query.gte('date', startOfYear)
+    }
   }
 
-  if (questionLower.includes('this week')) {
-    const startOfWeek = new Date()
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay())
-    query = query.gte('pay_date', startOfWeek.toISOString().split('T')[0])
+  // Apply ordering
+  if (orderBy && !aggregation) {
+    const desc = orderBy.toLowerCase().includes('desc')
+    const col = orderBy.replace(/DESC|ASC/gi, '').trim()
+    query = query.order(col, { ascending: !desc })
   }
 
-  // Payroll group filter
-  if (questionLower.includes('group a')) {
-    query = query.eq('payroll_group', 'A')
-  } else if (questionLower.includes('group b')) {
-    query = query.eq('payroll_group', 'B')
-  }
-
-  query = query.order('submitted_at', { ascending: false }).limit(50)
+  // Apply limit
+  query = query.limit(limit || 100)
 
   const { data, error } = await query
   if (error) throw new Error(error.message)
 
-  // Flatten the location data
-  const records = (data ?? []).map(record => ({
-    ...record,
-    location_name: (record.locations as any)?.name || 'Unknown Location',
-    locations: undefined
-  }))
+  let results = (data || []) as QueryResult[]
 
-  return records as QueryResult[]
-}
-
-// Execute payroll query (handles both historical payments and new submissions)
-async function executePayrollQuery(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  const questionLower = question.toLowerCase()
-
-  // If asking about submissions, route to submission handler
-  if (questionLower.includes('submission') || questionLower.includes('pending') || 
-      questionLower.includes('approved payroll') || questionLower.includes('rejected')) {
-    return await executePayrollSubmissionQuery(question, supabase)
+  // Handle aggregations in JavaScript if needed
+  if (aggregation && results.length > 0) {
+    if (aggregation.includes('SUM')) {
+      // Extract what we're summing
+      if (aggregation.includes('credit - debit')) {
+        const total = results.reduce((sum, row: any) => sum + ((row.credit || 0) - (row.debit || 0)), 0)
+        results = [{ total, record_count: results.length }]
+      } else if (aggregation.includes('total_amount') || aggregation.includes('open_balance')) {
+        const field = aggregation.includes('total_amount') ? 'total_amount' : 'open_balance'
+        const total = results.reduce((sum, row: any) => sum + (row[field] || 0), 0)
+        results = [{ total, record_count: results.length }]
+      }
+    } else if (aggregation.includes('COUNT')) {
+      results = [{ count: results.length }]
+    }
   }
 
-  // Otherwise query historical payments table
-  let query = supabase.from('payments').select('*')
+  // Handle grouping
+  if (groupBy && !aggregation) {
+    const grouped = new Map<string, any[]>()
+    results.forEach(row => {
+      const key = (row[groupBy] as string) || 'Unknown'
+      if (!grouped.has(key)) grouped.set(key, [])
+      grouped.get(key)!.push(row)
+    })
 
-  // Date filters
-  if (questionLower.includes('this month')) {
-    const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
-    query = query.gte('date', startOfMonth)
+    results = Array.from(grouped.entries()).map(([key, rows]) => ({
+      [groupBy]: key,
+      count: rows.length,
+      total: rows.reduce((sum, row: any) => sum + (row.total_amount || row.open_balance || 0), 0)
+    }))
+    
+    // Sort by total descending
+    results.sort((a: any, b: any) => (b.total || 0) - (a.total || 0))
   }
 
-  if (questionLower.includes('this year')) {
-    const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
-    query = query.gte('date', startOfYear)
-  }
-
-  query = query.limit(500)
-
-  const { data, error } = await query
-  if (error) throw new Error(error.message)
-
-  const records = (data ?? []) as JournalEntryRow[]
-
-  // Group by department or employee
-  if (questionLower.includes('department') || questionLower.includes('location')) {
-    return aggregatePayrollByDepartment(records)
-  }
-
-  if (questionLower.includes('employee') || questionLower.includes('who')) {
-    return aggregatePayrollByEmployee(records)
-  }
-
-  // Return totals if asking for sum
-  if (questionLower.includes('total') || questionLower.includes('how much')) {
-    const total = records.reduce((sum, row) => sum + (row.total_amount ?? 0), 0)
-    return [{ total, record_count: records.length }]
-  }
-
-  return records
+  return results
 }
 
-// Aggregation helpers
-function aggregateByCustomer(data: JournalEntryRow[]): QueryResult[] {
-  const customerMap = new Map<string, { customer: string; revenue: number; count: number }>()
-
-  data.forEach(row => {
-    const customer = (row.customer as string | null) || 'Unknown'
-    const revenue = (row.credit ?? 0) - (row.debit ?? 0)
-
-    if (!customerMap.has(customer)) {
-      customerMap.set(customer, { customer, revenue: 0, count: 0 })
-    }
-
-    const current = customerMap.get(customer)!
-    current.revenue += revenue
-    current.count += 1
-  })
-
-  return Array.from(customerMap.values())
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 10)
-}
-
-function aggregateTotals(data: JournalEntryRow[], question: string): QueryResult[] {
-  let total = 0
-
-  data.forEach(row => {
-    if (question.includes('revenue') || question.includes('income')) {
-      total += (row.credit ?? 0) - (row.debit ?? 0)
-    } else if (question.includes('expense') || question.includes('cogs')) {
-      total += (row.debit ?? 0) - (row.credit ?? 0)
-    } else {
-      total += (row.credit ?? 0) - (row.debit ?? 0)
-    }
-  })
-
-  return [{ total, record_count: data.length }]
-}
-
-function aggregateARByCustomer(data: JournalEntryRow[]): QueryResult[] {
-  const customerMap = new Map<string, { customer: string; total_outstanding: number; invoice_count: number }>()
-
-  data.forEach(row => {
-    const customer = (row.customer as string | null) || 'Unknown'
-    const balance = row.open_balance ?? 0
-
-    if (!customerMap.has(customer)) {
-      customerMap.set(customer, { customer, total_outstanding: 0, invoice_count: 0 })
-    }
-
-    const current = customerMap.get(customer)!
-    current.total_outstanding += balance
-    current.invoice_count += 1
-  })
-
-  return Array.from(customerMap.values())
-    .sort((a, b) => b.total_outstanding - a.total_outstanding)
-    .slice(0, 10)
-}
-
-function aggregateAPByVendor(data: JournalEntryRow[]): QueryResult[] {
-  const vendorMap = new Map<string, { vendor: string; total_outstanding: number; bill_count: number }>()
-
-  data.forEach(row => {
-    const vendor = (row.vendor as string | null) || 'Unknown'
-    const balance = row.open_balance ?? 0
-
-    if (!vendorMap.has(vendor)) {
-      vendorMap.set(vendor, { vendor, total_outstanding: 0, bill_count: 0 })
-    }
-
-    const current = vendorMap.get(vendor)!
-    current.total_outstanding += balance
-    current.bill_count += 1
-  })
-
-  return Array.from(vendorMap.values())
-    .sort((a, b) => b.total_outstanding - a.total_outstanding)
-    .slice(0, 10)
-}
-
-function aggregatePayrollByDepartment(data: JournalEntryRow[]): QueryResult[] {
-  const deptMap = new Map<string, { department: string; total: number; employee_count: number }>()
-
-  data.forEach(row => {
-    const dept = (row.department as string | null) || 'Unknown'
-    const amount = row.total_amount ?? 0
-
-    if (!deptMap.has(dept)) {
-      deptMap.set(dept, { department: dept, total: 0, employee_count: 0 })
-    }
-
-    const current = deptMap.get(dept)!
-    current.total += amount
-    current.employee_count += 1
-  })
-
-  return Array.from(deptMap.values())
-    .sort((a, b) => b.total - a.total)
-}
-
-function aggregatePayrollByEmployee(data: JournalEntryRow[]): QueryResult[] {
-  const empMap = new Map<string, { employee: string; total: number; payment_count: number }>()
-
-  data.forEach(row => {
-    const firstName = (row.first_name as string | null) || ''
-    const lastName = (row.last_name as string | null) || ''
-    const name = `${firstName} ${lastName}`.trim() || 'Unknown'
-    const amount = row.total_amount ?? 0
-
-    if (!empMap.has(name)) {
-      empMap.set(name, { employee: name, total: 0, payment_count: 0 })
-    }
-
-    const current = empMap.get(name)!
-    current.total += amount
-    current.payment_count += 1
-  })
-
-  return Array.from(empMap.values())
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 10)
-}
-
-// Fallback data fetcher
-async function getFallbackData(queryType: string, supabase: SupabaseClient): Promise<QueryResult[]> {
-  switch (queryType) {
-    case 'ar_analysis': {
-      const { data, error } = await supabase
-        .from('ar_aging_detail')
-        .select('*')
-        .gt('open_balance', 0)
-        .limit(50)
-
-      if (error) throw new Error(error.message)
-      return (data ?? []) as QueryResult[]
-    }
-
-    case 'payroll':
-    case 'payroll_submission': {
-      // Try new payroll system first
-      const { data: submissions, error: submissionError } = await supabase
-        .from('payroll_submissions')
-        .select(`
-          *,
-          locations!inner(name)
-        `)
-        .limit(50)
-
-      if (!submissionError && submissions && submissions.length > 0) {
-        return submissions.map(record => ({
+// Fallback queries for each table
+async function getFallbackData(table: string, supabase: SupabaseClient): Promise<QueryResult[]> {
+  try {
+    switch (table) {
+      case 'payroll_submissions': {
+        const { data } = await supabase
+          .from('payroll_submissions')
+          .select(`*, locations!inner(name)`)
+          .order('submitted_at', { ascending: false })
+          .limit(20)
+        
+        return (data || []).map(record => ({
           ...record,
           location_name: (record.locations as any)?.name || 'Unknown',
           locations: undefined
-        })) as QueryResult[]
+        }))
       }
-
-      // Fall back to legacy payments
-      const { data, error } = await supabase
-        .from('payments')
-        .select('*')
-        .limit(100)
-
-      if (error) throw new Error(error.message)
-      return (data ?? []) as QueryResult[]
+      
+      case 'payments': {
+        const { data } = await supabase
+          .from('payments')
+          .select('*')
+          .order('date', { ascending: false })
+          .limit(50)
+        return data || []
+      }
+      
+      case 'ar_aging_detail': {
+        const { data } = await supabase
+          .from('ar_aging_detail')
+          .select('*')
+          .gt('open_balance', 0)
+          .limit(50)
+        return data || []
+      }
+      
+      case 'ap_aging': {
+        const { data } = await supabase
+          .from('ap_aging')
+          .select('*')
+          .gt('open_balance', 0)
+          .limit(50)
+        return data || []
+      }
+      
+      default: {
+        const { data } = await supabase
+          .from('journal_entry_lines')
+          .select('*')
+          .order('date', { ascending: false })
+          .limit(100)
+        return data || []
+      }
     }
-
-    default: {
-      const { data, error } = await supabase
-        .from('journal_entry_lines')
-        .select('*')
-        .limit(100)
-
-      if (error) throw new Error(error.message)
-      return (data ?? []) as QueryResult[]
-    }
+  } catch (error) {
+    console.error('Fallback query failed:', error)
+    return []
   }
 }
 
-function detectQueryType(message: string): string {
-  const s = String(message || '').toLowerCase()
-
-  if (s.includes('payroll submission') || s.includes('pending payroll') || 
-      s.includes('submitted payroll') || s.includes('approved payroll'))
-    return 'payroll_submission'
-
-  if (s.includes('accounts receivable') || s.includes('a/r') || s.includes('overdue') || s.includes('invoice'))
-    return 'ar_analysis'
-
-  if (s.includes('payroll') || s.includes('employee') || s.includes('labor'))
-    return 'payroll'
-
-  if (s.includes('vendor') || s.includes('accounts payable') || s.includes('a/p') || s.includes('bill'))
-    return 'ap_analysis'
-
-  if (s.includes('customer') || s.includes('client'))
-    return 'customer_analysis'
-
-  if (s.includes('revenue') || s.includes('income') || s.includes('profit'))
-    return 'financial_analysis'
-
-  return 'general'
+// Try to get ANY relevant data when all else fails
+async function getAnyRelevantData(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
+  const questionLower = question.toLowerCase()
+  
+  try {
+    // Try payroll first
+    if (questionLower.includes('payroll') || questionLower.includes('employee')) {
+      const { data } = await supabase
+        .from('payroll_submissions')
+        .select(`*, locations!inner(name)`)
+        .limit(10)
+      
+      if (data && data.length > 0) {
+        return data.map(record => ({
+          ...record,
+          location_name: (record.locations as any)?.name || 'Unknown',
+          locations: undefined
+        }))
+      }
+    }
+    
+    // Try revenue
+    if (questionLower.includes('revenue') || questionLower.includes('income') || questionLower.includes('sales')) {
+      const { data } = await supabase
+        .from('journal_entry_lines')
+        .select('*')
+        .or('account_type.ilike.%income%,account_type.ilike.%revenue%')
+        .limit(50)
+      
+      if (data && data.length > 0) return data
+    }
+    
+    // Default: recent transactions
+    const { data } = await supabase
+      .from('journal_entry_lines')
+      .select('*')
+      .order('date', { ascending: false })
+      .limit(20)
+    
+    return data || []
+  } catch (error) {
+    console.error('Emergency fallback failed:', error)
+    return []
+  }
 }
