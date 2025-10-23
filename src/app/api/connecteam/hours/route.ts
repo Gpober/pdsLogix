@@ -10,11 +10,6 @@ export async function POST(request: NextRequest) {
     console.log('🔑 API Key starts with:', process.env.CONNECTEAM_API_KEY?.substring(0, 10));
     
     const { periodStart, periodEnd, employeeEmails, payrollGroup } = await request.json();
-    // ... rest of code
-
-export async function POST(request: NextRequest) {
-  try {
-    const { periodStart, periodEnd, employeeEmails, payrollGroup } = await request.json();
 
     if (!periodStart || !periodEnd || !employeeEmails || !payrollGroup) {
       return NextResponse.json(
@@ -25,6 +20,7 @@ export async function POST(request: NextRequest) {
 
     const apiKey = process.env.CONNECTEAM_API_KEY;
     if (!apiKey) {
+      console.error('❌ CONNECTEAM_API_KEY is not set!');
       return NextResponse.json(
         { error: 'Connecteam API key not configured' },
         { status: 500 }
@@ -37,14 +33,18 @@ export async function POST(request: NextRequest) {
       : process.env.CONNECTEAM_TIME_CLOCK_ID_B;
       
     if (!timeClockId) {
+      console.error(`❌ Time Clock ID not set for Payroll Group ${payrollGroup}`);
       return NextResponse.json(
         { error: `Connecteam Time Clock ID not configured for Payroll Group ${payrollGroup}` },
         { status: 500 }
       );
     }
 
+    console.log(`📋 Fetching hours for ${employeeEmails.length} employees, Group ${payrollGroup}`);
+    console.log(`📅 Period: ${periodStart} to ${periodEnd}`);
+    console.log(`🕐 Time Clock ID: ${timeClockId}`);
+
     // Call Connecteam Time Clock API to get timesheet totals
-    // Reference: https://developer.connecteam.com/time-clock/v1/time-clocks/{timeClockId}/timesheet
     const response = await fetch(
       `https://api.connecteam.com/time-clock/v1/time-clocks/${timeClockId}/timesheet?startDate=${periodStart}&endDate=${periodEnd}`,
       {
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const error = await response.text();
-      console.error('Connecteam API error:', error);
+      console.error('❌ Connecteam API error:', error);
       return NextResponse.json(
         { error: 'Failed to fetch hours from Connecteam' },
         { status: response.status }
@@ -66,6 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     const timesheetData = await response.json();
+    console.log('✅ Timesheet data retrieved');
 
     // Step 1: Get all users to map userId to email
     const usersResponse = await fetch('https://api.connecteam.com/users/v1/users', {
@@ -77,7 +78,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!usersResponse.ok) {
-      console.error('Failed to fetch users from Connecteam');
+      console.error('❌ Failed to fetch users from Connecteam');
       return NextResponse.json(
         { error: 'Failed to fetch user data from Connecteam' },
         { status: usersResponse.status }
@@ -85,6 +86,7 @@ export async function POST(request: NextRequest) {
     }
 
     const usersData = await usersResponse.json();
+    console.log(`✅ Users data retrieved: ${usersData.data?.length || 0} users`);
     
     // Create userId -> email mapping
     const userIdToEmail: Record<number, string> = {};
@@ -113,9 +115,12 @@ export async function POST(request: NextRequest) {
             });
           }
           hoursMap[email] = totalHours;
+          console.log(`✅ Synced ${totalHours} hours for ${email}`);
         }
       });
     }
+
+    console.log(`✅ Total synced: ${Object.keys(hoursMap).length} employees`);
 
     return NextResponse.json({
       success: true,
@@ -124,7 +129,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Error fetching Connecteam hours:', error);
+    console.error('❌ Error fetching Connecteam hours:', error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
