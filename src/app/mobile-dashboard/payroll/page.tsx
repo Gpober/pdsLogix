@@ -907,29 +907,31 @@ export default function PayrollDashboard() {
   };
 
   const getLocationStatusColor = (status: LocationStatus['status']) => {
-    switch (status) {
-      case 'approved': return BRAND_COLORS.success;
-      case 'pending': return BRAND_COLORS.warning;
-      case 'not_submitted': return BRAND_COLORS.danger;
-    }
-  };
+  switch (status) {
+    case 'approved': return BRAND_COLORS.success;
+    case 'pending': return BRAND_COLORS.warning;
+    case 'not_submitted': return BRAND_COLORS.danger;
+    default: return BRAND_COLORS.gray[200]; // ✅ DEFAULT CASE
+  }
+};
 
-  const getLocationStatusText = (status: LocationStatus['status']) => {
-    switch (status) {
-      case 'approved': return 'Approved';
-      case 'pending': return 'Pending Approval';
-      case 'not_submitted': return 'Not Submitted';
-    }
-  };
+const getLocationStatusText = (status: LocationStatus['status']) => {
+  switch (status) {
+    case 'approved': return 'Approved';
+    case 'pending': return 'Pending Approval';
+    case 'not_submitted': return 'Not Submitted';
+    default: return 'Unknown'; // ✅ DEFAULT CASE
+  }
+};
 
-  const getLocationStatusIcon = (status: LocationStatus['status']) => {
-    switch (status) {
-      case 'approved': return CheckCircle;
-      case 'pending': return Clock;
-      case 'not_submitted': return AlertCircle;
-    }
-  };
-
+const getLocationStatusIcon = (status: LocationStatus['status']) => {
+  switch (status) {
+    case 'approved': return CheckCircle;
+    case 'pending': return Clock;
+    case 'not_submitted': return AlertCircle;
+    default: return AlertCircle; // ✅ DEFAULT CASE
+  }
+};
   return (
     <div style={{
       minHeight: '100vh',
