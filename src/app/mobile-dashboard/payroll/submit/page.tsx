@@ -224,7 +224,7 @@ export default function MobilePayrollSubmit() {
         setUserId(session.user.id)
         setUserName(session.user.email || 'User')
 
-        // FIX 1: Use location_managers table (not user_locations)
+        // FIX: Use location_managers table (not user_locations)
         const { data: locationManagers, error: locError } = await dataSupabase
           .from('location_managers')
           .select('location_id, locations(id, name)')
@@ -253,7 +253,7 @@ export default function MobilePayrollSubmit() {
         }
       } catch (error) {
         console.error('Auth error:', error)
-        // FIX 2: Don't redirect on error - just finish loading
+        // Don't redirect on error - just finish loading
       } finally {
         setLoading(false)
       }
@@ -1203,12 +1203,8 @@ export default function MobilePayrollSubmit() {
               {selectedEmployee.compensation_type === 'fixed' && (
                 <div className="text-blue-300 text-xs mt-2 space-y-1">
                   <div className="flex justify-between">
-                    <span>
-                      Base: {formatCurrency(selectedEmployee.fixed_pay)} × {selectedEmployee.count}
-                    </span>
-                    <span>
-                      {formatCurrency((selectedEmployee.fixed_pay || 0) * selectedEmployeeCount)}
-                    </span>
+                    <span>Base Pay:</span>
+                    <span>{formatCurrency(selectedEmployee.fixed_pay)}</span>
                   </div>
                   {parseFloat(selectedEmployee.adjustment || '0') !== 0 && (
                     <div className="flex justify-between">
@@ -1241,8 +1237,14 @@ export default function MobilePayrollSubmit() {
       <div className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
         <div className="max-w-lg mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <h1 className="text-white text-xl font-bold">Payroll Submit</h1>
+            <div className="flex items-center gap-3">
+              <img 
+                src="/apple-touch-icon.png" 
+                alt="I AM CFO Logo" 
+                className="w-10 h-10 object-contain"
+              />
+              <div className="flex-1">
+                <h1 className="text-white text-xl font-bold">Payroll Submit</h1>
               {availableLocations.length > 1 ? (
                 <button
                   onClick={() => {
@@ -1259,6 +1261,7 @@ export default function MobilePayrollSubmit() {
               ) : (
                 <p className="text-blue-200 text-sm">{selectedLocationName}</p>
               )}
+              </div>
             </div>
             <button
               onClick={handleSignOut}
@@ -1453,14 +1456,14 @@ export default function MobilePayrollSubmit() {
                                 ? 'Hours: ' 
                                 : emp.compensation_type === 'production' 
                                 ? 'Units: ' 
-                                : 'Count: '}
+                                : 'Fixed: '}
                             </span>
                             <span className="text-white font-semibold">
                               {emp.compensation_type === 'hourly'
                                 ? emp.hours || '0'
                                 : emp.compensation_type === 'production'
                                 ? emp.units || '0'
-                                : emp.count || '1'}
+                                : '1'}
                             </span>
                           </div>
                           <div className="text-white font-bold text-lg">
