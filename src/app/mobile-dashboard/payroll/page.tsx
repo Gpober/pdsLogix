@@ -1446,8 +1446,6 @@ const getLocationStatusIcon = (status: LocationStatus['status']) => {
         </div>
       )}
 
-    // FIXED APPROVALS VIEW SECTION
-// Replace lines 1448-1614 in your component
 
 {view === "approvals" && (
   <div>
