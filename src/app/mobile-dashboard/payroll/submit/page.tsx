@@ -555,78 +555,92 @@ export default function MobilePayrollSubmit() {
     router.push('/login')
   }
 
-  async function handleAddEmployee() {
-    if (!selectedLocationId) {
-      showAlert('error', 'Please select a location first')
-      return
-    }
-
-    if (!newEmployee.first_name || !newEmployee.last_name) {
-      showAlert('error', 'Please fill in all required fields')
-      return
-    }
-
-    if (newEmployee.compensation_type === 'hourly' && !newEmployee.hourly_rate) {
-      showAlert('error', 'Please enter hourly rate')
-      return
-    }
-
-    if (newEmployee.compensation_type === 'production' && !newEmployee.piece_rate) {
-      showAlert('error', 'Please enter piece rate')
-      return
-    }
-
-    if (newEmployee.compensation_type === 'fixed' && !newEmployee.fixed_pay) {
-      showAlert('error', 'Please enter fixed pay amount')
-      return
-    }
-
-    try {
-      const { data, error } = await dataSupabase
-        .from('employees')
-        .insert([
-          {
-            organization_id: 'ba5ac7ab-ff03-42c8-9e63-3a5a444449ca',
-            location_id: selectedLocationId,
-            first_name: newEmployee.first_name,
-            last_name: newEmployee.last_name,
-            email: newEmployee.email || null,
-            payroll_group: newEmployee.payroll_group,
-            compensation_type: newEmployee.compensation_type,
-            hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
-            piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
-            fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
-            is_active: true,
-            hire_date: new Date().toISOString().split('T')[0],
-          },
-        ])
-        .select()
-
-      if (error) throw error
-
-      showAlert('success', `✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added!`)
-      
-      setNewEmployee({
-        first_name: '',
-        last_name: '',
-        email: '',
-        payroll_group: 'A',
-        compensation_type: 'hourly',
-        hourly_rate: '',
-        piece_rate: '',
-        fixed_pay: '',
-      })
-      
-      setShowAddEmployee(false)
-      
-      if (selectedLocationId) {
-        await loadEmployees(selectedLocationId)
-      }
-    } catch (error: any) {
-      console.error('Error adding employee:', error)
-      showAlert('error', error.message || 'Failed to add employee')
-    }
+ async function handleAddEmployee() {
+  if (!selectedLocationId) {
+    showAlert('error', 'Please select a location first')
+    return
   }
+
+  if (!newEmployee.first_name || !newEmployee.last_name) {
+    showAlert('error', 'Please fill in all required fields')
+    return
+  }
+
+  if (newEmployee.compensation_type === 'hourly' && !newEmployee.hourly_rate) {
+    showAlert('error', 'Please enter hourly rate')
+    return
+  }
+
+  if (newEmployee.compensation_type === 'production' && !newEmployee.piece_rate) {
+    showAlert('error', 'Please enter piece rate')
+    return
+  }
+
+  if (newEmployee.compensation_type === 'fixed' && !newEmployee.fixed_pay) {
+    showAlert('error', 'Please enter fixed pay amount')
+    return
+  }
+
+  try {
+    // ✅ GET ORGANIZATION_ID DYNAMICALLY
+    const { data: locationData, error: locationError } = await dataSupabase
+      .from('locations')
+      .select('organization_id')
+      .eq('id', selectedLocationId)
+      .single()
+
+    if (locationError || !locationData?.organization_id) {
+      throw new Error('Failed to get organization ID from location')
+    }
+
+    const organizationId = locationData.organization_id
+
+    // ✅ NOW USE THE DYNAMIC organizationId
+    const { data, error } = await dataSupabase
+      .from('employees')
+      .insert([
+        {
+          organization_id: organizationId, // ✅ DYNAMIC!
+          location_id: selectedLocationId,
+          first_name: newEmployee.first_name,
+          last_name: newEmployee.last_name,
+          email: newEmployee.email || null,
+          payroll_group: newEmployee.payroll_group,
+          compensation_type: newEmployee.compensation_type,
+          hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
+          piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
+          fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
+          is_active: true,
+          hire_date: new Date().toISOString().split('T')[0],
+        },
+      ])
+      .select()
+
+    if (error) throw error
+
+    showAlert('success', `✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added!`)
+    
+    setNewEmployee({
+      first_name: '',
+      last_name: '',
+      email: '',
+      payroll_group: 'A',
+      compensation_type: 'hourly',
+      hourly_rate: '',
+      piece_rate: '',
+      fixed_pay: '',
+    })
+    
+    setShowAddEmployee(false)
+    
+    if (selectedLocationId) {
+      await loadEmployees(selectedLocationId)
+    }
+  } catch (error: any) {
+    console.error('Error adding employee:', error)
+    showAlert('error', error.message || 'Failed to add employee')
+  }
+}
 
   async function handleEditEmployee() {
     if (!editingEmployee) return
