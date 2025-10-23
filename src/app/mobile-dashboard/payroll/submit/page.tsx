@@ -25,7 +25,6 @@ type Employee = {
 type EmployeeRow = Employee & {
   hours: string
   units: string
-  count: string
   adjustment: string  // NEW: For deductions/bonuses on fixed-pay employees
   notes: string
   amount: number
@@ -277,10 +276,9 @@ export default function MobilePayrollSubmit() {
         ...emp,
         hours: '',
         units: '',
-        count: '1',
         adjustment: '0',
         notes: '',
-        amount: 0,
+        amount: emp.compensation_type === 'fixed' ? emp.fixed_pay || 0 : 0,
       }))
 
       setEmployees(employeeRows)
@@ -294,13 +292,19 @@ export default function MobilePayrollSubmit() {
     return employees.filter(emp => emp.payroll_group === payrollGroup)
   }, [employees, payrollGroup])
 
+  function hasPayrollData(emp: EmployeeRow): boolean {
+    if (emp.compensation_type === 'hourly') return Number.parseFloat(emp.hours || '0') > 0
+    if (emp.compensation_type === 'production') return Number.parseFloat(emp.units || '0') > 0
+    if (emp.compensation_type === 'fixed') {
+      const adjustmentValue = Number.parseFloat(emp.adjustment || '0') || 0
+      const basePay = emp.fixed_pay || 0
+      return emp.amount !== 0 || adjustmentValue !== 0 || basePay > 0
+    }
+    return false
+  }
+
   const totals = useMemo(() => {
-    const employeesWithData = filteredEmployees.filter(emp => {
-      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-      return false
-    })
+    const employeesWithData = filteredEmployees.filter(hasPayrollData)
 
     const totalHours = filteredEmployees
       .filter(emp => emp.compensation_type === 'hourly')
@@ -317,9 +321,6 @@ export default function MobilePayrollSubmit() {
 
   const selectedEmployeeAdjustment =
     selectedEmployee ? Number.parseFloat(selectedEmployee.adjustment || '0') || 0 : 0
-
-  const selectedEmployeeCount =
-    selectedEmployee ? Number.parseInt(selectedEmployee.count || '1', 10) || 0 : 0
 
   function showAlert(type: 'success' | 'error', message: string) {
     setAlert({ type, message })
@@ -338,7 +339,7 @@ export default function MobilePayrollSubmit() {
     setSelectedEmployee({ ...emp })
   }
 
-  function handleInputChange(field: 'hours' | 'units' | 'count' | 'adjustment' | 'notes', value: string) {
+  function handleInputChange(field: 'hours' | 'units' | 'adjustment' | 'notes', value: string) {
     if (!selectedEmployee) return
 
     const updated = { ...selectedEmployee, [field]: value }
@@ -351,9 +352,8 @@ export default function MobilePayrollSubmit() {
       const units = parseFloat(field === 'units' ? value : updated.units) || 0
       updated.amount = units * (selectedEmployee.piece_rate || 0)
     } else if (selectedEmployee.compensation_type === 'fixed') {
-      const count = parseFloat(field === 'count' ? value : updated.count) || 0
       const adjustment = parseFloat(field === 'adjustment' ? value : updated.adjustment) || 0
-      const baseAmount = count * (selectedEmployee.fixed_pay || 0)
+      const baseAmount = selectedEmployee.fixed_pay || 0
       updated.amount = baseAmount + adjustment
     }
 
@@ -372,11 +372,6 @@ export default function MobilePayrollSubmit() {
       showAlert('error', 'Please enter units produced')
       return
     }
-    if (selectedEmployee.compensation_type === 'fixed' && parseFloat(selectedEmployee.count || '0') <= 0) {
-      showAlert('error', 'Please enter count (at least 1)')
-      return
-    }
-
     const updatedEmployees = employees.map(emp =>
       emp.id === selectedEmployee.id ? selectedEmployee : emp
     )
@@ -438,12 +433,7 @@ export default function MobilePayrollSubmit() {
       return
     }
 
-    const employeesToSubmit = filteredEmployees.filter(emp => {
-      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-      return false
-    })
+    const employeesToSubmit = filteredEmployees.filter(hasPayrollData)
 
     if (employeesToSubmit.length === 0) {
       showAlert('error', 'Please enter payroll data for at least one employee')
@@ -477,7 +467,7 @@ export default function MobilePayrollSubmit() {
         employee_id: emp.id,
         hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
         units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+        count: emp.compensation_type === 'fixed' ? 1 : null,
         adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
         amount: emp.amount,
         notes: emp.notes || null,
@@ -1095,45 +1085,9 @@ export default function MobilePayrollSubmit() {
                   </div>
                 </div>
 
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <Hash className="w-4 h-4" />
-                    Count (how many times to pay)
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const currentCount = parseInt(selectedEmployee.count) || 1
-                        if (currentCount > 1) {
-                          handleInputChange('count', (currentCount - 1).toString())
-                        }
-                      }}
-                      className="w-14 h-14 bg-white/5 border-2 border-white/20 rounded-xl text-white font-bold text-2xl hover:bg-white/10 transition"
-                    >
-                      −
-                    </button>
-                    <input
-                      type="number"
-                      step="1"
-                      min="1"
-                      value={selectedEmployee.count}
-                      onChange={(e) => handleInputChange('count', e.target.value)}
-                      className="flex-1 px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white text-center focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                      placeholder="1"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const currentCount = parseInt(selectedEmployee.count) || 1
-                        handleInputChange('count', (currentCount + 1).toString())
-                      }}
-                      className="w-14 h-14 bg-white/5 border-2 border-white/20 rounded-xl text-white font-bold text-2xl hover:bg-white/10 transition"
-                    >
-                      +
-                    </button>
-                  </div>
-                </label>
+                <p className="text-blue-200 text-sm mb-4 text-center">
+                  Fixed pay is automatically limited to one pay period. Use adjustments for any bonuses or deductions.
+                </p>
 
                 <label className="block mb-4">
                   <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
@@ -1203,12 +1157,8 @@ export default function MobilePayrollSubmit() {
               {selectedEmployee.compensation_type === 'fixed' && (
                 <div className="text-blue-300 text-xs mt-2 space-y-1">
                   <div className="flex justify-between">
-                    <span>
-                      Base: {formatCurrency(selectedEmployee.fixed_pay)} × {selectedEmployee.count}
-                    </span>
-                    <span>
-                      {formatCurrency((selectedEmployee.fixed_pay || 0) * selectedEmployeeCount)}
-                    </span>
+                    <span>Base:</span>
+                    <span>{formatCurrency(selectedEmployee.fixed_pay)}</span>
                   </div>
                   {parseFloat(selectedEmployee.adjustment || '0') !== 0 && (
                     <div className="flex justify-between">
@@ -1449,18 +1399,18 @@ export default function MobilePayrollSubmit() {
                         <div className="flex items-center justify-between">
                           <div className="text-sm">
                             <span className="text-blue-200">
-                              {emp.compensation_type === 'hourly' 
-                                ? 'Hours: ' 
-                                : emp.compensation_type === 'production' 
-                                ? 'Units: ' 
-                                : 'Count: '}
+                              {emp.compensation_type === 'hourly'
+                                ? 'Hours: '
+                                : emp.compensation_type === 'production'
+                                ? 'Units: '
+                                : 'Adjustment: '}
                             </span>
                             <span className="text-white font-semibold">
                               {emp.compensation_type === 'hourly'
                                 ? emp.hours || '0'
                                 : emp.compensation_type === 'production'
                                 ? emp.units || '0'
-                                : emp.count || '1'}
+                                : formatCurrency(Number.parseFloat(emp.adjustment || '0') || 0)}
                             </span>
                           </div>
                           <div className="text-white font-bold text-lg">
