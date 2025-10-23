@@ -504,19 +504,27 @@ export default function MobilePayrollSubmit() {
 
       if (submissionError) throw submissionError
 
-      const details = employeesToSubmit.map(emp => ({
-        submission_id: submission.id,
-        employee_id: emp.id,
-        hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-      }))
+     // Get organization_id from location
+const { data: locationData } = await dataSupabase
+  .from('locations')
+  .select('organization_id')
+  .eq('id', selectedLocationId)
+  .single()
+
+const details = employeesToSubmit.map(emp => ({
+  organization_id: locationData?.organization_id, // ✅ REQUIRED
+  submission_id: submission.id,
+  employee_id: emp.id,
+  hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+  units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+  // Remove count and adjustment - payroll_entries doesn't have these fields
+  amount: emp.amount,
+  notes: emp.notes || null,
+  status: 'pending', // ✅ REQUIRED
+}))
 
       const { error: detailsError } = await dataSupabase
-        .from('payroll_submission_details')
+        .from('payroll_entries')
         .insert(details)
 
       if (detailsError) throw detailsError
