@@ -387,51 +387,83 @@ export default function MobilePayrollSubmit() {
   }
 
   async function handleSyncConnecteam() {
-    if (!selectedLocationId) return
+  if (!selectedLocationId) return
 
-    setIsSyncingConnecteam(true)
-    try {
-      const response = await fetch('/api/connecteam/hours', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location_id: selectedLocationId,
-          period_start: periodStart,
-          period_end: periodEnd,
-        }),
-      })
+  setIsSyncingConnecteam(true)
+  try {
+    // Get all employee emails for this location and payroll group
+    const employeeEmails = filteredEmployees
+      .filter(emp => emp.email && emp.compensation_type === 'hourly') // Only sync hourly employees with emails
+      .map(emp => emp.email?.toLowerCase())
+      .filter(Boolean) as string[]
 
-      if (!response.ok) throw new Error('Failed to sync from Connecteam')
-
-      const result = await response.json()
-      
-      if (result.synced_hours) {
-        const updatedEmployees = employees.map(emp => {
-          const syncedHours = result.synced_hours.find((sh: any) => 
-            sh.email?.toLowerCase() === emp.email?.toLowerCase()
-          )
-          if (syncedHours && emp.compensation_type === 'hourly') {
-            const hours = syncedHours.total_hours.toString()
-            return {
-              ...emp,
-              hours,
-              amount: parseFloat(hours) * (emp.hourly_rate || 0)
-            }
-          }
-          return emp
-        })
-        
-        setEmployees(updatedEmployees)
-        showAlert('success', `✓ Synced hours for ${result.synced_count} employees from Connecteam!`)
-      }
-    } catch (error: any) {
-      console.error('Connecteam sync error:', error)
-      showAlert('error', error.message || 'Failed to sync from Connecteam')
-    } finally {
-      setIsSyncingConnecteam(false)
+    if (employeeEmails.length === 0) {
+      showAlert('error', 'No hourly employees with emails found for Connecteam sync')
+      return
     }
-  }
 
+    console.log('🔄 Syncing hours for employees:', employeeEmails)
+    console.log('📅 Period:', periodStart, 'to', periodEnd)
+    console.log('👥 Payroll Group:', payrollGroup)
+
+    const response = await fetch('/api/connecteam/hours', { // FIXED: Changed from sync-hours to hours
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        periodStart: periodStart,    // FIXED: Changed from period_start
+        periodEnd: periodEnd,          // FIXED: Changed from period_end
+        employeeEmails: employeeEmails, // FIXED: Added employee emails array
+        payrollGroup: payrollGroup,    // FIXED: Added payroll group
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.error || 'Failed to sync from Connecteam')
+    }
+
+    const result = await response.json()
+    console.log('✅ Connecteam sync result:', result)
+    
+    if (result.hours && Object.keys(result.hours).length > 0) {
+      let syncedCount = 0
+      
+      // Update employees with synced hours
+      const updatedEmployees = employees.map(emp => {
+        if (emp.compensation_type !== 'hourly' || !emp.email) return emp
+        
+        const email = emp.email.toLowerCase()
+        const syncedHours = result.hours[email]
+        
+        if (syncedHours !== undefined && syncedHours > 0) {
+          syncedCount++
+          const hoursStr = syncedHours.toString()
+          return {
+            ...emp,
+            hours: hoursStr,
+            amount: syncedHours * (emp.hourly_rate || 0)
+          }
+        }
+        return emp
+      })
+      
+      setEmployees(updatedEmployees)
+      
+      if (syncedCount > 0) {
+        showAlert('success', `✓ Synced hours for ${syncedCount} employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`)
+      } else {
+        showAlert('error', 'No hours found in Connecteam for this period')
+      }
+    } else {
+      showAlert('error', 'No hours returned from Connecteam')
+    }
+  } catch (error: any) {
+    console.error('❌ Connecteam sync error:', error)
+    showAlert('error', error.message || 'Failed to sync from Connecteam')
+  } finally {
+    setIsSyncingConnecteam(false)
+  }
+}
   async function handleSubmit() {
     if (!selectedLocationId || !userId) {
       showAlert('error', 'Missing required data')
