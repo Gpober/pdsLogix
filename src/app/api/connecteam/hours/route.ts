@@ -4,6 +4,16 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
   try {
+    // TEMPORARY DEBUG - REMOVE AFTER TESTING
+    console.log('🔑 API Key exists:', !!process.env.CONNECTEAM_API_KEY);
+    console.log('🔑 API Key length:', process.env.CONNECTEAM_API_KEY?.length);
+    console.log('🔑 API Key starts with:', process.env.CONNECTEAM_API_KEY?.substring(0, 10));
+    
+    const { periodStart, periodEnd, employeeEmails, payrollGroup } = await request.json();
+    // ... rest of code
+
+export async function POST(request: NextRequest) {
+  try {
     const { periodStart, periodEnd, employeeEmails, payrollGroup } = await request.json();
 
     if (!periodStart || !periodEnd || !employeeEmails || !payrollGroup) {
