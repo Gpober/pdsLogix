@@ -464,83 +464,91 @@ export default function MobilePayrollSubmit() {
     setIsSyncingConnecteam(false)
   }
 }
-  async function handleSubmit() {
-    if (!selectedLocationId || !userId) {
-      showAlert('error', 'Missing required data')
-      return
-    }
-
-    const employeesToSubmit = filteredEmployees.filter(emp => {
-      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-      return false
-    })
-
-    if (employeesToSubmit.length === 0) {
-      showAlert('error', 'Please enter payroll data for at least one employee')
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      const totalAmount = employeesToSubmit.reduce((sum, emp) => sum + emp.amount, 0)
-
-      const { data: submission, error: submissionError } = await dataSupabase
-        .from('payroll_submissions')
-        .insert({
-          location_id: selectedLocationId,
-          pay_date: payDate,
-          payroll_group: payrollGroup,
-          period_start: periodStart,
-          period_end: periodEnd,
-          total_amount: totalAmount,
-          employee_count: employeesToSubmit.length,
-          submitted_by: userId,
-          status: 'pending',
-        })
-        .select()
-        .single()
-
-      if (submissionError) throw submissionError
-
-     // Get organization_id from location
-const { data: locationData } = await dataSupabase
-  .from('locations')
-  .select('organization_id')
-  .eq('id', selectedLocationId)
-  .single()
-
-const details = employeesToSubmit.map(emp => ({
-  organization_id: locationData?.organization_id, // ✅ REQUIRED
-  submission_id: submission.id,
-  employee_id: emp.id,
-  hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-  units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-  // Remove count and adjustment - payroll_entries doesn't have these fields
-  amount: emp.amount,
-  notes: emp.notes || null,
-  status: 'pending', // ✅ REQUIRED
-}))
-
-      const { error: detailsError } = await dataSupabase
-        .from('payroll_entries')
-        .insert(details)
-
-      if (detailsError) throw detailsError
-
-      showAlert('success', '✓ Payroll submitted successfully!')
-      
-      await loadEmployees(selectedLocationId)
-      
-    } catch (error: any) {
-      console.error('Submit error:', error)
-      showAlert('error', error.message || 'Failed to submit payroll')
-    } finally {
-      setIsSubmitting(false)
-    }
+ async function handleSubmit() {
+  if (!selectedLocationId || !userId) {
+    showAlert('error', 'Missing required data')
+    return
   }
 
+  const employeesToSubmit = filteredEmployees.filter(emp => {
+    if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
+    if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
+    if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
+    return false
+  })
+
+  if (employeesToSubmit.length === 0) {
+    showAlert('error', 'Please enter payroll data for at least one employee')
+    return
+  }
+
+  setIsSubmitting(true)
+  try {
+    // ✅ STEP 1: Get organization_id FIRST before creating submission
+    const { data: locationData, error: locationError } = await dataSupabase
+      .from('locations')
+      .select('organization_id')
+      .eq('id', selectedLocationId)
+      .single()
+
+    if (locationError || !locationData?.organization_id) {
+      throw new Error('Failed to get organization ID from location')
+    }
+
+    const organizationId = locationData.organization_id
+    console.log('🏢 Organization ID:', organizationId)
+
+    const totalAmount = employeesToSubmit.reduce((sum, emp) => sum + emp.amount, 0)
+
+    // ✅ STEP 2: Now include organization_id in the submission
+    const { data: submission, error: submissionError } = await dataSupabase
+      .from('payroll_submissions')
+      .insert({
+        organization_id: organizationId, // ✅ CRITICAL FIX - Add this line
+        location_id: selectedLocationId,
+        pay_date: payDate,
+        payroll_group: payrollGroup,
+        period_start: periodStart,
+        period_end: periodEnd,
+        total_amount: totalAmount,
+        employee_count: employeesToSubmit.length,
+        submitted_by: userId,
+        status: 'pending',
+      })
+      .select()
+      .single()
+
+    if (submissionError) throw submissionError
+
+    // ✅ STEP 3: Create payroll entries with the same organization_id
+    const details = employeesToSubmit.map(emp => ({
+      organization_id: organizationId, // ✅ Use the already-fetched organizationId
+      submission_id: submission.id,
+      employee_id: emp.id,
+      hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+      units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+      amount: emp.amount,
+      notes: emp.notes || null,
+      status: 'pending',
+    }))
+
+    const { error: detailsError } = await dataSupabase
+      .from('payroll_entries')
+      .insert(details)
+
+    if (detailsError) throw detailsError
+
+    showAlert('success', '✓ Payroll submitted successfully!')
+    
+    await loadEmployees(selectedLocationId)
+    
+  } catch (error: any) {
+    console.error('Submit error:', error)
+    showAlert('error', error.message || 'Failed to submit payroll')
+  } finally {
+    setIsSubmitting(false)
+  }
+}
   async function handleSignOut() {
     await authClient.auth.signOut()
     await syncDataClientSession(null)
