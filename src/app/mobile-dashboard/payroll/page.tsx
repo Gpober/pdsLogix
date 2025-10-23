@@ -1444,174 +1444,198 @@ export default function PayrollDashboard() {
         </div>
       )}
 
-      {/* APPROVALS VIEW - Location Status Grid */}
-      {view === "approvals" && (
-        <div>
-          <button
-            onClick={back}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              background: 'white',
-              border: `1px solid ${BRAND_COLORS.gray[200]}`,
-              borderRadius: '8px',
-              padding: '12px 16px',
-              marginBottom: '16px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '500',
-              color: BRAND_COLORS.accent
-            }}
-          >
-            <ChevronLeft size={20} />
-            Back to Dashboard
-          </button>
+    // FIXED APPROVALS VIEW SECTION
+// Replace lines 1448-1614 in your component
 
-          <div style={{
-            background: 'white',
-            borderRadius: '16px',
-            padding: '20px',
-            marginBottom: '16px',
-            border: `1px solid ${BRAND_COLORS.gray[200]}`,
-            boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
-          }}>
-            <h2 style={{ 
-              fontSize: '20px', 
-              fontWeight: 'bold', 
-              marginBottom: '8px',
-              color: BRAND_COLORS.accent 
-            }}>
-              Location Approvals
-            </h2>
-            <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '20px' }}>
-              {allLocations.filter(l => l.status === 'approved').length} Approved • {' '}
-              {allLocations.filter(l => l.status === 'pending').length} Pending • {' '}
-              {allLocations.filter(l => l.status === 'not_submitted').length} Not Submitted
-            </p>
+{view === "approvals" && (
+  <div>
+    <button
+      onClick={back}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        background: 'white',
+        border: `1px solid ${BRAND_COLORS.gray[200]}`,
+        borderRadius: '8px',
+        padding: '12px 16px',
+        marginBottom: '16px',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: '500',
+        color: BRAND_COLORS.accent
+      }}
+    >
+      <ChevronLeft size={20} />
+      Back to Dashboard
+    </button>
 
-            <div style={{ display: 'grid', gap: '12px' }}>
-              {allLocations.map((location) => {
-                const StatusIcon = getLocationStatusIcon(location.status);
-                const statusColor = getLocationStatusColor(location.status);
+    <div style={{
+      background: 'white',
+      borderRadius: '16px',
+      padding: '20px',
+      marginBottom: '16px',
+      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+      boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
+    }}>
+      <h2 style={{ 
+        fontSize: '20px', 
+        fontWeight: 'bold', 
+        marginBottom: '8px',
+        color: BRAND_COLORS.accent 
+      }}>
+        Location Approvals
+      </h2>
+      <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '20px' }}>
+        {(allLocations || []).filter(l => l.status === 'approved').length} Approved • {' '}
+        {(allLocations || []).filter(l => l.status === 'pending').length} Pending • {' '}
+        {(allLocations || []).filter(l => l.status === 'not_submitted').length} Not Submitted
+      </p>
 
-                return (
-                  <div
-                    key={location.location_id}
-                    onClick={() => {
-                      if (location.status === 'pending' && location.submission_id) {
-                        const submission = pendingSubmissions.find(s => s.id === location.submission_id);
-                        if (submission) handleReviewSubmission(submission);
-                      }
-                    }}
-                    style={{
-                      padding: '16px',
-                      borderRadius: '12px',
-                      background: BRAND_COLORS.gray[50],
-                      border: `3px solid ${statusColor}`,
-                      cursor: location.status === 'pending' ? 'pointer' : 'default',
-                      transition: 'all 0.2s',
-                      position: 'relative'
-                    }}
-                  >
+      {/* ✅ LOADING STATE */}
+      {!allLocations || allLocations.length === 0 ? (
+        <div style={{
+          padding: '40px',
+          textAlign: 'center',
+          color: '#64748b',
+          fontSize: '14px'
+        }}>
+          {!organizationId ? (
+            <>
+              <AlertCircle size={48} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
+              <p>Loading organization data...</p>
+            </>
+          ) : (
+            <>
+              <AlertCircle size={48} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
+              <p>No locations found for this organization</p>
+            </>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: '12px' }}>
+          {allLocations.map((location) => {
+            const StatusIcon = getLocationStatusIcon(location.status);
+            const statusColor = getLocationStatusColor(location.status);
+
+            return (
+              <div
+                key={location.location_id}
+                onClick={() => {
+                  if (location.status === 'pending' && location.submission_id) {
+                    const submission = pendingSubmissions.find(s => s.id === location.submission_id);
+                    if (submission) handleReviewSubmission(submission);
+                  }
+                }}
+                style={{
+                  padding: '16px',
+                  borderRadius: '12px',
+                  background: BRAND_COLORS.gray[50],
+                  border: `3px solid ${statusColor}`,
+                  cursor: location.status === 'pending' ? 'pointer' : 'default',
+                  transition: 'all 0.2s',
+                  position: 'relative'
+                }}
+              >
+                <div style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  background: statusColor,
+                  borderRadius: '20px',
+                  padding: '6px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <StatusIcon size={14} style={{ color: 'white' }} />
+                  <span style={{ 
+                    fontSize: '11px', 
+                    fontWeight: '700', 
+                    color: 'white',
+                    textTransform: 'uppercase'
+                  }}>
+                    {getLocationStatusText(location.status)}
+                  </span>
+                </div>
+
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: 'bold', 
+                  marginBottom: '12px',
+                  color: BRAND_COLORS.accent,
+                  paddingRight: '140px'
+                }}>
+                  {location.location_name}
+                </h3>
+
+                {location.status !== 'not_submitted' && location.total_amount !== undefined && (
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '12px',
+                    marginTop: '12px'
+                  }}>
                     <div style={{
-                      position: 'absolute',
-                      top: '12px',
-                      right: '12px',
-                      background: statusColor,
-                      borderRadius: '20px',
-                      padding: '6px 12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px'
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      textAlign: 'center'
                     }}>
-                      <StatusIcon size={14} style={{ color: 'white' }} />
-                      <span style={{ 
-                        fontSize: '11px', 
-                        fontWeight: '700', 
-                        color: 'white',
-                        textTransform: 'uppercase'
-                      }}>
-                        {getLocationStatusText(location.status)}
-                      </span>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
+                        {formatCurrency(location.total_amount || 0)}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>Total</div>
                     </div>
-
-                    <h3 style={{ 
-                      fontSize: '18px', 
-                      fontWeight: 'bold', 
-                      marginBottom: '12px',
-                      color: BRAND_COLORS.accent,
-                      paddingRight: '140px'
+                    <div style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      textAlign: 'center'
                     }}>
-                      {location.location_name}
-                    </h3>
-
-                   {location.status !== 'not_submitted' && location.total_amount !== undefined && (
-                      <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
-                        gap: '12px',
-                        marginTop: '12px'
-                      }}>
-                        <div style={{
-                          background: 'white',
-                          borderRadius: '8px',
-                          padding: '10px',
-                          textAlign: 'center'
-                        }}>
-                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
-                            {formatCurrency(location.total_amount || 0)}
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#64748b' }}>Total</div>
-                        </div>
-                        <div style={{
-                          background: 'white',
-                          borderRadius: '8px',
-                          padding: '10px',
-                          textAlign: 'center'
-                        }}>
-                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
-                            {location.employee_count !== undefined ? location.employee_count : 0}
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
-                        </div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
+                        {location.employee_count !== undefined ? location.employee_count : 0}
                       </div>
-                    )}
-
-                    {location.submitted_at && (
-                      <div style={{
-                        marginTop: '12px',
-                        fontSize: '11px',
-                        color: '#94a3b8',
-                        textAlign: 'center'
-                      }}>
-                        Submitted {new Date(location.submitted_at).toLocaleString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: 'numeric',
-                          minute: '2-digit'
-                        })}
-                      </div>
-                    )}
-
-                    {location.status === 'not_submitted' && (
-                      <div style={{
-                        marginTop: '12px',
-                        fontSize: '13px',
-                        color: '#64748b',
-                        textAlign: 'center',
-                        fontStyle: 'italic'
-                      }}>
-                        Waiting for submission from location manager
-                      </div>
-                    )}
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
+                    </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                )}
+
+                {location.submitted_at && (
+                  <div style={{
+                    marginTop: '12px',
+                    fontSize: '11px',
+                    color: '#94a3b8',
+                    textAlign: 'center'
+                  }}>
+                    Submitted {new Date(location.submitted_at).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit'
+                    })}
+                  </div>
+                )}
+
+                {location.status === 'not_submitted' && (
+                  <div style={{
+                    marginTop: '12px',
+                    fontSize: '13px',
+                    color: '#64748b',
+                    textAlign: 'center',
+                    fontStyle: 'italic'
+                  }}>
+                    Waiting for submission from location manager
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
+    </div>
+  </div>
+)}
 
       {/* Summary/Ranking View */}
       {view === "summary" && rankingMetric && (
