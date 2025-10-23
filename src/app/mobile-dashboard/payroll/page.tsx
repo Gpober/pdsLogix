@@ -96,6 +96,7 @@ interface SubmissionDetail {
   units: number | null;
   amount: number;
   notes: string | null;
+  organization_id: string; // ✅ ADDED - Required for payments insert
 }
 
 type ViewMode = "overview" | "summary" | "report" | "detail" | "approvals";
@@ -447,10 +448,26 @@ export default function PayrollDashboard() {
     setAllLocations(locationStatuses);
   };
 
+  // ✅ FIXED: Fetch organization_id early and include in submissionDetails
   const handleReviewSubmission = async (submission: PendingSubmission) => {
     setSelectedSubmission(submission);
 
-    // FIXED: Use payroll_entries instead of payroll_submission_details
+    // ✅ Step 1: Get organization_id from location FIRST
+    const { data: locationData, error: locationError } = await supabase
+      .from('locations')
+      .select('organization_id')
+      .eq('id', submission.location_id)
+      .single();
+
+    if (locationError || !locationData) {
+      console.error('Error fetching location:', locationError);
+      showNotification('Failed to load location details', 'error');
+      return;
+    }
+
+    console.log('🏢 Organization ID for submission:', locationData.organization_id);
+
+    // Step 2: Fetch payroll entries
     const { data: entries, error: entriesError } = await supabase
       .from('payroll_entries')
       .select('*')
@@ -482,240 +499,247 @@ export default function PayrollDashboard() {
       employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`]) || []
     );
 
-    // Combine entries with employee names
-    const detailsWithNames = (entries || []).map(entry => ({
+    // ✅ Step 3: Combine entries with employee names AND organization_id
+    const detailsWithNames: SubmissionDetail[] = (entries || []).map(entry => ({
       employee_id: entry.employee_id,
       employee_name: employeesMap.get(entry.employee_id) || 'Unknown',
       hours: entry.hours,
       units: entry.units,
       amount: entry.amount,
       notes: entry.notes,
+      organization_id: locationData.organization_id, // ✅ CRITICAL FIX
     }));
 
+    console.log('✅ Submission details with org_id:', detailsWithNames);
     setSubmissionDetails(detailsWithNames);
     setShowApprovalModal(true);
   };
 
+  // ✅ FIXED: Use organization_id from submissionDetails
   const handleApprove = async () => {
-  if (!selectedSubmission || !userId) return;
+    if (!selectedSubmission || !userId) return;
 
-  setIsApproving(true);
+    setIsApproving(true);
 
-  try {
-    // Get the location for this submission
-    const { data: locationData } = await dataClient
-      .from('locations')
-      .select('id, name, organization_id')
-      .eq('id', selectedSubmission.location_id)
-      .single();
+    try {
+      // ✅ Get organization_id from submissionDetails (already fetched in handleReviewSubmission)
+      const organizationId = submissionDetails[0]?.organization_id;
+      
+      if (!organizationId) {
+        throw new Error('Organization ID not found in submission details');
+      }
 
-    if (!locationData) {
-      throw new Error('Location not found');
-    }
+      console.log('🎯 Approving with organization_id:', organizationId);
 
-    // STEP 1: Update payroll_submissions status to 'approved'
-    const { error: updateSubmissionError } = await dataClient
-      .from('payroll_submissions')
-      .update({
-        status: 'approved',
-        approved_by: userId,
-        approved_at: new Date().toISOString()
-      })
-      .eq('id', selectedSubmission.id);
+      // STEP 1: Update payroll_submissions status to 'approved'
+      const { error: updateSubmissionError } = await dataClient
+        .from('payroll_submissions')
+        .update({
+          status: 'approved',
+          approved_by: userId,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', selectedSubmission.id);
 
-    if (updateSubmissionError) throw updateSubmissionError;
+      if (updateSubmissionError) throw updateSubmissionError;
 
-    // STEP 2: Update all payroll_entries for this submission to 'approved'
-    const { error: updateEntriesError } = await dataClient
-      .from('payroll_entries')
-      .update({
-        status: 'approved'
-      })
-      .eq('submission_id', selectedSubmission.id);
+      // STEP 2: Update all payroll_entries for this submission to 'approved'
+      const { error: updateEntriesError } = await dataClient
+        .from('payroll_entries')
+        .update({
+          status: 'approved'
+        })
+        .eq('submission_id', selectedSubmission.id);
 
-    if (updateEntriesError) throw updateEntriesError;
+      if (updateEntriesError) throw updateEntriesError;
 
-    // STEP 3: Create approval audit log
-    const { error: approvalLogError } = await dataClient
-      .from('payroll_approvals')
-      .insert({
-        organization_id: locationData.organization_id,
+      // STEP 3: Create approval audit log
+      const { error: approvalLogError } = await dataClient
+        .from('payroll_approvals')
+        .insert({
+          organization_id: organizationId,
+          submission_id: selectedSubmission.id,
+          action: 'approved',
+          approved_by: userId,
+          previous_status: 'pending',
+          notes: `Approved via mobile dashboard`
+        });
+
+      if (approvalLogError) {
+        console.warn('Failed to create approval log:', approvalLogError);
+        // Don't fail the whole process if audit log fails
+      }
+
+      // STEP 4: Post to payments table with ALL required fields
+      // ✅ organization_id now comes from submissionDetails
+      const paymentsToInsert = submissionDetails.map(detail => ({
+        // Link back to source data
+        employee_id: detail.employee_id,
         submission_id: selectedSubmission.id,
-        action: 'approved',
-        approved_by: userId,
-        previous_status: 'pending',
-        notes: `Approved via mobile dashboard`
-      });
-
-    if (approvalLogError) {
-      console.warn('Failed to create approval log:', approvalLogError);
-      // Don't fail the whole process if audit log fails
-    }
-
-    // STEP 4: Post to payments table with ALL required fields
-    const paymentsToInsert = submissionDetails.map(detail => ({
-      // Link back to source data
-      employee_id: detail.employee_id,
-      submission_id: selectedSubmission.id,
-      location_id: selectedSubmission.location_id,
-      organization_id: locationData.organization_id,
-      
-      // Payment details
-      first_name: detail.employee_name.split(' ')[0],
-      last_name: detail.employee_name.split(' ').slice(1).join(' ') || detail.employee_name.split(' ')[0],
-      department: selectedSubmission.location_name,
-      date: selectedSubmission.pay_date,
-      total_amount: detail.amount,
-      payment_method: 'Direct Deposit',
-      
-      // Payroll details
-      payroll_group: selectedSubmission.payroll_group,
-      hours: detail.hours,
-      units: detail.units,
-      
-      // Tracking
-      source: 'system'
-    }));
-
-    const { error: paymentsError } = await dataClient
-      .from('payments')
-      .insert(paymentsToInsert);
-
-    if (paymentsError) throw paymentsError;
-
-    // STEP 5: Update submission to 'posted' status
-    const { error: postedError } = await dataClient
-      .from('payroll_submissions')
-      .update({
-        status: 'posted',
-        processed_by: userId,
-        processed_at: new Date().toISOString()
-      })
-      .eq('id', selectedSubmission.id);
-
-    if (postedError) throw postedError;
-
-    // STEP 6: Update entries to 'posted'
-    const { error: entriesPostedError } = await dataClient
-      .from('payroll_entries')
-      .update({
-        status: 'posted'
-      })
-      .eq('submission_id', selectedSubmission.id);
-
-    if (entriesPostedError) throw entriesPostedError;
-
-    // Success!
-    alert('✅ Payroll approved and posted successfully!');
-    setShowApprovalModal(false);
-    setSelectedSubmission(null);
-    loadPendingSubmissions(locationData.organization_id);
-    loadAllLocations(locationData.organization_id);
-    
-    // Reload historical data
-    const load = async () => {
-      const { start, end } = getDateRange();
-      const { data } = await dataClient
-        .from("payments")
-        .select("department, total_amount, date, first_name, last_name")
-        .gte("date", start)
-        .lte("date", end);
+        location_id: selectedSubmission.location_id,
+        organization_id: detail.organization_id, // ✅ NOW PROPERLY DEFINED
         
-      const deptMap: Record<string, PropertySummary> = {};
-      const empMap: Record<string, Category> = {};
+        // Payment details
+        first_name: detail.employee_name.split(' ')[0],
+        last_name: detail.employee_name.split(' ').slice(1).join(' ') || detail.employee_name.split(' ')[0],
+        department: selectedSubmission.location_name,
+        date: selectedSubmission.pay_date,
+        total_amount: detail.amount,
+        payment_method: 'Direct Deposit',
+        
+        // Payroll details
+        payroll_group: selectedSubmission.payroll_group,
+        hours: detail.hours,
+        units: detail.units,
+        
+        // Tracking
+        source: 'system'
+      }));
+
+      console.log('💾 Inserting payments:', paymentsToInsert);
+
+      const { error: paymentsError } = await dataClient
+        .from('payments')
+        .insert(paymentsToInsert);
+
+      if (paymentsError) {
+        console.error('❌ Payments insert error:', paymentsError);
+        throw paymentsError;
+      }
+
+      // STEP 5: Update submission to 'posted' status
+      const { error: postedError } = await dataClient
+        .from('payroll_submissions')
+        .update({
+          status: 'posted',
+          processed_by: userId,
+          processed_at: new Date().toISOString()
+        })
+        .eq('id', selectedSubmission.id);
+
+      if (postedError) throw postedError;
+
+      // STEP 6: Update entries to 'posted'
+      const { error: entriesPostedError } = await dataClient
+        .from('payroll_entries')
+        .update({
+          status: 'posted'
+        })
+        .eq('submission_id', selectedSubmission.id);
+
+      if (entriesPostedError) throw entriesPostedError;
+
+      // Success!
+      alert('✅ Payroll approved and posted successfully!');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      loadPendingSubmissions(organizationId);
+      loadAllLocations(organizationId);
       
-      (data || []).forEach((rec: any) => {
-        const dept = rec.department || "Unknown";
-        if (!deptMap[dept]) {
-          deptMap[dept] = { name: dept, expenses: 0 };
-        }
-        deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
+      // Reload historical data
+      const load = async () => {
+        const { start, end } = getDateRange();
+        const { data } = await dataClient
+          .from("payments")
+          .select("department, total_amount, date, first_name, last_name")
+          .gte("date", start)
+          .lte("date", end);
+          
+        const deptMap: Record<string, PropertySummary> = {};
+        const empMap: Record<string, Category> = {};
+        
+        (data || []).forEach((rec: any) => {
+          const dept = rec.department || "Unknown";
+          if (!deptMap[dept]) {
+            deptMap[dept] = { name: dept, expenses: 0 };
+          }
+          deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
 
-        const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
-        if (!empMap[emp]) {
-          empMap[emp] = { name: emp, total: 0 };
-        }
-        empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
-      });
-      
-      setProperties(Object.values(deptMap));
-      setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
-    };
-    load();
+          const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
+          if (!empMap[emp]) {
+            empMap[emp] = { name: emp, total: 0 };
+          }
+          empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
+        });
+        
+        setProperties(Object.values(deptMap));
+        setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
+      };
+      load();
 
-  } catch (error) {
-    console.error('Error approving payroll:', error);
-    alert('❌ Failed to approve payroll. Please try again.');
-  } finally {
-    setIsApproving(false);
-  }
-};
-
- const handleReject = async () => {
-  if (!selectedSubmission || !userId) return;
-
-  setIsApproving(true);
-
-  try {
-    // Get organization_id
-    const { data: locationData } = await dataClient
-      .from('locations')
-      .select('organization_id')
-      .eq('id', selectedSubmission.location_id)
-      .single();
-
-    // Update submission status
-    const { error: submissionError } = await dataClient
-      .from('payroll_submissions')
-      .update({
-        status: 'rejected',
-        approved_by: userId,
-        approved_at: new Date().toISOString()
-      })
-      .eq('id', selectedSubmission.id);
-
-    if (submissionError) throw submissionError;
-
-    // Update entries status
-    const { error: entriesError } = await dataClient
-      .from('payroll_entries')
-      .update({
-        status: 'rejected'
-      })
-      .eq('submission_id', selectedSubmission.id);
-
-    if (entriesError) throw entriesError;
-
-    // Log rejection
-    const { error: approvalLogError } = await dataClient
-      .from('payroll_approvals')
-      .insert({
-        organization_id: locationData?.organization_id,
-        submission_id: selectedSubmission.id,
-        action: 'rejected',
-        approved_by: userId,
-        previous_status: 'pending',
-        notes: 'Rejected via mobile dashboard'
-      });
-
-    if (approvalLogError) {
-      console.warn('Failed to create rejection log:', approvalLogError);
+    } catch (error) {
+      console.error('Error approving payroll:', error);
+      alert('❌ Failed to approve payroll. Please try again.');
+    } finally {
+      setIsApproving(false);
     }
+  };
 
-    alert('❌ Payroll rejected. Location manager can resubmit.');
-    setShowApprovalModal(false);
-    setSelectedSubmission(null);
-    const effectiveOrgId = locationData?.organization_id || (userRole === 'super_admin' ? subdomainOrgId : organizationId);
-    loadPendingSubmissions(effectiveOrgId || undefined);
-    loadAllLocations(effectiveOrgId || undefined);
+  const handleReject = async () => {
+    if (!selectedSubmission || !userId) return;
 
-  } catch (error) {
-    console.error('Error rejecting payroll:', error);
-    alert('Failed to reject payroll. Please try again.');
-  } finally {
-    setIsApproving(false);
-  }
-};
+    setIsApproving(true);
+
+    try {
+      // Get organization_id from submissionDetails (already loaded)
+      const organizationId = submissionDetails[0]?.organization_id;
+
+      if (!organizationId) {
+        throw new Error('Organization ID not found');
+      }
+
+      // Update submission status
+      const { error: submissionError } = await dataClient
+        .from('payroll_submissions')
+        .update({
+          status: 'rejected',
+          approved_by: userId,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', selectedSubmission.id);
+
+      if (submissionError) throw submissionError;
+
+      // Update entries status
+      const { error: entriesError } = await dataClient
+        .from('payroll_entries')
+        .update({
+          status: 'rejected'
+        })
+        .eq('submission_id', selectedSubmission.id);
+
+      if (entriesError) throw entriesError;
+
+      // Log rejection
+      const { error: approvalLogError } = await dataClient
+        .from('payroll_approvals')
+        .insert({
+          organization_id: organizationId,
+          submission_id: selectedSubmission.id,
+          action: 'rejected',
+          approved_by: userId,
+          previous_status: 'pending',
+          notes: 'Rejected via mobile dashboard'
+        });
+
+      if (approvalLogError) {
+        console.warn('Failed to create rejection log:', approvalLogError);
+      }
+
+      alert('❌ Payroll rejected. Location manager can resubmit.');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      const effectiveOrgId = userRole === 'super_admin' ? subdomainOrgId : organizationId;
+      loadPendingSubmissions(effectiveOrgId || undefined);
+      loadAllLocations(effectiveOrgId || undefined);
+
+    } catch (error) {
+      console.error('Error rejecting payroll:', error);
+      alert('Failed to reject payroll. Please try again.');
+    } finally {
+      setIsApproving(false);
+    }
+  };
 
   // Load payroll data for view mode
   useEffect(() => {
@@ -1253,7 +1277,7 @@ export default function PayrollDashboard() {
                       textAlign: 'center'
                     }}>
                       <div style={{ fontSize: '18px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
-                        {submission.employee_count || 0 /* Fallback to 0 when undefined */}
+                        {submission.employee_count || 0}
                       </div>
                       <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
                     </div>
