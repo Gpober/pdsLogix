@@ -116,6 +116,7 @@ export default function PayrollDashboard() {
   const router = useRouter();
   const authClient = useMemo(() => getAuthClient(), []);
   const dataClient = useMemo(() => getDataClient(), []);
+  const supabase = dataClient;
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportPeriod, setReportPeriod] = useState<
     "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
@@ -145,6 +146,23 @@ export default function PayrollDashboard() {
   const [userId, setUserId] = useState<string | null>(null);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [subdomainOrgId, setSubdomainOrgId] = useState<string | null>(null);
+
+  const showNotification = (
+    message: string,
+    type: 'info' | 'success' | 'error' = 'info'
+  ) => {
+    if (type === 'error') {
+      console.error(message);
+    } else if (type === 'success') {
+      console.log(message);
+    } else {
+      console.info(message);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.alert(message);
+    }
+  };
 
   const transactionTotal = useMemo(
     () => transactions.reduce((sum, t) => sum + t.amount, 0),
@@ -432,31 +450,46 @@ export default function PayrollDashboard() {
   const handleReviewSubmission = async (submission: PendingSubmission) => {
     setSelectedSubmission(submission);
 
-    // Load submission details
-    const { data: details, error } = await dataClient
+    // FIXED: Use payroll_entries instead of payroll_submission_details
+    const { data: entries, error: entriesError } = await supabase
       .from('payroll_entries')
       .select('*')
       .eq('submission_id', submission.id);
 
-    if (error) {
-      console.error('Error loading submission details:', error);
+    if (entriesError) {
+      console.error('Error fetching payroll entries:', entriesError);
+      showNotification('Failed to load submission details', 'error');
       return;
     }
 
-    // Get employee names
-    const employeeIds = details?.map(d => d.employee_id) || [];
-    const { data: employees } = await dataClient
+    // Get employee IDs from entries
+    const employeeIds = entries?.map(e => e.employee_id) || [];
+
+    // Fetch employee names
+    const { data: employees, error: employeesError } = await supabase
       .from('employees')
       .select('id, first_name, last_name')
       .in('id', employeeIds);
 
+    if (employeesError) {
+      console.error('Error fetching employees:', employeesError);
+      showNotification('Failed to load employee details', 'error');
+      return;
+    }
+
+    // Create map of employee IDs to names
     const employeesMap = new Map(
-      employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`])
+      employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`]) || []
     );
 
-    const detailsWithNames = (details || []).map(d => ({
-      ...d,
-      employee_name: employeesMap.get(d.employee_id) || 'Unknown Employee'
+    // Combine entries with employee names
+    const detailsWithNames = (entries || []).map(entry => ({
+      employee_id: entry.employee_id,
+      employee_name: employeesMap.get(entry.employee_id) || 'Unknown',
+      hours: entry.hours,
+      units: entry.units,
+      amount: entry.amount,
+      notes: entry.notes,
     }));
 
     setSubmissionDetails(detailsWithNames);
