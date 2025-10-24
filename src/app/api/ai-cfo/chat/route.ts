@@ -418,7 +418,9 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
       const isMultiLevel = Array.isArray(groupBy)
       const groupKeys = isMultiLevel ? groupBy : [groupBy]
       
+      let rowNum = 0
       data.forEach(row => {
+        rowNum++
         let key: string
         
         if (isMultiLevel) {
@@ -452,10 +454,13 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
           val = parseFloat(row.total_amount || 0)
         } else if (row.credit !== undefined && row.debit !== undefined) {
           // Journal entry lines
+          if (rowNum <= 3) console.log(`   🔢 Row ${rowNum}: key=${key}, credit=${row.credit}, debit=${row.debit}, filters="${filters}"`)
           if (filters?.includes('income') || filters?.includes('revenue')) {
             val = parseFloat(row.credit || 0) - parseFloat(row.debit || 0)
+            if (rowNum <= 3) console.log(`   💵 Calculated income: ${val}`)
           } else if (filters?.includes('expense')) {
             val = parseFloat(row.debit || 0) - parseFloat(row.credit || 0)
+            if (rowNum <= 3) console.log(`   💸 Calculated expense: ${val}`)
           }
         }
         
