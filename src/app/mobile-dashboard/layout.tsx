@@ -68,7 +68,7 @@ export default function MobileDashboardLayout({
         const voices = synthRef.current?.getVoices() || []
         setAvailableVoices(voices)
         
-        // Auto-select best voice
+        // Auto-select best voice only if none selected
         if (!selectedVoice && voices.length > 0) {
           const preferredVoice = voices.find(v => 
             v.name.includes('Samantha') || 
@@ -86,7 +86,7 @@ export default function MobileDashboardLayout({
         synthRef.current?.removeEventListener?.('voiceschanged', loadVoices)
       }
     }
-  }, [])
+  }, [selectedVoice])
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -201,10 +201,14 @@ export default function MobileDashboardLayout({
     utterance.pitch = 1.0
     utterance.volume = 1.0
 
-    // Use selected voice
-    const voice = availableVoices.find(v => v.name === selectedVoice)
+    // Use selected voice - get fresh voices list to ensure it's up to date
+    const voices = synthRef.current.getVoices()
+    const voice = voices.find(v => v.name === selectedVoice)
     if (voice) {
       utterance.voice = voice
+      console.log('🔊 Using voice:', voice.name)
+    } else {
+      console.warn('⚠️ Selected voice not found:', selectedVoice, 'Available:', voices.length)
     }
 
     utterance.onstart = () => setIsSpeaking(true)
@@ -460,7 +464,7 @@ export default function MobileDashboardLayout({
                   justifyContent: 'center',
                   cursor: 'pointer'
                 }}
-                title={autoSpeak ? 'Voice on - Click to mute' : 'Voice off - Click to enable'}
+                title={autoSpeak ? 'Mute AI responses' : 'Unmute AI responses'}
               >
                 {autoSpeak ? <Volume2 size={18} color="white" /> : <VolumeX size={18} color="white" />}
               </button>
@@ -505,6 +509,7 @@ export default function MobileDashboardLayout({
                   <button
                     key={voice.name}
                     onClick={() => {
+                      console.log('🎭 Voice selected:', voice.name)
                       setSelectedVoice(voice.name)
                       setShowVoiceMenu(false)
                       
@@ -514,6 +519,7 @@ export default function MobileDashboardLayout({
                         const test = new SpeechSynthesisUtterance("Hello, I'm your AI CFO assistant.")
                         test.voice = voice
                         test.rate = 1.0
+                        console.log('🎤 Testing voice:', voice.name)
                         synthRef.current.speak(test)
                       }
                     }}
