@@ -257,13 +257,13 @@ function tryQuickMatch(question: string, supabase: SupabaseClient): Promise<any>
       supabase)
   }
   
-  // Outstanding receivables
-  if (q.match(/receivable|owe.*me|outstanding/) && !q.match(/by|each/)) {
+  // Outstanding receivables (what customers owe you)
+  if (q.match(/receivable|customers? owe|outstanding.*customer|ar(?!\w)/) && !q.match(/by|each/)) {
     return quickAggregate('ar_aging_detail', 'open_balance > 0', 'SUM(open_balance)', supabase)
   }
   
-  // Outstanding payables
-  if (q.match(/payable|i owe|outstanding.*vendor/) && !q.match(/by|each/)) {
+  // Outstanding payables (what you owe vendors)
+  if (q.match(/payable|i owe|we owe|outstanding.*vendor|ap(?!\w)|owe.*vendor/) && !q.match(/by|each/)) {
     return quickAggregate('ap_aging', 'open_balance > 0', 'SUM(open_balance)', supabase)
   }
   
@@ -290,6 +290,10 @@ async function quickAggregate(
   if (filters.includes(`date >= '${new Date().getFullYear()}`)) {
     query = query.gte('date', `${new Date().getFullYear()}-01-01`)
   }
+  // ✅ FIX: Apply open_balance filter for AR/AP
+  if (filters.includes('open_balance > 0')) {
+    query = query.gt('open_balance', 0)
+  }
   
   const { data, error } = await query
   
@@ -308,6 +312,13 @@ async function quickAggregate(
   if (aggregation.includes('SUM(debit - credit)')) {
     return data.reduce((sum, row) => {
       return sum + (parseFloat(row.debit || 0) - parseFloat(row.credit || 0))
+    }, 0)
+  }
+  
+  // ✅ FIX: Handle SUM(open_balance) for AR/AP
+  if (aggregation.includes('SUM(open_balance)')) {
+    return data.reduce((sum, row) => {
+      return sum + parseFloat(row.open_balance || 0)
     }, 0)
   }
   
