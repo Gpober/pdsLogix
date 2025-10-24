@@ -96,36 +96,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
 Question: "${message}"
 
-Return ONLY a JSON object:
+Return JSON query plan:
 {
   "queries": [
-    {
-      "table": "table_name",
-      "type": "sum|count|list",
-      "filters": "brief filter description",
-      "groupBy": "column or null",
-      "alias": "name"
-    }
+    {"table": "table_name", "type": "sum|count|list", "filters": "description", "groupBy": "column|month|null", "alias": "name"}
   ]
 }
 
-IMPORTANT TYPE RULES:
-- Use "sum" when asking for totals, amounts, or how much (revenue, expenses, receivables, payables)
-- Use "count" when asking how many
-- Use "list" ONLY when asking to "show me" or "list" specific items without wanting a total
+Rules:
+- sum = totals/amounts, count = how many, list = show items
+- groupBy "month" for monthly breakdowns, "customer"/"vendor" for by-entity
+- filters describe what to include (e.g., "income this year", "outstanding", "pending")
 
 Examples:
 "revenue this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":null,"alias":"revenue"}]}
-"show overdue receivables" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"overdue","groupBy":null,"alias":"overdue_total"}]}
-"outstanding receivables by customer" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"outstanding","groupBy":"customer","alias":"by_customer"}]}
 "revenue by month" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"}]}
-"expenses by month this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"expenses this year","groupBy":"month","alias":"monthly_expenses"}]}
-"show me pending payroll" → {"queries":[{"table":"payroll_submissions","type":"list","filters":"pending","groupBy":null,"alias":"pending_list"}]}
-"compare this month to last" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this month","groupBy":null,"alias":"current"},{"table":"journal_entry_lines","type":"sum","filters":"income last month","groupBy":null,"alias":"previous"}]}
+"receivables by customer" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"outstanding","groupBy":"customer","alias":"by_customer"}]}
 
-CRITICAL: For "by month" or "monthly" queries, ALWAYS use groupBy:"month"
-
-JSON only, no explanation:`
+JSON only:`
 
       const analysisTimeout = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Analysis timeout')), 8000)
