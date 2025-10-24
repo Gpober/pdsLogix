@@ -107,10 +107,13 @@ Rules:
 - sum = totals/amounts, count = how many, list = show items
 - groupBy "month" for monthly breakdowns, "customer"/"vendor" for by-entity
 - filters describe what to include (e.g., "income this year", "outstanding", "pending")
+- For comparisons over time, use groupBy:"month" - the system will calculate growth %
 
 Examples:
 "revenue this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":null,"alias":"revenue"}]}
 "revenue by month" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"}]}
+"month over month revenue" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"}]}
+"compare revenue and expenses monthly" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"},{"table":"journal_entry_lines","type":"sum","filters":"expenses this year","groupBy":"month","alias":"monthly_expenses"}]}
 "receivables by customer" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"outstanding","groupBy":"customer","alias":"by_customer"}]}
 
 JSON only:`
@@ -496,9 +499,20 @@ async function generateResponse(
 
 Data: ${JSON.stringify(data, null, 2)}${totalMessage}
 
-Provide a concise, professional answer (<100 words). Format currency with $ and commas. If comparing values, show growth %. Be direct and helpful.
+Provide a concise, professional answer (<150 words). Format currency with $ and commas.
 
-When you see the "TOTAL AMOUNT" section above, use that exact dollar value - do not recalculate from the rows.`
+IMPORTANT INSTRUCTIONS:
+- If you see monthly data (Jan, Feb, Mar...), calculate month-over-month changes and show growth %
+- Show trends: "Revenue grew 12% from Jan to Feb" or "Expenses decreased 8% from Mar to Apr"
+- When you see the "TOTAL AMOUNT" section above, use that exact dollar value - do not recalculate
+- Be direct and actionable
+
+Example for monthly data:
+Jan: $45,000
+Feb: $52,000 (+15.6% vs Jan)
+Mar: $48,000 (-7.7% vs Feb)
+
+Highlight any significant trends or outliers.`
 
   const response = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
