@@ -226,70 +226,54 @@ JSON only, no explanation:`
   try {
     return await Promise.race([processingPromise, timeoutPromise])
   } catch (error) {
-    console.error('⏱️ Timeout or error:', error)
+    console.error('Request timeout or error:', error)
     return NextResponse.json({
-      response: "That query is taking too long. Please try a simpler question or try again.",
-      context: { 
-        error: error instanceof Error ? error.message : 'Timeout',
-        duration_ms: Date.now() - startTime
-      }
-    }, { status: 504 })
+      response: "The request took too long to process. Please try a simpler question or try again.",
+      context: { error: 'timeout' }
+    }, { status: 408 })
   }
 }
 
 // ============================================================================
-// QUICK PATTERN MATCHING - SKIP CLAUDE FOR COMMON QUERIES
+// PATTERN MATCHING - INSTANT RESPONSES
 // ============================================================================
 
-function tryQuickMatch(message: string, supabase: SupabaseClient): Promise<any> | null {
-  const msg = message.toLowerCase()
-  const year = new Date().getFullYear()
+function tryQuickMatch(question: string, supabase: SupabaseClient): Promise<any> | null {
+  const q = question.toLowerCase()
   
-  // Revenue this year
-  if (msg.includes('revenue') && (msg.includes('year') || msg.includes('ytd'))) {
-    return executeDirectQuery(
-      'journal_entry_lines',
-      `(account_type = 'Income' OR account_type = 'Other Income') AND date >= '${year}-01-01'`,
-      'SUM(credit - debit)',
-      null,
-      supabase
-    ).then(total => ({ revenue: [{ total }] }))
+  // Revenue patterns
+  if (q.match(/revenue|income|sales/) && q.match(/year|ytd|annual/)) {
+    return quickAggregate('journal_entry_lines', 
+      `account_type IN ('Income', 'Other Income') AND date >= '${new Date().getFullYear()}-01-01'`,
+      'SUM(credit - debit)', 
+      supabase)
   }
   
-  // Expenses this year
-  if (msg.includes('expense') && msg.includes('year')) {
-    return executeDirectQuery(
-      'journal_entry_lines',
-      `(account_type = 'Expenses' OR account_type = 'Cost of Goods Sold') AND date >= '${year}-01-01'`,
+  // Expense patterns
+  if (q.match(/expense|cost|spend/) && q.match(/year|ytd|annual/)) {
+    return quickAggregate('journal_entry_lines',
+      `account_type IN ('Expenses', 'Cost of Goods Sold') AND date >= '${new Date().getFullYear()}-01-01'`,
       'SUM(debit - credit)',
-      null,
-      supabase
-    ).then(total => ({ expenses: [{ total }] }))
+      supabase)
   }
   
-  // Pending payroll
-  if (msg.includes('pending') && msg.includes('payroll')) {
-    return supabase
-      .from('payroll_submissions')
-      .select('*, locations!inner(name)')
-      .eq('status', 'pending')
-      .order('submitted_at', { ascending: false })
-      .limit(20)
-      .then(({ data }) => ({ pending: data || [] }))
+  // Outstanding receivables
+  if (q.match(/receivable|owe.*me|outstanding/) && !q.match(/by|each/)) {
+    return quickAggregate('ar_aging_detail', 'open_balance > 0', 'SUM(open_balance)', supabase)
+  }
+  
+  // Outstanding payables
+  if (q.match(/payable|i owe|outstanding.*vendor/) && !q.match(/by|each/)) {
+    return quickAggregate('ap_aging', 'open_balance > 0', 'SUM(open_balance)', supabase)
   }
   
   return null
 }
 
-// ============================================================================
-// DIRECT QUERY EXECUTION - FAST PATH
-// ============================================================================
-
-async function executeDirectQuery(
+async function quickAggregate(
   table: string,
   filters: string,
   aggregation: string,
-  groupBy: string | null,
   supabase: SupabaseClient
 ): Promise<number> {
   
@@ -385,7 +369,7 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
     }
   }
   
-  // Limit for list queries
+  // For list queries, limit to 50 items
   if (type === 'list') {
     sq = sq.limit(50)
   }
@@ -443,10 +427,10 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
         grouped.set(key, (grouped.get(key) || 0) + val)
       })
       
+      // ✅ FIXED: Return ALL groups, no artificial limit
       return Array.from(grouped.entries())
         .map(([k, v]) => ({ [groupBy]: k, total: v }))
         .sort((a, b) => b.total - a.total)
-        .slice(0, 20)
     }
     
     return [{ total, count: data.length }]
@@ -457,8 +441,8 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
     return [{ count: data.length }]
   }
   
-  // For list queries, return raw data
-  return data.slice(0, 20)
+  // For list queries, return raw data (limited to 50)
+  return data.slice(0, 50)
 }
 
 // ============================================================================
@@ -471,23 +455,23 @@ async function generateResponse(
   apiKey: string
 ): Promise<string> {
   
-  // Extract pre-calculated total if it exists
-  let totalNote = ''
+  // Extract pre-calculated total if it exists and format it prominently
+  let totalMessage = ''
   for (const key in data) {
     if (key.endsWith('_total')) {
-      const alias = key.replace('_total', '')
       const total = data[key]
-      totalNote = `\n\nPRE-CALCULATED TOTAL for ${alias}: $${total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})} - USE THIS EXACT VALUE, DO NOT RECALCULATE`
+      const formattedTotal = `$${total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+      totalMessage = `\n\n===== IMPORTANT: TOTAL AMOUNT =====\nThe verified total is ${formattedTotal}\nYou MUST use this exact value in your response.\nDo NOT calculate your own total.\n====================================`
     }
   }
   
   const prompt = `Question: "${question}"
 
-Data: ${JSON.stringify(data, null, 2)}${totalNote}
+Data: ${JSON.stringify(data, null, 2)}${totalMessage}
 
 Provide a concise, professional answer (<100 words). Format currency with $ and commas. If comparing values, show growth %. Be direct and helpful.
 
-CRITICAL: Use the PRE-CALCULATED TOTAL value provided above. Do not add up the individual rows yourself.`
+When you see the "TOTAL AMOUNT" section above, use that exact dollar value - do not recalculate from the rows.`
 
   const response = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
