@@ -109,8 +109,16 @@ Return ONLY a JSON object:
   ]
 }
 
+IMPORTANT TYPE RULES:
+- Use "sum" when asking for totals, amounts, or how much (revenue, expenses, receivables, payables)
+- Use "count" when asking how many
+- Use "list" ONLY when asking to "show me" or "list" specific items without wanting a total
+
 Examples:
 "revenue this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":null,"alias":"revenue"}]}
+"show overdue receivables" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"overdue","groupBy":null,"alias":"overdue_total"}]}
+"outstanding receivables by customer" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"outstanding","groupBy":"customer","alias":"by_customer"}]}
+"show me pending payroll" → {"queries":[{"table":"payroll_submissions","type":"list","filters":"pending","groupBy":null,"alias":"pending_list"}]}
 "compare this month to last" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this month","groupBy":null,"alias":"current"},{"table":"journal_entry_lines","type":"sum","filters":"income last month","groupBy":null,"alias":"previous"}]}
 
 JSON only, no explanation:`
@@ -357,8 +365,13 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
     if (f.includes('pending')) sq = sq.eq('status', 'pending')
     if (f.includes('approved')) sq = sq.eq('status', 'approved')
     
-    // Open balance
-    if (f.includes('owe') || f.includes('outstanding')) {
+    // Receivables/Payables filters
+    if (f.includes('overdue')) {
+      // Overdue = past due date AND has open balance
+      sq = sq.gt('open_balance', 0)
+      sq = sq.lt('due_date', new Date().toISOString().split('T')[0])
+    } else if (f.includes('owe') || f.includes('outstanding') || f.includes('receivable')) {
+      // Outstanding = any open balance (not yet due + overdue)
       sq = sq.gt('open_balance', 0)
     }
   }
@@ -400,8 +413,24 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
       const grouped = new Map<string, number>()
       data.forEach(row => {
         const key = row[groupBy] || 'Unknown'
-        const val = parseFloat(row.total_amount || row.open_balance || 
-                    (parseFloat(row.credit || 0) - parseFloat(row.debit || 0)))
+        let val = 0
+        
+        // Determine value based on what fields exist
+        if (row.open_balance !== undefined) {
+          // AR/AP tables
+          val = parseFloat(row.open_balance || 0)
+        } else if (row.total_amount !== undefined) {
+          // Payroll tables
+          val = parseFloat(row.total_amount || 0)
+        } else if (row.credit !== undefined && row.debit !== undefined) {
+          // Journal entry lines
+          if (filters?.includes('income') || filters?.includes('revenue')) {
+            val = parseFloat(row.credit || 0) - parseFloat(row.debit || 0)
+          } else if (filters?.includes('expense')) {
+            val = parseFloat(row.debit || 0) - parseFloat(row.credit || 0)
+          }
+        }
+        
         grouped.set(key, (grouped.get(key) || 0) + val)
       })
       
