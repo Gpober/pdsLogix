@@ -4,7 +4,6 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 type QueryResult = Record<string, unknown>
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 
 interface RequestPayload {
   message?: string
@@ -70,14 +69,6 @@ function getAnthropicApiKey(): string {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     throw new Error('ANTHROPIC_API_KEY is not configured')
-  }
-  return apiKey
-}
-
-function getOpenAIApiKey(): string {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not configured')
   }
   return apiKey
 }
@@ -251,127 +242,17 @@ You are a friendly CFO assistant. Answer their question directly using the data 
   }
 }
 
-// Paginated aggregation for handling 30K+ records
-async function executePaginatedAggregation(
-  table: string,
-  filters: string | null,
-  aggregation: string,
-  supabase: SupabaseClient
-): Promise<QueryResult[]> {
-  
-  console.log('🔄 Starting paginated aggregation for large dataset...')
-  
-  // Build base query with filters
-  let baseQuery = supabase.from(table).select('*', { count: 'exact', head: false })
-  
-  // Apply filters
-  if (filters) {
-    const filterLower = filters.toLowerCase()
-    
-    if (filterLower.includes('income') || filterLower.includes('revenue')) {
-      baseQuery = baseQuery.or('account_type.ilike.%income%,account_type.ilike.%revenue%')
-    }
-    
-    if (filterLower.includes('expense')) {
-      baseQuery = baseQuery.ilike('account_type', '%expense%')
-    }
-    
-    if (filterLower.includes('open_balance > 0')) {
-      baseQuery = baseQuery.gt('open_balance', 0)
-    }
-    
-    // Date filters - handle both plain text and PostgreSQL DATE_TRUNC syntax
-    if (filterLower.includes('this month') || filterLower.includes('current_date') || filterLower.includes("date_trunc('month'")) {
-      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
-      baseQuery = baseQuery.gte('date', startOfMonth)
-    }
-    
-    if (filterLower.includes('this year') || filterLower.includes("date_trunc('year'")) {
-      const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
-      baseQuery = baseQuery.gte('date', startOfYear)
-    }
-  }
-
-  // Paginate through ALL records
-  const PAGE_SIZE = 1000 // Supabase recommended page size
-  let allRecords: any[] = []
-  let currentPage = 0
-  let hasMore = true
-
-  while (hasMore) {
-    const { data, error } = await baseQuery
-      .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1)
-
-    if (error) {
-      console.error('❌ Pagination error:', error)
-      break
-    }
-
-    if (data && data.length > 0) {
-      allRecords = allRecords.concat(data)
-      currentPage++
-      hasMore = data.length === PAGE_SIZE
-      
-      console.log(`📊 Page ${currentPage}: ${data.length} records (total: ${allRecords.length})`)
-      
-      // Safety limit: stop at 100K records to prevent memory issues
-      if (allRecords.length >= 100000) {
-        console.log('⚠️ Reached 100K record safety limit')
-        break
-      }
-    } else {
-      hasMore = false
-    }
-  }
-
-  console.log(`✅ Pagination complete: ${allRecords.length} total records`)
-
-  // Aggregate all records
-  if (aggregation.includes('SUM')) {
-    if (aggregation.includes('credit - debit')) {
-      const total = allRecords.reduce((sum, row) => {
-        const credit = parseFloat(String(row.credit || 0))
-        const debit = parseFloat(String(row.debit || 0))
-        return sum + (credit - debit)
-      }, 0)
-      
-      return [{ total, record_count: allRecords.length }]
-    } else if (aggregation.includes('total_amount') || aggregation.includes('open_balance')) {
-      const field = aggregation.includes('total_amount') ? 'total_amount' : 'open_balance'
-      const total = allRecords.reduce((sum, row) => {
-        return sum + parseFloat(String(row[field] || 0))
-      }, 0)
-      
-      return [{ total, record_count: allRecords.length }]
-    }
-  } else if (aggregation.includes('COUNT')) {
-    return [{ count: allRecords.length }]
-  }
-
-  return [{ error: 'Aggregation type not supported' }]
-}
-
 // Execute query based on Claude's plan
 async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<QueryResult[]> {
   const { table, filters, aggregation, groupBy, orderBy, limit } = plan
   
   console.log('📊 Executing query plan:', plan)
 
-  // USE PAGINATED AGGREGATION for large tables with SUM aggregations
-  // This handles 30K+ records accurately
-  const largeTables = ['journal_entry_lines', 'ar_aging_detail', 'ap_aging', 'payments']
-  
-  console.log('🔍 Checking pagination conditions:', {
-    table,
-    isLargeTable: largeTables.includes(table),
-    hasAggregation: !!aggregation,
-    aggregationType: aggregation,
-    includesSUM: aggregation?.includes('SUM')
-  })
-  
-  if (largeTables.includes(table) && aggregation && aggregation.includes('SUM')) {
-    console.log(`🚀 Using paginated aggregation for ${table} to ensure accurate totals...`)
-    return await executePaginatedAggregation(table, filters, aggregation, supabase)
+  // ✅ USE NATIVE POSTGRESQL AGGREGATION FOR SUM QUERIES
+  // This is the key fix - let the database do the math!
+  if (aggregation && (aggregation.includes('SUM') || aggregation.includes('COUNT') || aggregation.includes('AVG'))) {
+    console.log('🔥 Using native PostgreSQL aggregation...')
+    return await executeAggregationQuery(table, filters, aggregation, groupBy, supabase)
   }
 
   // Handle joins for payroll_submissions
@@ -424,7 +305,7 @@ async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<Qu
     }))
   }
 
-  // Handle standard tables
+  // Handle standard tables (non-aggregation queries)
   let query = supabase.from(table).select('*')
 
   // Apply filters manually for common patterns
@@ -452,20 +333,20 @@ async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<Qu
       query = query.gte('date', startOfMonth)
     }
     
-    if (filterLower.includes('this year')) {
+    if (filterLower.includes('this year') || filterLower.includes("date_trunc('year'")) {
       const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
       query = query.gte('date', startOfYear)
     }
   }
 
-  // Apply ordering (for non-aggregations only, since aggregations use pagination)
-  if (orderBy && !aggregation) {
+  // Apply ordering
+  if (orderBy) {
     const desc = orderBy.toLowerCase().includes('desc')
     const col = orderBy.replace(/DESC|ASC/gi, '').trim()
     query = query.order(col, { ascending: !desc })
   }
 
-  // Apply normal limit for non-aggregations
+  // Apply limit
   query = query.limit(limit || 100)
   
   const { data, error } = await query
@@ -473,7 +354,7 @@ async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<Qu
 
   let results = (data || []) as QueryResult[]
 
-  // Handle grouping
+  // Handle grouping (client-side for display queries)
   if (groupBy && !aggregation) {
     const grouped = new Map<string, any[]>()
     results.forEach(row => {
@@ -493,6 +374,152 @@ async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<Qu
   }
 
   return results
+}
+
+// ✅ NEW FUNCTION: Use PostgreSQL's native aggregation capabilities
+async function executeAggregationQuery(
+  table: string,
+  filters: string | null,
+  aggregation: string,
+  groupBy: string | null,
+  supabase: SupabaseClient
+): Promise<QueryResult[]> {
+  
+  console.log('💎 Building PostgreSQL aggregation query...')
+  
+  // Build the SQL query manually using Supabase's RPC function
+  let sqlQuery = ''
+  
+  // Determine what to select based on aggregation type
+  if (aggregation.includes('SUM(credit - debit)')) {
+    sqlQuery = `SELECT SUM(credit - debit) as total, COUNT(*) as record_count FROM ${table}`
+  } else if (aggregation.includes('SUM(debit - credit)')) {
+    sqlQuery = `SELECT SUM(debit - credit) as total, COUNT(*) as record_count FROM ${table}`
+  } else if (aggregation.includes('SUM(')) {
+    // Extract field name from SUM(field_name)
+    const fieldMatch = aggregation.match(/SUM\(([^)]+)\)/)
+    const field = fieldMatch ? fieldMatch[1] : 'total_amount'
+    sqlQuery = `SELECT SUM(${field}) as total, COUNT(*) as record_count FROM ${table}`
+  } else if (aggregation.includes('COUNT')) {
+    sqlQuery = `SELECT COUNT(*) as count FROM ${table}`
+  } else if (aggregation.includes('AVG')) {
+    const fieldMatch = aggregation.match(/AVG\(([^)]+)\)/)
+    const field = fieldMatch ? fieldMatch[1] : 'total_amount'
+    sqlQuery = `SELECT AVG(${field}) as average, COUNT(*) as record_count FROM ${table}`
+  }
+  
+  // Add WHERE clause
+  if (filters) {
+    sqlQuery += ' WHERE ' + filters
+  }
+  
+  // Add GROUP BY if specified
+  if (groupBy) {
+    sqlQuery += ` GROUP BY ${groupBy}`
+  }
+  
+  console.log('📝 SQL Query:', sqlQuery)
+  
+  try {
+    // Use Supabase's rpc to execute raw SQL
+    const { data, error } = await supabase.rpc('execute_sql', { 
+      query: sqlQuery 
+    })
+    
+    if (error) {
+      console.error('❌ SQL execution error:', error)
+      throw error
+    }
+    
+    console.log('✅ Aggregation result:', data)
+    
+    // Return the aggregation result
+    return data || []
+    
+  } catch (error) {
+    console.error('❌ Aggregation query failed:', error)
+    
+    // Fallback: Try using Supabase query builder with filters
+    return await executeAggregationFallback(table, filters, aggregation, supabase)
+  }
+}
+
+// Fallback aggregation using Supabase query builder
+async function executeAggregationFallback(
+  table: string,
+  filters: string | null,
+  aggregation: string,
+  supabase: SupabaseClient
+): Promise<QueryResult[]> {
+  
+  console.log('🔄 Using fallback aggregation method...')
+  
+  // Start with base query selecting necessary fields
+  let query = supabase.from(table).select('credit, debit, total_amount, open_balance')
+  
+  // Apply filters
+  if (filters) {
+    const filterLower = filters.toLowerCase()
+    
+    if (filterLower.includes('income') || filterLower.includes('revenue')) {
+      query = query.or('account_type.ilike.%income%,account_type.ilike.%revenue%')
+    }
+    
+    if (filterLower.includes('expense')) {
+      query = query.ilike('account_type', '%expense%')
+    }
+    
+    if (filterLower.includes('open_balance > 0')) {
+      query = query.gt('open_balance', 0)
+    }
+    
+    // Date filters
+    if (filterLower.includes('this year') || filterLower.includes("date_trunc('year'")) {
+      const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
+      query = query.gte('date', startOfYear)
+    }
+    
+    if (filterLower.includes('this month') || filterLower.includes("date_trunc('month'")) {
+      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+      query = query.gte('date', startOfMonth)
+    }
+  }
+  
+  // Fetch ALL matching records (no limit for aggregation)
+  const { data, error } = await query
+  
+  if (error) {
+    console.error('❌ Fallback query error:', error)
+    throw error
+  }
+  
+  if (!data || data.length === 0) {
+    return [{ total: 0, record_count: 0 }]
+  }
+  
+  // Perform aggregation client-side
+  if (aggregation.includes('SUM(credit - debit)')) {
+    const total = data.reduce((sum, row) => {
+      const credit = parseFloat(String(row.credit || 0))
+      const debit = parseFloat(String(row.debit || 0))
+      return sum + (credit - debit)
+    }, 0)
+    
+    console.log(`✅ Fallback aggregation: ${data.length} records, total = $${total.toFixed(2)}`)
+    return [{ total: total, record_count: data.length }]
+  } else if (aggregation.includes('SUM(total_amount)') || aggregation.includes('SUM(open_balance)')) {
+    const field = aggregation.includes('total_amount') ? 'total_amount' : 'open_balance'
+    const total = data.reduce((sum, row) => {
+      return sum + parseFloat(String(row[field] || 0))
+    }, 0)
+    
+    console.log(`✅ Fallback aggregation: ${data.length} records, total = $${total.toFixed(2)}`)
+    return [{ total: total, record_count: data.length }]
+  } else if (aggregation.includes('COUNT')) {
+    return [{ count: data.length }]
+  }
+  
+  return [{ error: 'Aggregation type not supported' }]
 }
 
 // Fallback queries for each table
