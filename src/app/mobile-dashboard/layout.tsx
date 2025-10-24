@@ -66,6 +66,7 @@ export default function MobileDashboardLayout({
       
       const loadVoices = () => {
         const voices = synthRef.current?.getVoices() || []
+        console.log('📢 Available voices:', voices.length)
         setAvailableVoices(voices)
         
         // Auto-select best voice only if none selected
@@ -75,18 +76,29 @@ export default function MobileDashboardLayout({
             v.name.includes('Karen') ||
             v.name.includes('Google US English')
           ) || voices[0]
+          console.log('🎯 Auto-selecting voice:', preferredVoice.name)
           setSelectedVoice(preferredVoice.name)
         }
       }
       
+      // Load voices immediately
       loadVoices()
-      synthRef.current?.addEventListener?.('voiceschanged', loadVoices)
+      
+      // Also listen for voiceschanged event (some browsers need this)
+      if (synthRef.current) {
+        synthRef.current.addEventListener('voiceschanged', loadVoices)
+      }
+      
+      // Set a timeout fallback in case voices aren't ready
+      setTimeout(loadVoices, 100)
       
       return () => {
-        synthRef.current?.removeEventListener?.('voiceschanged', loadVoices)
+        if (synthRef.current) {
+          synthRef.current.removeEventListener('voiceschanged', loadVoices)
+        }
       }
     }
-  }, [selectedVoice])
+  }, [])
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -182,7 +194,15 @@ export default function MobileDashboardLayout({
   }
 
   const speakResponse = (text: string) => {
-    if (!synthRef.current || !autoSpeak) return
+    if (!autoSpeak) {
+      console.log('🔇 Voice muted - not speaking')
+      return
+    }
+    
+    if (!synthRef.current) {
+      console.warn('⚠️ Speech synthesis not available')
+      return
+    }
 
     synthRef.current.cancel()
 
@@ -203,12 +223,23 @@ export default function MobileDashboardLayout({
 
     // Use selected voice - get fresh voices list to ensure it's up to date
     const voices = synthRef.current.getVoices()
-    const voice = voices.find(v => v.name === selectedVoice)
+    let voice = voices.find(v => v.name === selectedVoice)
+    
+    // Fallback: if selected voice not found, use a default
+    if (!voice && voices.length > 0) {
+      voice = voices.find(v => 
+        v.name.includes('Samantha') || 
+        v.name.includes('Google US English') ||
+        v.name.includes('Karen')
+      ) || voices[0]
+      console.warn('⚠️ Selected voice not found, using fallback:', voice.name)
+    }
+    
     if (voice) {
       utterance.voice = voice
       console.log('🔊 Using voice:', voice.name)
     } else {
-      console.warn('⚠️ Selected voice not found:', selectedVoice, 'Available:', voices.length)
+      console.warn('⚠️ No voices available at all!')
     }
 
     utterance.onstart = () => setIsSpeaking(true)
@@ -448,8 +479,10 @@ export default function MobileDashboardLayout({
                 onClick={() => {
                   const newState = !autoSpeak
                   setAutoSpeak(newState)
+                  console.log('🔊 Voice toggle:', newState ? 'ENABLED' : 'MUTED')
                   // If turning off, stop any current speech
                   if (!newState) {
+                    console.log('🛑 Stopping current speech')
                     stopSpeaking()
                   }
                 }}
@@ -464,7 +497,7 @@ export default function MobileDashboardLayout({
                   justifyContent: 'center',
                   cursor: 'pointer'
                 }}
-                title={autoSpeak ? 'Mute AI responses' : 'Unmute AI responses'}
+                title={autoSpeak ? 'Click to mute AI voice responses' : 'Click to enable AI voice responses'}
               >
                 {autoSpeak ? <Volume2 size={18} color="white" /> : <VolumeX size={18} color="white" />}
               </button>
