@@ -137,6 +137,7 @@ JSON only:`
       const analysisData = await analysis.json()
       const analysisText = analysisData.content?.[0]?.text || '{}'
       console.log('🤖 Plan:', analysisText)
+      console.log('📋 Raw plan text:', JSON.stringify(analysisText, null, 2))
 
       let plan: any
       try {
@@ -319,6 +320,8 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
   const { table, type, filters, groupBy, alias } = query
   
   console.log(`🔍 ${alias}: ${table} (${type})`)
+  console.log(`   groupBy:`, groupBy)
+  console.log(`   filters:`, filters)
   
   const year = new Date().getFullYear()
   const month = new Date().getMonth()
