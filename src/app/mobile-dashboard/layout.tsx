@@ -626,22 +626,21 @@ export default function MobileDashboardLayout({
                   borderRadius: '12px',
                   width: '48px',
                   height: '48px',
+                  minWidth: '48px',
+                  minHeight: '48px',
+                  maxWidth: '48px',
+                  maxHeight: '48px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: isLoading ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s ease',
-                  animation: isListening ? 'pulse-mic 1s ease-in-out infinite' : 'none'
+                  transition: 'background 0.2s ease',
+                  flexShrink: 0,
+                  position: 'relative'
                 }}
                 title={isListening ? 'Stop listening' : 'Start voice input'}
               >
                 {isListening ? <MicOff size={20} color="white" /> : <Mic size={20} color="white" />}
-                <style jsx>{`
-                  @keyframes pulse-mic {
-                    0%, 100% { transform: scale(1); }
-                    50% { transform: scale(1.1); }
-                  }
-                `}</style>
               </button>
               <button
                 onClick={() => handleSendMessage()}
@@ -654,11 +653,16 @@ export default function MobileDashboardLayout({
                   borderRadius: '12px',
                   width: '48px',
                   height: '48px',
+                  minWidth: '48px',
+                  minHeight: '48px',
+                  maxWidth: '48px',
+                  maxHeight: '48px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: inputMessage.trim() && !isLoading ? 'pointer' : 'not-allowed',
-                  transition: 'all 0.2s ease'
+                  transition: 'background 0.2s ease',
+                  flexShrink: 0
                 }}
               >
                 <Send size={20} color="white" />
