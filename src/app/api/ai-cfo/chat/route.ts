@@ -228,6 +228,12 @@ JSON only:`
 function tryQuickMatch(question: string, supabase: SupabaseClient): Promise<any> | null {
   const q = question.toLowerCase()
   
+  // DON'T quick match if the question asks for a breakdown (by month, by customer, etc.)
+  if (q.match(/\bby\s+(month|customer|vendor|location|department|week)/)) {
+    console.log('🚫 Quick match skipped: breakdown requested')
+    return null
+  }
+  
   // Revenue patterns
   if (q.match(/revenue|income|sales/) && q.match(/year|ytd|annual/)) {
     return quickAggregate('journal_entry_lines', 
@@ -387,22 +393,27 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
   
   // For sum queries, aggregate
   if (type === 'sum') {
+    console.log(`   📊 Sum query on ${data.length} rows`)
     let total = 0
     
     if (filters?.includes('income') || filters?.includes('revenue')) {
       total = data.reduce((sum, row) => {
         return sum + (parseFloat(row.credit || 0) - parseFloat(row.debit || 0))
       }, 0)
+      console.log(`   💰 Income total: $${total}`)
     } else if (filters?.includes('expense')) {
       total = data.reduce((sum, row) => {
         return sum + (parseFloat(row.debit || 0) - parseFloat(row.credit || 0))
       }, 0)
+      console.log(`   💸 Expense total: $${total}`)
     } else {
       total = data.reduce((sum, row) => sum + parseFloat(row.total_amount || row.open_balance || 0), 0)
+      console.log(`   💵 Total: $${total}`)
     }
     
     // Group by if specified
     if (groupBy) {
+      console.log(`   📊 Grouping by: ${JSON.stringify(groupBy)}`)
       const grouped = new Map<string, number>()
       const isMultiLevel = Array.isArray(groupBy)
       const groupKeys = isMultiLevel ? groupBy : [groupBy]
@@ -479,9 +490,12 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
         results.sort((a, b) => b.total - a.total)
       }
       
+      console.log(`   ✅ Returning ${results.length} grouped results`)
+      console.log(`   📦 First few:`, results.slice(0, 3))
       return results
     }
     
+    console.log(`   ✅ Returning single total: $${total}`)
     return [{ total, count: data.length }]
   }
   
