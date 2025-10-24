@@ -179,7 +179,15 @@ JSON only, no explanation:`
       const dataMap: Record<string, any> = {}
       
       plan.queries?.forEach((q: any, i: number) => {
-        dataMap[q.alias] = results[i]
+        const result = results[i]
+        dataMap[q.alias] = result
+        
+        // Pre-calculate totals for grouped data to avoid Claude math errors
+        if (Array.isArray(result) && result.length > 0 && result[0].total !== undefined) {
+          const calculatedTotal = result.reduce((sum, row) => sum + (parseFloat(row.total) || 0), 0)
+          dataMap[`${q.alias}_total`] = calculatedTotal
+          dataMap[`${q.alias}_count`] = result.length
+        }
       })
 
       console.log(`✅ Queries done: ${Date.now() - startTime}ms`)
@@ -466,7 +474,9 @@ async function generateResponse(
 
 Data: ${JSON.stringify(data, null, 2)}
 
-Provide a concise, professional answer (<100 words). Format currency with $ and commas. If comparing values, show growth %. Be direct and helpful.`
+Provide a concise, professional answer (<100 words). Format currency with $ and commas. If comparing values, show growth %. Be direct and helpful.
+
+IMPORTANT: If the data includes a field ending in "_total", that is the pre-calculated accurate total. Use that value, do not recalculate.`
 
   const response = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
