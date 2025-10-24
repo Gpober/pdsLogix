@@ -350,7 +350,13 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
         query = query.or("account_type.eq.Expenses,account_type.eq.Cost of Goods Sold")
       }
       
-      if (filters?.includes('this year')) {
+      // ALWAYS filter to current year when grouping by month (unless explicitly asking for different year)
+      if (filters?.includes('last year')) {
+        query = query.gte('date', `${year - 1}-01-01`).lt('date', `${year}-01-01`)
+      } else if (filters?.includes('this month')) {
+        query = query.gte('date', new Date(year, month, 1).toISOString().split('T')[0])
+      } else {
+        // Default: current year for month grouping
         query = query.gte('date', `${year}-01-01`)
       }
       
@@ -404,12 +410,14 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
     if (table === 'payments') {
       let query = supabase.from(table).select('date, total_amount, department, location')
       
-      if (filters?.includes('this year')) {
-        query = query.gte('date', `${year}-01-01`)
-      }
-      
-      if (filters?.includes('this month')) {
+      // ALWAYS filter to current year when grouping by month
+      if (filters?.includes('last year')) {
+        query = query.gte('date', `${year - 1}-01-01`).lt('date', `${year}-01-01`)
+      } else if (filters?.includes('this month')) {
         query = query.gte('date', new Date(year, month, 1).toISOString().split('T')[0])
+      } else {
+        // Default: current year for month grouping
+        query = query.gte('date', `${year}-01-01`)
       }
       
       const { data, error } = await query
@@ -450,16 +458,16 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
     if (table === 'payroll_submissions') {
       let query = supabase.from(table).select('pay_date, total_amount, status, location_id')
       
-      if (filters?.includes('this year')) {
+      // ALWAYS filter to current year when grouping by month
+      if (filters?.includes('last year')) {
+        query = query.gte('pay_date', `${year - 1}-01-01`).lt('pay_date', `${year}-01-01`)
+      } else if (filters?.includes('pending')) {
+        query = query.gte('pay_date', `${year}-01-01`).eq('status', 'pending')
+      } else if (filters?.includes('approved')) {
+        query = query.gte('pay_date', `${year}-01-01`).eq('status', 'approved')
+      } else {
+        // Default: current year for month grouping
         query = query.gte('pay_date', `${year}-01-01`)
-      }
-      
-      if (filters?.includes('pending')) {
-        query = query.eq('status', 'pending')
-      }
-      
-      if (filters?.includes('approved')) {
-        query = query.eq('status', 'approved')
       }
       
       const { data, error } = await query
