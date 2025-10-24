@@ -17,16 +17,15 @@ interface RequestPayload {
 
 const DATABASE_SCHEMA = `
 TABLES:
-1. journal_entry_lines: date, account_type, debit, credit, customer, vendor
-   - Revenue: account_type IN ('Income', 'Other Income')
-   - Expenses: account_type IN ('Expenses', 'Cost of Goods Sold')
-   
+1. journal_entry_lines: date, account_type, debit, credit, customer, vendor, location
+   Revenue: account_type IN ('Income','Other Income') | Expenses: account_type IN ('Expenses','Cost of Goods Sold')
 2. ar_aging_detail: customer, open_balance, due_date
 3. ap_aging: vendor, open_balance, due_date
-4. payments: date, first_name, last_name, total_amount, department
+4. payments: date, first_name, last_name, total_amount, department, location
 5. payroll_submissions: pay_date, total_amount, status, location_id
 6. locations: id, name
 
+GROUPING: Any date column→month, any entity column→that entity. Can combine: ["customer","month"]
 Current date: ${new Date().toISOString().split('T')[0]}
 `
 
@@ -94,27 +93,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // STEP 1: Ask Claude for query plan (SIMPLIFIED) - with timeout
       const analysisPrompt = `${DATABASE_SCHEMA}
 
-Question: "${message}"
+Q: "${message}"
 
-Return JSON query plan:
-{
-  "queries": [
-    {"table": "table_name", "type": "sum|count|list", "filters": "description", "groupBy": "column|month|null", "alias": "name"}
-  ]
-}
+JSON plan:
+{"queries":[{"table":"name","type":"sum|count|list","filters":"desc","groupBy":"col|month|['col1','col2']|null","alias":"name"}]}
 
-Rules:
-- sum = totals/amounts, count = how many, list = show items
-- groupBy "month" for monthly breakdowns, "customer"/"vendor" for by-entity
-- filters describe what to include (e.g., "income this year", "outstanding", "pending")
-- For comparisons over time, use groupBy:"month" - the system will calculate growth %
+Types: sum=totals, count=qty, list=items
+GroupBy: single, "month", ["multi","level"], or null
 
 Examples:
-"revenue this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":null,"alias":"revenue"}]}
-"revenue by month" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"}]}
-"month over month revenue" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"}]}
-"compare revenue and expenses monthly" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"},{"table":"journal_entry_lines","type":"sum","filters":"expenses this year","groupBy":"month","alias":"monthly_expenses"}]}
-"receivables by customer" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"outstanding","groupBy":"customer","alias":"by_customer"}]}
+"revenue this year"→{"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":null,"alias":"revenue"}]}
+"revenue by month"→{"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"}]}
+"revenue by customer by month"→{"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":["customer","month"],"alias":"customer_monthly"}]}
+"expenses by department"→{"queries":[{"table":"payments","type":"sum","filters":"this year","groupBy":"department","alias":"dept_expenses"}]}
 
 JSON only:`
 
@@ -410,16 +401,30 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
     // Group by if specified
     if (groupBy) {
       const grouped = new Map<string, number>()
+      const isMultiLevel = Array.isArray(groupBy)
+      const groupKeys = isMultiLevel ? groupBy : [groupBy]
+      
       data.forEach(row => {
         let key: string
         
-        // Handle month grouping specially
-        if (groupBy === 'month' && row.date) {
-          const date = new Date(row.date)
-          // Format as "Jan 2025", "Feb 2025", etc.
-          key = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+        if (isMultiLevel) {
+          // Multi-level grouping: combine keys with " | " separator
+          const keys = groupKeys.map(gk => {
+            if (gk === 'month' && row.date) {
+              const date = new Date(row.date)
+              return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+            }
+            return row[gk] || 'Unknown'
+          })
+          key = keys.join(' | ')
         } else {
-          key = row[groupBy] || 'Unknown'
+          // Single level grouping
+          if (groupBy === 'month' && row.date) {
+            const date = new Date(row.date)
+            key = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+          } else {
+            key = row[groupBy] || 'Unknown'
+          }
         }
         
         let val = 0
@@ -446,13 +451,24 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
       // ✅ FIXED: Return ALL groups, no artificial limit
       // Sort by date if grouping by month
       const results = Array.from(grouped.entries())
-        .map(([k, v]) => ({ [groupBy]: k, total: v }))
+        .map(([k, v]) => {
+          if (isMultiLevel) {
+            const keys = k.split(' | ')
+            const result: any = { total: v }
+            groupKeys.forEach((gk, i) => {
+              result[gk] = keys[i]
+            })
+            return result
+          } else {
+            return { [groupBy]: k, total: v }
+          }
+        })
       
-      // Sort by month chronologically if grouping by month
-      if (groupBy === 'month') {
+      // Sort by month chronologically if grouping includes month
+      if (groupBy === 'month' || (isMultiLevel && groupKeys.includes('month'))) {
         results.sort((a, b) => {
-          const dateA = new Date(a.month)
-          const dateB = new Date(b.month)
+          const dateA = new Date(a.month || a[groupKeys[groupKeys.indexOf('month')]])
+          const dateB = new Date(b.month || b[groupKeys[groupKeys.indexOf('month')]])
           return dateA.getTime() - dateB.getTime()
         })
       } else {
