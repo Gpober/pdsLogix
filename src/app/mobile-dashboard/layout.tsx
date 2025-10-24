@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { X, Send, Sparkles } from 'lucide-react'
+import { X, Send, Sparkles, Mic, MicOff, Volume2, VolumeX } from 'lucide-react'
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -40,14 +40,83 @@ export default function MobileDashboardLayout({
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: "👋 Hi! I'm your AI CFO assistant. I can help you analyze your financial data, answer questions about your reports, and provide insights. What would you like to know?",
+      content: "👋 Hi! I'm your AI CFO assistant. I can help you analyze your financial data, answer questions about your reports, and provide insights. You can type or use voice! What would you like to know?",
       timestamp: new Date()
     }
   ])
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [autoSpeak, setAutoSpeak] = useState(true)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const recognitionRef = useRef<any>(null)
+  const synthRef = useRef<SpeechSynthesis | null>(null)
+
+  // Initialize Speech Recognition and Synthesis
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // Speech Recognition
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition()
+        recognitionRef.current.continuous = false
+        recognitionRef.current.interimResults = true
+        recognitionRef.current.lang = 'en-US'
+
+        recognitionRef.current.onresult = (event: any) => {
+          const transcript = Array.from(event.results)
+            .map((result: any) => result[0].transcript)
+            .join('')
+          
+          setInputMessage(transcript)
+          
+          // Auto-submit when user stops talking (final result)
+          if (event.results[0].isFinal) {
+            setTimeout(() => {
+              if (transcript.trim()) {
+                handleSendMessage(transcript)
+              }
+            }, 500)
+          }
+        }
+
+        recognitionRef.current.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error)
+          setIsListening(false)
+          if (event.error === 'no-speech') {
+            setVoiceError('No speech detected. Try again or type your question.')
+          } else if (event.error === 'not-allowed') {
+            setVoiceError('Microphone access denied. You can still type.')
+          } else {
+            setVoiceError('Voice error. You can still type your question.')
+          }
+          setTimeout(() => setVoiceError(null), 4000)
+        }
+
+        recognitionRef.current.onend = () => {
+          setIsListening(false)
+        }
+      }
+
+      // Speech Synthesis
+      if ('speechSynthesis' in window) {
+        synthRef.current = window.speechSynthesis
+      }
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+      if (synthRef.current) {
+        synthRef.current.cancel()
+      }
+    }
+  }, [])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -63,12 +132,91 @@ export default function MobileDashboardLayout({
     }
   }, [isChatOpen])
 
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim() || isLoading) return
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      setVoiceError('Voice not available in this browser. You can still type!')
+      setTimeout(() => setVoiceError(null), 3000)
+      return
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop()
+      setIsListening(false)
+    } else {
+      setVoiceError(null)
+      setInputMessage('')
+      try {
+        recognitionRef.current.start()
+        setIsListening(true)
+      } catch (err) {
+        console.error('Failed to start recognition:', err)
+        setVoiceError('Could not start voice. Try typing instead.')
+        setTimeout(() => setVoiceError(null), 3000)
+      }
+    }
+  }
+
+  const speakResponse = (text: string) => {
+    if (!synthRef.current || !autoSpeak) return
+
+    // Cancel any ongoing speech
+    synthRef.current.cancel()
+
+    // Clean up text
+    const cleanText = text
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/👋/g, '')
+      .replace(/\[.*?\]\(.*?\)/g, '')
+      .replace(/#+\s/g, '')
+      .replace(/•/g, '')
+      .replace(/\$/g, 'dollars ')
+      .trim()
+
+    const utterance = new SpeechSynthesisUtterance(cleanText)
+    utterance.rate = 1.0
+    utterance.pitch = 1.0
+    utterance.volume = 1.0
+
+    // Use best available voice
+    const voices = synthRef.current.getVoices()
+    const preferredVoice = voices.find(voice => 
+      voice.name.includes('Samantha') || 
+      voice.name.includes('Karen') || 
+      voice.name.includes('Google US English') ||
+      voice.name.includes('Microsoft Zira')
+    )
+    if (preferredVoice) {
+      utterance.voice = preferredVoice
+    }
+
+    utterance.onstart = () => setIsSpeaking(true)
+    utterance.onend = () => setIsSpeaking(false)
+    utterance.onerror = () => setIsSpeaking(false)
+
+    synthRef.current.speak(utterance)
+  }
+
+  const stopSpeaking = () => {
+    if (synthRef.current) {
+      synthRef.current.cancel()
+      setIsSpeaking(false)
+    }
+  }
+
+  const handleSendMessage = async (text?: string) => {
+    const messageText = text || inputMessage
+    if (!messageText.trim() || isLoading) return
+
+    // Stop any ongoing speech or listening
+    stopSpeaking()
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop()
+    }
 
     const userMessage: Message = {
       role: 'user',
-      content: inputMessage,
+      content: messageText,
       timestamp: new Date()
     }
 
@@ -83,7 +231,7 @@ export default function MobileDashboardLayout({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: inputMessage,
+          message: messageText,
           conversationHistory: messages
         }),
       })
@@ -101,6 +249,9 @@ export default function MobileDashboardLayout({
       }
 
       setMessages(prev => [...prev, assistantMessage])
+
+      // Speak the response
+      speakResponse(assistantMessage.content)
 
     } catch (error) {
       console.error('AI Chat Error:', error)
@@ -125,10 +276,10 @@ export default function MobileDashboardLayout({
   }
 
   const quickActions = [
-    "Summarize my financial performance",
-    "What's my cash position?",
-    "Show overdue receivables",
-    "Analyze payroll costs"
+    "What's my revenue this year?",
+    "Show outstanding receivables",
+    "What are my biggest expenses?",
+    "Summarize my cash position"
   ]
 
   const handleQuickAction = (action: string) => {
@@ -233,28 +384,60 @@ export default function MobileDashboardLayout({
                   fontSize: '12px',
                   color: 'rgba(255, 255, 255, 0.9)'
                 }}>
-                  Your Financial Assistant
+                  {isListening ? '🎤 Listening...' : isSpeaking ? '🔊 Speaking...' : 'Type or speak your question'}
                 </p>
               </div>
             </div>
 
-            <button
-              onClick={() => setIsChatOpen(false)}
-              style={{
-                background: 'rgba(255, 255, 255, 0.2)',
-                border: 'none',
-                borderRadius: '8px',
-                width: '36px',
-                height: '36px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer'
-              }}
-            >
-              <X size={20} color="white" />
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => setAutoSpeak(!autoSpeak)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  width: '36px',
+                  height: '36px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer'
+                }}
+                title={autoSpeak ? 'Voice on' : 'Voice off'}
+              >
+                {autoSpeak ? <Volume2 size={18} color="white" /> : <VolumeX size={18} color="white" />}
+              </button>
+              <button
+                onClick={() => setIsChatOpen(false)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  width: '36px',
+                  height: '36px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer'
+                }}
+              >
+                <X size={20} color="white" />
+              </button>
+            </div>
           </div>
+
+          {/* Voice Error Banner */}
+          {voiceError && (
+            <div style={{
+              padding: '12px 20px',
+              background: '#FEF3C7',
+              borderBottom: '1px solid #FCD34D',
+              fontSize: '13px',
+              color: '#92400E'
+            }}>
+              {voiceError}
+            </div>
+          )}
 
           {/* Chat Messages */}
           <div style={{
@@ -413,8 +596,8 @@ export default function MobileDashboardLayout({
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder="Ask me anything about your finances..."
-                disabled={isLoading}
+                placeholder={isListening ? "Listening..." : "Type or speak your question..."}
+                disabled={isLoading || isListening}
                 style={{
                   flex: 1,
                   padding: '14px 16px',
@@ -422,7 +605,8 @@ export default function MobileDashboardLayout({
                   borderRadius: '12px',
                   fontSize: '15px',
                   outline: 'none',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  background: isListening ? BRAND_COLORS.gray[50] : 'white'
                 }}
                 onFocus={(e) => {
                   e.currentTarget.style.borderColor = BRAND_COLORS.primary
@@ -432,7 +616,35 @@ export default function MobileDashboardLayout({
                 }}
               />
               <button
-                onClick={handleSendMessage}
+                onClick={toggleListening}
+                disabled={isLoading}
+                style={{
+                  background: isListening 
+                    ? 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)'
+                    : 'linear-gradient(135deg, #F97316 0%, #EA580C 100%)',
+                  border: 'none',
+                  borderRadius: '12px',
+                  width: '48px',
+                  height: '48px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  animation: isListening ? 'pulse-mic 1s ease-in-out infinite' : 'none'
+                }}
+                title={isListening ? 'Stop listening' : 'Start voice input'}
+              >
+                {isListening ? <MicOff size={20} color="white" /> : <Mic size={20} color="white" />}
+                <style jsx>{`
+                  @keyframes pulse-mic {
+                    0%, 100% { transform: scale(1); }
+                    50% { transform: scale(1.1); }
+                  }
+                `}</style>
+              </button>
+              <button
+                onClick={() => handleSendMessage()}
                 disabled={!inputMessage.trim() || isLoading}
                 style={{
                   background: inputMessage.trim() && !isLoading
