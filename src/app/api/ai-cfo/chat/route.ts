@@ -241,7 +241,6 @@ You are a friendly CFO assistant. Answer their question directly using the data 
   } catch (error) {
     console.error('❌ API Error:', error)
     
-    // ALWAYS return something useful, never crash
     return NextResponse.json({
       response: "I'm having trouble connecting to the database right now. Please try again in a moment, or try asking a different question.",
       context: {
@@ -342,31 +341,43 @@ async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<Qu
     }
   }
 
-  // Apply ordering
+  // Apply ordering (only if not aggregating)
   if (orderBy && !aggregation) {
     const desc = orderBy.toLowerCase().includes('desc')
     const col = orderBy.replace(/DESC|ASC/gi, '').trim()
     query = query.order(col, { ascending: !desc })
   }
 
-  // Apply limit
-  query = query.limit(limit || 100)
+  // CRITICAL FIX: Only apply limit if NOT aggregating
+  // For aggregations, we need ALL records to get accurate totals
+  if (!aggregation) {
+    query = query.limit(limit || 100)
+  } else {
+    // For aggregations, fetch up to 10,000 records (reasonable limit for accurate totals)
+    query = query.limit(10000)
+  }
 
   const { data, error } = await query
   if (error) throw new Error(error.message)
 
   let results = (data || []) as QueryResult[]
 
-  // Handle aggregations in JavaScript if needed
+  // Handle aggregations in JavaScript
   if (aggregation && results.length > 0) {
     if (aggregation.includes('SUM')) {
       // Extract what we're summing
       if (aggregation.includes('credit - debit')) {
-        const total = results.reduce((sum, row: any) => sum + ((row.credit || 0) - (row.debit || 0)), 0)
+        const total = results.reduce((sum, row: any) => {
+          const credit = parseFloat(String(row.credit || 0))
+          const debit = parseFloat(String(row.debit || 0))
+          return sum + (credit - debit)
+        }, 0)
         results = [{ total, record_count: results.length }]
       } else if (aggregation.includes('total_amount') || aggregation.includes('open_balance')) {
         const field = aggregation.includes('total_amount') ? 'total_amount' : 'open_balance'
-        const total = results.reduce((sum, row: any) => sum + (row[field] || 0), 0)
+        const total = results.reduce((sum, row: any) => {
+          return sum + parseFloat(String(row[field] || 0))
+        }, 0)
         results = [{ total, record_count: results.length }]
       }
     } else if (aggregation.includes('COUNT')) {
