@@ -1,150 +1,207 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+
+type QueryResult = Record<string, unknown>
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
+const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 
-export async function POST(request: NextRequest) {
-  console.log('🎯 AI Chat API called')
-  
+interface RequestPayload {
+  message?: string
+  userId?: string
+  context?: unknown
+}
+
+// Comprehensive database schema for Claude
+const DATABASE_SCHEMA = `
+You have access to a PostgreSQL database with these tables:
+
+1. journal_entry_lines - Financial transactions (GL)
+   - Columns: date, account, account_type, debit, credit, customer, vendor, memo
+   - For revenue: WHERE account_type ILIKE '%income%' OR account_type ILIKE '%revenue%'
+   - For expenses: WHERE account_type ILIKE '%expense%'
+   - Revenue = SUM(credit - debit), Expenses = SUM(debit - credit)
+
+2. ar_aging_detail - Accounts Receivable
+   - Columns: customer, number, date, due_date, open_balance, memo
+   - Outstanding invoices: WHERE open_balance > 0
+
+3. ap_aging - Accounts Payable
+   - Columns: vendor, number, date, due_date, open_balance, memo
+   - Outstanding bills: WHERE open_balance > 0
+
+4. payments - Historical Payroll (approved only)
+   - Columns: date, first_name, last_name, department, total_amount, hours, units, rate, payroll_group
+   - Employee name = first_name || ' ' || last_name
+
+5. payroll_submissions - Payroll Submission Tracking
+   - Columns: id, submission_number, location_id, pay_date, payroll_group (A/B), total_amount, total_employees, status, submitted_at, approved_at
+   - Status values: 'pending', 'approved', 'rejected'
+   - JOIN locations ON location_id for location name
+
+6. payroll_entries - Employee Payroll Details
+   - Columns: submission_id, employee_id, employee_name, employee_type, hours, units, rate, amount
+   - employee_type: 'hourly' or 'production'
+
+7. locations - Business Locations
+   - Columns: id, name, organization_id
+
+Current date: ${new Date().toISOString().split('T')[0]}
+`
+
+let cachedSupabase: SupabaseClient | null = null
+
+function getSupabaseClient(): SupabaseClient {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE
+
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    throw new Error('Supabase environment variables are not configured')
+  }
+
+  if (!cachedSupabase) {
+    cachedSupabase = createClient(supabaseUrl, supabaseServiceRoleKey)
+  }
+
+  return cachedSupabase
+}
+
+function getAnthropicApiKey(): string {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    throw new Error('ANTHROPIC_API_KEY is not configured')
+  }
+  return apiKey
+}
+
+function getOpenAIApiKey(): string {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not configured')
+  }
+  return apiKey
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    // Get environment variables
-    const anthropicKey = process.env.ANTHROPIC_API_KEY
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    const supabase = getSupabaseClient()
+    const anthropicKey = getAnthropicApiKey()
 
-    // Validate environment
-    if (!anthropicKey) {
-      console.error('❌ Missing ANTHROPIC_API_KEY')
-      return NextResponse.json({
-        response: "AI service not configured. Please contact support.",
-        error: 'Missing ANTHROPIC_API_KEY'
-      }, { status: 500 })
-    }
-
-    if (!supabaseUrl || !supabaseKey) {
-      console.error('❌ Missing Supabase credentials')
-      return NextResponse.json({
-        response: "Database not configured. Please contact support.",
-        error: 'Missing Supabase credentials'
-      }, { status: 500 })
-    }
-
-    // Parse request body
-    const body = await request.json()
-    const message = body.message || body.query || ''
-
-    if (!message || !message.trim()) {
-      return NextResponse.json({
-        response: 'Please ask me a question.',
-        error: 'No message provided'
-      }, { status: 400 })
-    }
-
-    console.log('💬 Question:', message)
-
-    // Create Supabase client
-    const supabase = createClient(supabaseUrl, supabaseKey)
-
-    // Determine what data to fetch based on keywords
-    const q = message.toLowerCase()
-    let data: any[] = []
-    let tableName = ''
-
+    let body: RequestPayload = {}
     try {
-      if (q.includes('payroll') && (q.includes('pending') || q.includes('submit') || q.includes('approval'))) {
-        console.log('📊 Fetching payroll submissions...')
-        tableName = 'payroll_submissions'
-        const result = await supabase
-          .from('payroll_submissions')
-          .select('*, locations!inner(name)')
-          .order('submitted_at', { ascending: false })
-          .limit(20)
-        
-        data = (result.data || []).map(r => ({
-          submission_number: r.submission_number,
-          location: r.locations?.name,
-          pay_date: r.pay_date,
-          payroll_group: r.payroll_group,
-          total_amount: r.total_amount,
-          total_employees: r.total_employees,
-          status: r.status,
-          submitted_at: r.submitted_at
-        }))
-      }
-      else if (q.includes('payroll')) {
-        console.log('📊 Fetching payroll history...')
-        tableName = 'payments'
-        const result = await supabase
-          .from('payments')
-          .select('*')
-          .order('date', { ascending: false })
-          .limit(50)
-        
-        data = result.data || []
-      }
-      else if (q.includes('revenue') || q.includes('income') || q.includes('sales')) {
-        console.log('📊 Fetching revenue...')
-        tableName = 'journal_entry_lines'
-        const result = await supabase
-          .from('journal_entry_lines')
-          .select('*')
-          .or('account_type.ilike.%income%,account_type.ilike.%revenue%')
-          .order('date', { ascending: false })
-          .limit(100)
-        
-        data = result.data || []
-      }
-      else if (q.includes('receivable') || q.includes('invoice') || q.includes('owe')) {
-        console.log('📊 Fetching AR...')
-        tableName = 'ar_aging_detail'
-        const result = await supabase
-          .from('ar_aging_detail')
-          .select('*')
-          .gt('open_balance', 0)
-          .order('open_balance', { ascending: false })
-          .limit(50)
-        
-        data = result.data || []
-      }
-      else if (q.includes('payable') || q.includes('vendor') || q.includes('bill')) {
-        console.log('📊 Fetching AP...')
-        tableName = 'ap_aging'
-        const result = await supabase
-          .from('ap_aging')
-          .select('*')
-          .gt('open_balance', 0)
-          .order('open_balance', { ascending: false })
-          .limit(50)
-        
-        data = result.data || []
-      }
-      else {
-        console.log('📊 Fetching recent transactions...')
-        tableName = 'journal_entry_lines'
-        const result = await supabase
-          .from('journal_entry_lines')
-          .select('*')
-          .order('date', { ascending: false })
-          .limit(50)
-        
-        data = result.data || []
-      }
-
-      console.log(`✅ Found ${data.length} records from ${tableName}`)
-    } catch (dbError) {
-      console.error('❌ Database error:', dbError)
-      data = []
+      body = (await request.json()) as RequestPayload
+    } catch {
+      body = {}
     }
 
-    // Prepare prompt for Claude
-    const dataForClaude = data.slice(0, 15) // Limit to 15 records for Claude
-    const prompt = data.length > 0
-      ? `User question: "${message}"\n\nData from database (${tableName}):\n${JSON.stringify(dataForClaude, null, 2)}\n\nAnswer the user's question based on this data. Be concise (under 100 words). Format currency clearly.`
-      : `User question: "${message}"\n\nNo data found in database for this query. Explain politely that there's no data available. Keep it under 50 words.`
+    const { message } = body
 
-    // Call Claude
-    console.log('🤖 Calling Claude API...')
-    const claudeResponse = await fetch(ANTHROPIC_API_URL, {
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return NextResponse.json({ error: 'Message is required' }, { status: 400 })
+    }
+
+    console.log('💬 User question:', message)
+
+    // Step 1: Let Claude analyze the question and determine what data to fetch
+    const analysisPrompt = `${DATABASE_SCHEMA}
+
+User question: "${message}"
+
+Analyze this question and respond with JSON containing:
+{
+  "table": "table_name",
+  "filters": "WHERE clause conditions",
+  "aggregation": "SUM/COUNT/AVG or null",
+  "groupBy": "column to group by or null",
+  "orderBy": "column to order by or null",
+  "limit": number
+}
+
+Examples:
+Q: "What's my revenue this month?"
+A: {"table":"journal_entry_lines","filters":"account_type ILIKE '%income%' AND date >= DATE_TRUNC('month', CURRENT_DATE)","aggregation":"SUM(credit - debit)","groupBy":null,"orderBy":null,"limit":1}
+
+Q: "Show pending payroll"
+A: {"table":"payroll_submissions","filters":"status = 'pending'","aggregation":null,"groupBy":null,"orderBy":"submitted_at DESC","limit":20}
+
+Q: "Who owes me money?"
+A: {"table":"ar_aging_detail","filters":"open_balance > 0","aggregation":null,"groupBy":"customer","orderBy":"open_balance DESC","limit":10}
+
+Respond ONLY with the JSON, no other text.`
+
+    const analysisResponse = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        messages: [
+          {
+            role: 'user',
+            content: analysisPrompt
+          }
+        ]
+      })
+    })
+
+    if (!analysisResponse.ok) {
+      throw new Error(`Claude API error: ${analysisResponse.statusText}`)
+    }
+
+    const analysisData = await analysisResponse.json()
+    const analysisText = analysisData.content?.[0]?.text || '{}'
+    
+    console.log('🤖 Claude analysis:', analysisText)
+
+    // Parse the query plan
+    let queryPlan: any
+    try {
+      // Extract JSON from response (in case Claude added explanation)
+      const jsonMatch = analysisText.match(/\{[\s\S]*\}/)
+      queryPlan = JSON.parse(jsonMatch ? jsonMatch[0] : analysisText)
+    } catch (parseError) {
+      console.error('❌ Failed to parse Claude response, using fallback')
+      queryPlan = { table: 'journal_entry_lines', filters: null, limit: 100 }
+    }
+
+    // Step 2: Execute the query based on Claude's plan
+    let queryResults: QueryResult[] = []
+    
+    try {
+      queryResults = await executeQueryPlan(queryPlan, supabase)
+      console.log('✅ Query returned', queryResults.length, 'rows')
+    } catch (queryError) {
+      console.error('❌ Query execution failed:', queryError)
+      // Fallback: try to get some relevant data
+      queryResults = await getFallbackData(queryPlan.table || 'journal_entry_lines', supabase)
+      console.log('🔄 Fallback returned', queryResults.length, 'rows')
+    }
+
+    // Step 3: If we have no data, get SOMETHING to show
+    if (queryResults.length === 0) {
+      console.log('⚠️ No results, trying broader query')
+      queryResults = await getAnyRelevantData(message, supabase)
+    }
+
+    const truncatedResults = queryResults.slice(0, 20)
+
+    // Step 4: Have Claude generate the response based on actual data
+    const responsePrompt = queryResults.length === 0
+      ? `User asked: "${message}"
+
+No data was found in the database. Explain that there's no data for this query in a friendly way and suggest what data might be available. Keep it under 50 words.`
+      : `User asked: "${message}"
+
+Database results:
+${JSON.stringify(truncatedResults, null, 2)}
+
+You are a friendly CFO assistant. Answer their question directly using the data above. Format currency clearly. Keep response under 100 words. Be conversational and helpful.`
+
+    const responseGen = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -154,29 +211,29 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 300,
-        messages: [{
-          role: 'user',
-          content: prompt
-        }]
+        messages: [
+          {
+            role: 'user',
+            content: responsePrompt
+          }
+        ]
       })
     })
 
-    if (!claudeResponse.ok) {
-      const errorText = await claudeResponse.text()
-      console.error('❌ Claude API error:', claudeResponse.status, errorText)
-      throw new Error(`Claude API error: ${claudeResponse.statusText}`)
+    if (!responseGen.ok) {
+      throw new Error(`Claude API error: ${responseGen.statusText}`)
     }
 
-    const claudeData = await claudeResponse.json()
-    const answer = claudeData.content?.[0]?.text || "I couldn't generate a response. Please try again."
+    const responseData = await responseGen.json()
+    const aiResponse = responseData.content?.[0]?.text || 'I apologize, but I had trouble generating a response. Please try again.'
 
-    console.log('✅ Response generated successfully')
+    console.log('✅ Final response generated')
 
     return NextResponse.json({
-      response: answer,
+      response: aiResponse,
       context: {
-        dataPoints: data.length,
-        table: tableName,
+        dataPoints: queryResults.length,
+        table: queryPlan.table,
         platform: 'mobile'
       }
     })
@@ -184,11 +241,263 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('❌ API Error:', error)
     
+    // ALWAYS return something useful, never crash
     return NextResponse.json({
-      response: "I'm having trouble right now. Please try again in a moment.",
+      response: "I'm having trouble connecting to the database right now. Please try again in a moment, or try asking a different question.",
       context: {
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : 'Unknown error',
+        platform: 'mobile'
       }
-    }, { status: 500 })
+    })
+  }
+}
+
+// Execute query based on Claude's plan
+async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<QueryResult[]> {
+  const { table, filters, aggregation, groupBy, orderBy, limit } = plan
+  
+  console.log('📊 Executing query plan:', plan)
+
+  // Handle joins for payroll_submissions
+  if (table === 'payroll_submissions') {
+    let query = supabase
+      .from('payroll_submissions')
+      .select(`
+        id,
+        submission_number,
+        pay_date,
+        payroll_group,
+        total_amount,
+        total_employees,
+        total_hours,
+        total_units,
+        status,
+        submitted_at,
+        approved_at,
+        locations!inner(name)
+      `)
+
+    // Apply filters
+    if (filters) {
+      if (filters.includes("status = 'pending'")) query = query.eq('status', 'pending')
+      else if (filters.includes("status = 'approved'")) query = query.eq('status', 'approved')
+      else if (filters.includes("status = 'rejected'")) query = query.eq('status', 'rejected')
+      
+      if (filters.includes('this month') || filters.includes('CURRENT_DATE')) {
+        const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+        query = query.gte('pay_date', startOfMonth)
+      }
+    }
+
+    if (orderBy) {
+      const desc = orderBy.toLowerCase().includes('desc')
+      const col = orderBy.replace(/DESC|ASC/gi, '').trim()
+      query = query.order(col, { ascending: !desc })
+    }
+
+    query = query.limit(limit || 50)
+
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+
+    // Flatten location data
+    return (data || []).map(record => ({
+      ...record,
+      location_name: (record.locations as any)?.name || 'Unknown',
+      locations: undefined
+    }))
+  }
+
+  // Handle standard tables
+  let query = supabase.from(table).select('*')
+
+  // Apply filters manually for common patterns
+  if (filters) {
+    const filterLower = filters.toLowerCase()
+    
+    // Revenue filters
+    if (filterLower.includes('income') || filterLower.includes('revenue')) {
+      query = query.or('account_type.ilike.%income%,account_type.ilike.%revenue%')
+    }
+    
+    // Expense filters
+    if (filterLower.includes('expense')) {
+      query = query.ilike('account_type', '%expense%')
+    }
+    
+    // Open balance filters
+    if (filterLower.includes('open_balance > 0')) {
+      query = query.gt('open_balance', 0)
+    }
+    
+    // Date filters
+    if (filterLower.includes('this month') || filterLower.includes('current_date')) {
+      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+      query = query.gte('date', startOfMonth)
+    }
+    
+    if (filterLower.includes('this year')) {
+      const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
+      query = query.gte('date', startOfYear)
+    }
+  }
+
+  // Apply ordering
+  if (orderBy && !aggregation) {
+    const desc = orderBy.toLowerCase().includes('desc')
+    const col = orderBy.replace(/DESC|ASC/gi, '').trim()
+    query = query.order(col, { ascending: !desc })
+  }
+
+  // Apply limit
+  query = query.limit(limit || 100)
+
+  const { data, error } = await query
+  if (error) throw new Error(error.message)
+
+  let results = (data || []) as QueryResult[]
+
+  // Handle aggregations in JavaScript if needed
+  if (aggregation && results.length > 0) {
+    if (aggregation.includes('SUM')) {
+      // Extract what we're summing
+      if (aggregation.includes('credit - debit')) {
+        const total = results.reduce((sum, row: any) => sum + ((row.credit || 0) - (row.debit || 0)), 0)
+        results = [{ total, record_count: results.length }]
+      } else if (aggregation.includes('total_amount') || aggregation.includes('open_balance')) {
+        const field = aggregation.includes('total_amount') ? 'total_amount' : 'open_balance'
+        const total = results.reduce((sum, row: any) => sum + (row[field] || 0), 0)
+        results = [{ total, record_count: results.length }]
+      }
+    } else if (aggregation.includes('COUNT')) {
+      results = [{ count: results.length }]
+    }
+  }
+
+  // Handle grouping
+  if (groupBy && !aggregation) {
+    const grouped = new Map<string, any[]>()
+    results.forEach(row => {
+      const key = (row[groupBy] as string) || 'Unknown'
+      if (!grouped.has(key)) grouped.set(key, [])
+      grouped.get(key)!.push(row)
+    })
+
+    results = Array.from(grouped.entries()).map(([key, rows]) => ({
+      [groupBy]: key,
+      count: rows.length,
+      total: rows.reduce((sum, row: any) => sum + (row.total_amount || row.open_balance || 0), 0)
+    }))
+    
+    // Sort by total descending
+    results.sort((a: any, b: any) => (b.total || 0) - (a.total || 0))
+  }
+
+  return results
+}
+
+// Fallback queries for each table
+async function getFallbackData(table: string, supabase: SupabaseClient): Promise<QueryResult[]> {
+  try {
+    switch (table) {
+      case 'payroll_submissions': {
+        const { data } = await supabase
+          .from('payroll_submissions')
+          .select(`*, locations!inner(name)`)
+          .order('submitted_at', { ascending: false })
+          .limit(20)
+        
+        return (data || []).map(record => ({
+          ...record,
+          location_name: (record.locations as any)?.name || 'Unknown',
+          locations: undefined
+        }))
+      }
+      
+      case 'payments': {
+        const { data } = await supabase
+          .from('payments')
+          .select('*')
+          .order('date', { ascending: false })
+          .limit(50)
+        return data || []
+      }
+      
+      case 'ar_aging_detail': {
+        const { data } = await supabase
+          .from('ar_aging_detail')
+          .select('*')
+          .gt('open_balance', 0)
+          .limit(50)
+        return data || []
+      }
+      
+      case 'ap_aging': {
+        const { data } = await supabase
+          .from('ap_aging')
+          .select('*')
+          .gt('open_balance', 0)
+          .limit(50)
+        return data || []
+      }
+      
+      default: {
+        const { data } = await supabase
+          .from('journal_entry_lines')
+          .select('*')
+          .order('date', { ascending: false })
+          .limit(100)
+        return data || []
+      }
+    }
+  } catch (error) {
+    console.error('Fallback query failed:', error)
+    return []
+  }
+}
+
+// Try to get ANY relevant data when all else fails
+async function getAnyRelevantData(question: string, supabase: SupabaseClient): Promise<QueryResult[]> {
+  const questionLower = question.toLowerCase()
+  
+  try {
+    // Try payroll first
+    if (questionLower.includes('payroll') || questionLower.includes('employee')) {
+      const { data } = await supabase
+        .from('payroll_submissions')
+        .select(`*, locations!inner(name)`)
+        .limit(10)
+      
+      if (data && data.length > 0) {
+        return data.map(record => ({
+          ...record,
+          location_name: (record.locations as any)?.name || 'Unknown',
+          locations: undefined
+        }))
+      }
+    }
+    
+    // Try revenue
+    if (questionLower.includes('revenue') || questionLower.includes('income') || questionLower.includes('sales')) {
+      const { data } = await supabase
+        .from('journal_entry_lines')
+        .select('*')
+        .or('account_type.ilike.%income%,account_type.ilike.%revenue%')
+        .limit(50)
+      
+      if (data && data.length > 0) return data
+    }
+    
+    // Default: recent transactions
+    const { data } = await supabase
+      .from('journal_entry_lines')
+      .select('*')
+      .order('date', { ascending: false })
+      .limit(20)
+    
+    return data || []
+  } catch (error) {
+    console.error('Emergency fallback failed:', error)
+    return []
   }
 }
