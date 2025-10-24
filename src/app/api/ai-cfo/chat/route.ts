@@ -332,6 +332,72 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
   const year = new Date().getFullYear()
   const month = new Date().getMonth()
   
+  // SIMPLE APPROACH: For month grouping on journal_entry_lines, fetch all and group in JS
+  if (groupBy === 'month' && table === 'journal_entry_lines') {
+    const isIncome = filters?.includes('income') || filters?.includes('revenue')
+    const isExpense = filters?.includes('expense')
+    
+    // Fetch the raw data
+    let query = supabase.from(table).select('date, credit, debit, account_type')
+    
+    // Apply filters
+    if (isIncome) {
+      query = query.or("account_type.eq.Income,account_type.eq.Other Income")
+    } else if (isExpense) {
+      query = query.or("account_type.eq.Expenses,account_type.eq.Cost of Goods Sold")
+    }
+    
+    if (filters?.includes('this year')) {
+      query = query.gte('date', `${year}-01-01`)
+    }
+    
+    const { data, error } = await query
+    
+    if (error) {
+      console.error('❌ Query Error:', error)
+      return [{ total: 0, count: 0 }]
+    }
+    
+    if (!data || data.length === 0) {
+      console.log('⚠️ No data returned')
+      return [{ total: 0, count: 0 }]
+    }
+    
+    console.log(`📊 Fetched ${data.length} rows, grouping by month...`)
+    
+    // Group by month
+    const monthlyTotals = new Map<string, number>()
+    
+    data.forEach((row, idx) => {
+      if (idx < 3) console.log(`   Row ${idx + 1}:`, row)
+      
+      const date = new Date(row.date)
+      const monthKey = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      
+      let value = 0
+      if (isIncome) {
+        value = (parseFloat(row.credit) || 0) - (parseFloat(row.debit) || 0)
+      } else if (isExpense) {
+        value = (parseFloat(row.debit) || 0) - (parseFloat(row.credit) || 0)
+      }
+      
+      if (idx < 3) console.log(`   Month: ${monthKey}, Value: ${value}`)
+      
+      monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + value)
+    })
+    
+    // Convert to array and sort
+    const results = Array.from(monthlyTotals.entries())
+      .map(([month, total]) => ({ month, total }))
+      .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+    
+    console.log(`✅ Grouped into ${results.length} months`)
+    console.log(`📦 Results:`, results)
+    
+    return results
+  }
+  
+  // FALLBACK: Original method for non-month grouping
   // Build Supabase query
   let sq = supabase.from(table).select('*')
   
@@ -444,6 +510,9 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
         }
         
         let val = 0
+        
+        // DEBUG: Check what fields exist in the first few rows
+        if (rowNum <= 3) console.log(`   🔍 Row ${rowNum} fields:`, Object.keys(row))
         
         // Determine value based on what fields exist
         if (row.open_balance !== undefined) {
