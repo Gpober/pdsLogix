@@ -118,8 +118,12 @@ Examples:
 "revenue this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":null,"alias":"revenue"}]}
 "show overdue receivables" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"overdue","groupBy":null,"alias":"overdue_total"}]}
 "outstanding receivables by customer" → {"queries":[{"table":"ar_aging_detail","type":"sum","filters":"outstanding","groupBy":"customer","alias":"by_customer"}]}
+"revenue by month" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":"month","alias":"monthly_revenue"}]}
+"expenses by month this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"expenses this year","groupBy":"month","alias":"monthly_expenses"}]}
 "show me pending payroll" → {"queries":[{"table":"payroll_submissions","type":"list","filters":"pending","groupBy":null,"alias":"pending_list"}]}
 "compare this month to last" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this month","groupBy":null,"alias":"current"},{"table":"journal_entry_lines","type":"sum","filters":"income last month","groupBy":null,"alias":"previous"}]}
+
+CRITICAL: For "by month" or "monthly" queries, ALWAYS use groupBy:"month"
 
 JSON only, no explanation:`
 
@@ -416,7 +420,17 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
     if (groupBy) {
       const grouped = new Map<string, number>()
       data.forEach(row => {
-        const key = row[groupBy] || 'Unknown'
+        let key: string
+        
+        // Handle month grouping specially
+        if (groupBy === 'month' && row.date) {
+          const date = new Date(row.date)
+          // Format as "Jan 2025", "Feb 2025", etc.
+          key = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+        } else {
+          key = row[groupBy] || 'Unknown'
+        }
+        
         let val = 0
         
         // Determine value based on what fields exist
@@ -439,9 +453,23 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
       })
       
       // ✅ FIXED: Return ALL groups, no artificial limit
-      return Array.from(grouped.entries())
+      // Sort by date if grouping by month
+      const results = Array.from(grouped.entries())
         .map(([k, v]) => ({ [groupBy]: k, total: v }))
-        .sort((a, b) => b.total - a.total)
+      
+      // Sort by month chronologically if grouping by month
+      if (groupBy === 'month') {
+        results.sort((a, b) => {
+          const dateA = new Date(a.month)
+          const dateB = new Date(b.month)
+          return dateA.getTime() - dateB.getTime()
+        })
+      } else {
+        // Otherwise sort by total descending
+        results.sort((a, b) => b.total - a.total)
+      }
+      
+      return results
     }
     
     return [{ total, count: data.length }]
