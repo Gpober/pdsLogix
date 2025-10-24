@@ -12,740 +12,451 @@ interface RequestPayload {
 }
 
 // ============================================================================
-// ENHANCED DATABASE SCHEMA WITH CALCULATION CAPABILITIES
+// SIMPLIFIED SCHEMA - FASTER PARSING
 // ============================================================================
 
 const DATABASE_SCHEMA = `
-You are an expert CFO with access to a PostgreSQL database. You can perform ANY financial analysis.
-
 TABLES:
-1. journal_entry_lines - All financial transactions
-   Columns: date, account, account_type, debit, credit, customer, vendor, memo, description
-   Account Types: "Income", "Other Income", "Expenses", "Cost of Goods Sold", "Bank", "Accounts receivable (A/R)", "Accounts payable (A/P)", "Fixed Assets", "Other Current Assets", "Other Current Liabilities", "Equity"
+1. journal_entry_lines: date, account_type, debit, credit, customer, vendor
+   - Revenue: account_type IN ('Income', 'Other Income')
+   - Expenses: account_type IN ('Expenses', 'Cost of Goods Sold')
    
-   Financial Calculations:
-   - Revenue = SUM(credit - debit) WHERE account_type IN ('Income', 'Other Income')
-   - Expenses = SUM(debit - credit) WHERE account_type IN ('Expenses', 'Cost of Goods Sold')
-   - Gross Profit = Revenue - Cost of Goods Sold
-   - Net Profit = Revenue - All Expenses
-   - Profit Margin = (Net Profit / Revenue) * 100
-
-2. ar_aging_detail - Accounts Receivable
-   Columns: customer, number, date, due_date, open_balance, memo, days_overdue
-   
-3. ap_aging - Accounts Payable
-   Columns: vendor, number, date, due_date, open_balance, memo
-   
-4. payments - Historical Payroll Payments
-   Columns: date, first_name, last_name, department, total_amount, hours, units, rate, payroll_group
-   
-5. payroll_submissions - Pending/Approved Payroll
-   Columns: id, submission_number, location_id, pay_date, payroll_group, total_amount, total_employees, status, submitted_at, approved_at
-   
-6. payroll_entries - Payroll Line Items
-   Columns: submission_id, employee_id, employee_name, employee_type, hours, units, rate, amount
-   
-7. locations - Business Locations
-   Columns: id, name, organization_id
-
-ANALYSIS CAPABILITIES:
-- Time comparisons (this month vs last month, YoY, QoQ)
-- Trend analysis (growth rates, moving averages)
-- Profitability metrics (margin, EBITDA, ROI)
-- Cash flow analysis (burn rate, runway)
-- Forecasting and projections
-- What-if scenarios
+2. ar_aging_detail: customer, open_balance, due_date
+3. ap_aging: vendor, open_balance, due_date
+4. payments: date, first_name, last_name, total_amount, department
+5. payroll_submissions: pay_date, total_amount, status, location_id
+6. locations: id, name
 
 Current date: ${new Date().toISOString().split('T')[0]}
-Current year: ${new Date().getFullYear()}
-Current month: ${new Date().toLocaleString('default', { month: 'long' })}
 `
 
 // ============================================================================
-// SUPABASE CLIENT
+// CACHED CLIENTS
 // ============================================================================
 
 let cachedSupabase: SupabaseClient | null = null
 
 function getSupabaseClient(): SupabaseClient {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE
-
-  if (!supabaseUrl || !supabaseServiceRoleKey) {
-    throw new Error('Supabase environment variables are not configured')
-  }
-
   if (!cachedSupabase) {
-    cachedSupabase = createClient(supabaseUrl, supabaseServiceRoleKey)
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE
+    if (!url || !key) throw new Error('Missing Supabase credentials')
+    cachedSupabase = createClient(url, key)
   }
-
   return cachedSupabase
 }
 
 function getAnthropicApiKey(): string {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    throw new Error('ANTHROPIC_API_KEY is not configured')
-  }
-  return apiKey
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) throw new Error('Missing Anthropic API key')
+  return key
 }
 
 // ============================================================================
-// MAIN API HANDLER
+// MAIN HANDLER - OPTIMIZED FOR SPEED
 // ============================================================================
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  try {
-    const supabase = getSupabaseClient()
-    const anthropicKey = getAnthropicApiKey()
-
-    let body: RequestPayload = {}
+  const startTime = Date.now()
+  const TIMEOUT_MS = 25000 // 25 second timeout
+  
+  // Create timeout promise
+  const timeoutPromise = new Promise<NextResponse>((_, reject) => {
+    setTimeout(() => reject(new Error('Request timeout')), TIMEOUT_MS)
+  })
+  
+  // Create main processing promise
+  const processingPromise = (async () => {
     try {
-      body = (await request.json()) as RequestPayload
-    } catch {
-      body = {}
-    }
+      const supabase = getSupabaseClient()
+      const anthropicKey = getAnthropicApiKey()
 
-    const { message } = body
+      const body = await request.json().catch(() => ({})) as RequestPayload
+      const { message } = body
 
-    if (!message || typeof message !== 'string' || !message.trim()) {
-      return NextResponse.json({ error: 'Message is required' }, { status: 400 })
-    }
+      if (!message?.trim()) {
+        return NextResponse.json({ error: 'Message required' }, { status: 400 })
+      }
 
-    console.log('💬 User question:', message)
+      console.log('💬 Question:', message)
 
-    // STEP 1: Analyze the query and determine what data is needed
-    const analysisPrompt = `${DATABASE_SCHEMA}
+      // FAST PATTERN MATCHING - Skip Claude for common queries
+      const quickResult = tryQuickMatch(message, supabase)
+      if (quickResult) {
+        const data = await Promise.race([quickResult, 
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Quick match timeout')), 8000))
+        ])
+        const response = await generateResponse(message, data, anthropicKey)
+        console.log(`⚡ Quick match: ${Date.now() - startTime}ms`)
+        return NextResponse.json({ response, context: { quick_match: true } })
+      }
 
-User Question: "${message}"
+      // STEP 1: Ask Claude for query plan (SIMPLIFIED) - with timeout
+      const analysisPrompt = `${DATABASE_SCHEMA}
 
-Analyze this question and create a DATA RETRIEVAL PLAN. Return ONLY valid JSON with this structure:
+Question: "${message}"
 
+Return ONLY a JSON object:
 {
-  "query_type": "simple|comparison|calculation|trend|forecast",
-  "requires_multiple_queries": boolean,
-  "data_needed": [
+  "queries": [
     {
       "table": "table_name",
-      "filters": "SQL WHERE conditions",
-      "aggregation": "SUM/COUNT/AVG expression or null",
+      "type": "sum|count|list",
+      "filters": "brief filter description",
       "groupBy": "column or null",
-      "orderBy": "column ASC/DESC or null",
-      "limit": number,
-      "alias": "descriptive_name"
+      "alias": "name"
     }
-  ],
-  "calculation": "description of any post-query calculation needed"
+  ]
 }
 
-EXAMPLES:
+Examples:
+"revenue this year" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this year","groupBy":null,"alias":"revenue"}]}
+"compare this month to last" → {"queries":[{"table":"journal_entry_lines","type":"sum","filters":"income this month","groupBy":null,"alias":"current"},{"table":"journal_entry_lines","type":"sum","filters":"income last month","groupBy":null,"alias":"previous"}]}
 
-Q: "What is my revenue this year?"
-A: {"query_type":"simple","requires_multiple_queries":false,"data_needed":[{"table":"journal_entry_lines","filters":"(account_type = 'Income' OR account_type = 'Other Income') AND date >= '${new Date().getFullYear()}-01-01'","aggregation":"SUM(credit - debit)","groupBy":null,"orderBy":null,"limit":1,"alias":"ytd_revenue"}],"calculation":null}
+JSON only, no explanation:`
 
-Q: "Compare this month's revenue to last month"
-A: {"query_type":"comparison","requires_multiple_queries":true,"data_needed":[{"table":"journal_entry_lines","filters":"(account_type = 'Income' OR account_type = 'Other Income') AND date >= DATE_TRUNC('month', CURRENT_DATE)","aggregation":"SUM(credit - debit)","groupBy":null,"orderBy":null,"limit":1,"alias":"current_month"},{"table":"journal_entry_lines","filters":"(account_type = 'Income' OR account_type = 'Other Income') AND date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND date < DATE_TRUNC('month', CURRENT_DATE)","aggregation":"SUM(credit - debit)","groupBy":null,"orderBy":null,"limit":1,"alias":"last_month"}],"calculation":"growth_rate = ((current - last) / last) * 100"}
+      const analysisTimeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Analysis timeout')), 8000)
+      )
 
-Q: "What is my profit margin?"
-A: {"query_type":"calculation","requires_multiple_queries":true,"data_needed":[{"table":"journal_entry_lines","filters":"(account_type = 'Income' OR account_type = 'Other Income') AND date >= '${new Date().getFullYear()}-01-01'","aggregation":"SUM(credit - debit)","groupBy":null,"orderBy":null,"limit":1,"alias":"revenue"},{"table":"journal_entry_lines","filters":"(account_type = 'Expenses' OR account_type = 'Cost of Goods Sold') AND date >= '${new Date().getFullYear()}-01-01'","aggregation":"SUM(debit - credit)","groupBy":null,"orderBy":null,"limit":1,"alias":"expenses"}],"calculation":"profit_margin = ((revenue - expenses) / revenue) * 100"}
+      const analysis = await Promise.race([
+        fetch(ANTHROPIC_API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': anthropicKey,
+            'anthropic-version': '2023-06-01'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 500,
+            messages: [{ role: 'user', content: analysisPrompt }]
+          })
+        }),
+        analysisTimeout
+      ]) as Response
 
-Q: "Show me revenue by month for this year"
-A: {"query_type":"trend","requires_multiple_queries":false,"data_needed":[{"table":"journal_entry_lines","filters":"(account_type = 'Income' OR account_type = 'Other Income') AND date >= '${new Date().getFullYear()}-01-01'","aggregation":"SUM(credit - debit)","groupBy":"TO_CHAR(date, 'YYYY-MM')","orderBy":"TO_CHAR(date, 'YYYY-MM') ASC","limit":12,"alias":"monthly_revenue"}],"calculation":null}
-
-Q: "Who are my top 5 customers by revenue?"
-A: {"query_type":"simple","requires_multiple_queries":false,"data_needed":[{"table":"journal_entry_lines","filters":"(account_type = 'Income' OR account_type = 'Other Income') AND customer IS NOT NULL","aggregation":"SUM(credit - debit)","groupBy":"customer","orderBy":"SUM(credit - debit) DESC","limit":5,"alias":"top_customers"}],"calculation":null}
-
-Respond ONLY with the JSON, no other text.`
-
-    const analysisResponse = await fetch(ANTHROPIC_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': anthropicKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: analysisPrompt }]
-      })
-    })
-
-    if (!analysisResponse.ok) {
-      throw new Error(`Claude API error: ${analysisResponse.statusText}`)
-    }
-
-    const analysisData = await analysisResponse.json()
-    const analysisText = analysisData.content?.[0]?.text || '{}'
-    
-    console.log('🤖 Claude analysis:', analysisText)
-
-    let queryPlan: any
-    try {
-      const jsonMatch = analysisText.match(/\{[\s\S]*\}/)
-      queryPlan = JSON.parse(jsonMatch ? jsonMatch[0] : analysisText)
-    } catch (parseError) {
-      console.error('❌ Failed to parse analysis:', parseError)
-      queryPlan = {
-        query_type: 'simple',
-        requires_multiple_queries: false,
-        data_needed: [{
-          table: 'journal_entry_lines',
-          filters: null,
-          aggregation: null,
-          groupBy: null,
-          orderBy: 'date DESC',
-          limit: 100,
-          alias: 'results'
-        }],
-        calculation: null
+      if (!analysis.ok) {
+        throw new Error(`Claude error: ${analysis.status}`)
       }
-    }
 
-    // STEP 2: Execute all required queries
-    console.log('📊 Executing query plan:', JSON.stringify(queryPlan, null, 2))
-    
-    const dataResults: Record<string, any> = {}
-    
-    for (const query of queryPlan.data_needed) {
+      const analysisData = await analysis.json()
+      const analysisText = analysisData.content?.[0]?.text || '{}'
+      console.log('🤖 Plan:', analysisText)
+
+      let plan: any
       try {
-        const results = await executeOptimizedQuery(query, supabase)
-        dataResults[query.alias] = results
-        console.log(`✅ ${query.alias}: ${Array.isArray(results) ? results.length : 1} result(s)`)
-      } catch (error) {
-        console.error(`❌ Query failed for ${query.alias}:`, error)
-        dataResults[query.alias] = []
+        const jsonMatch = analysisText.match(/\{[\s\S]*\}/)
+        plan = JSON.parse(jsonMatch ? jsonMatch[0] : analysisText)
+      } catch {
+        console.log('⚠️ Parse failed, using fallback')
+        plan = { queries: [{ table: 'journal_entry_lines', type: 'list', filters: null, groupBy: null, alias: 'results' }] }
       }
-    }
 
-    // STEP 3: Perform calculations if needed
-    let calculationResults: any = null
-    
-    if (queryPlan.calculation) {
-      calculationResults = performCalculations(dataResults, queryPlan.calculation)
-      console.log('🧮 Calculation results:', calculationResults)
-    }
+      // STEP 2: Execute queries IN PARALLEL with timeout
+      console.log(`📊 Executing ${plan.queries?.length || 0} queries...`)
+      
+      const queryTimeout = 10000 // 10 seconds per query
+      const queryPromises = (plan.queries || []).map((q: any) => 
+        Promise.race([
+          executeQuery(q, supabase),
+          new Promise((_, reject) => setTimeout(() => reject(new Error(`Query ${q.alias} timeout`)), queryTimeout))
+        ]).catch(err => {
+          console.error(`❌ Query ${q.alias} failed:`, err.message)
+          return []
+        })
+      )
 
-    // STEP 4: Generate intelligent response
-    const responseData = {
-      query_type: queryPlan.query_type,
-      data: dataResults,
-      calculations: calculationResults,
-      record_counts: Object.entries(dataResults).reduce((acc, [key, val]) => {
-        acc[key] = Array.isArray(val) ? val.length : 1
-        return acc
-      }, {} as Record<string, number>)
-    }
-
-    const responsePrompt = `User asked: "${message}"
-
-Retrieved Data:
-${JSON.stringify(responseData, null, 2)}
-
-You are an expert CFO assistant. Provide a comprehensive, insightful answer that:
-1. Directly answers the user's question with specific numbers
-2. Provides context and analysis (trends, comparisons, insights)
-3. Formats all currency with $ and proper commas (e.g., $3,584,272)
-4. Uses percentages for margins, growth rates, etc.
-5. Highlights important findings or concerns
-6. Keeps response under 150 words unless complex analysis is needed
-7. Is conversational and helpful, not robotic
-
-If the data shows concerning trends (declining revenue, high expenses, overdue payments), mention them professionally.`
-
-    const responseGen = await fetch(ANTHROPIC_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': anthropicKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 500,
-        messages: [{ role: 'user', content: responsePrompt }]
+      const results = await Promise.all(queryPromises)
+      const dataMap: Record<string, any> = {}
+      
+      plan.queries?.forEach((q: any, i: number) => {
+        dataMap[q.alias] = results[i]
       })
-    })
 
-    if (!responseGen.ok) {
-      throw new Error(`Claude API error: ${responseGen.statusText}`)
+      console.log(`✅ Queries done: ${Date.now() - startTime}ms`)
+
+      // STEP 3: Generate response with timeout
+      const responseTimeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Response generation timeout')), 8000)
+      )
+      
+      const response = await Promise.race([
+        generateResponse(message, dataMap, anthropicKey),
+        responseTimeout
+      ]) as string
+      
+      console.log(`🎯 Total time: ${Date.now() - startTime}ms`)
+
+      return NextResponse.json({
+        response,
+        context: {
+          queries: plan.queries?.length || 0,
+          duration_ms: Date.now() - startTime
+        }
+      })
+
+    } catch (error) {
+      console.error('❌ Error:', error)
+      return NextResponse.json({
+        response: "I'm having trouble processing that request. Please try rephrasing or try again.",
+        context: { error: error instanceof Error ? error.message : 'Unknown' }
+      }, { status: 500 })
     }
-
-    const responseGenData = await responseGen.json()
-    const aiResponse = responseGenData.content?.[0]?.text || 
-      'I apologize, but I had trouble generating a response. Please try again.'
-
-    console.log('✅ Final response generated')
-
-    return NextResponse.json({
-      response: aiResponse,
-      context: {
-        query_type: queryPlan.query_type,
-        data_points: Object.values(responseData.record_counts).reduce((a, b) => a + b, 0),
-        calculations_performed: calculationResults ? Object.keys(calculationResults).length : 0,
-        platform: 'mobile'
-      }
-    })
-
-  } catch (error) {
-    console.error('❌ API Error:', error)
-    
-    return NextResponse.json({
-      response: "I'm having trouble processing your request right now. Please try rephrasing your question or try again in a moment.",
-      context: {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        platform: 'mobile'
-      }
-    }, { status: 500 })
-  }
-}
-
-// ============================================================================
-// OPTIMIZED QUERY EXECUTION ENGINE
-// ============================================================================
-
-async function executeOptimizedQuery(
-  query: any,
-  supabase: SupabaseClient
-): Promise<QueryResult[]> {
+  })()
   
-  const { table, filters, aggregation, groupBy, orderBy, limit, alias } = query
-  
-  console.log(`🔍 Executing ${alias}:`, { table, aggregation, groupBy })
-
-  // For aggregation queries, use native PostgreSQL
-  if (aggregation) {
-    return await executeAggregationQuery(table, filters, aggregation, groupBy, orderBy, limit, supabase)
-  }
-
-  // For list queries, use standard query builder
-  return await executeListQuery(table, filters, groupBy, orderBy, limit, supabase)
-}
-
-// ============================================================================
-// AGGREGATION QUERY ENGINE (Uses PostgreSQL directly)
-// ============================================================================
-
-async function executeAggregationQuery(
-  table: string,
-  filters: string | null,
-  aggregation: string,
-  groupBy: string | null,
-  orderBy: string | null,
-  limit: number | null,
-  supabase: SupabaseClient
-): Promise<QueryResult[]> {
-  
-  console.log('💎 Building native PostgreSQL aggregation...')
-  
-  // Build SQL query
-  let selectClause = aggregation
-  if (groupBy) {
-    selectClause = `${groupBy}, ${aggregation} as total`
-  } else {
-    selectClause = `${aggregation} as total`
-  }
-  
-  let sqlQuery = `SELECT ${selectClause} FROM ${table}`
-  
-  if (filters) {
-    sqlQuery += ` WHERE ${filters}`
-  }
-  
-  if (groupBy) {
-    sqlQuery += ` GROUP BY ${groupBy}`
-    if (orderBy) {
-      sqlQuery += ` ORDER BY ${orderBy}`
-    } else {
-      sqlQuery += ` ORDER BY total DESC`
-    }
-  }
-  
-  if (limit) {
-    sqlQuery += ` LIMIT ${limit}`
-  }
-  
-  console.log('📝 SQL:', sqlQuery)
-  
+  // Race between processing and timeout
   try {
-    // Try using RPC function for raw SQL
-    const { data, error } = await supabase.rpc('execute_sql', { query: sqlQuery })
-    
-    if (!error && data) {
-      console.log(`✅ RPC execution successful: ${Array.isArray(data) ? data.length : 1} rows`)
-      return data
-    }
-    
-    throw new Error(error?.message || 'RPC execution failed')
-  } catch (rpcError) {
-    console.log('⚠️ RPC not available, using fallback aggregation')
-    return await executeAggregationFallback(table, filters, aggregation, groupBy, orderBy, limit, supabase)
+    return await Promise.race([processingPromise, timeoutPromise])
+  } catch (error) {
+    console.error('⏱️ Timeout or error:', error)
+    return NextResponse.json({
+      response: "That query is taking too long. Please try a simpler question or try again.",
+      context: { 
+        error: error instanceof Error ? error.message : 'Timeout',
+        duration_ms: Date.now() - startTime
+      }
+    }, { status: 504 })
   }
 }
 
 // ============================================================================
-// FALLBACK AGGREGATION (Client-side when RPC unavailable)
+// QUICK PATTERN MATCHING - SKIP CLAUDE FOR COMMON QUERIES
 // ============================================================================
 
-async function executeAggregationFallback(
+function tryQuickMatch(message: string, supabase: SupabaseClient): Promise<any> | null {
+  const msg = message.toLowerCase()
+  const year = new Date().getFullYear()
+  
+  // Revenue this year
+  if (msg.includes('revenue') && (msg.includes('year') || msg.includes('ytd'))) {
+    return executeDirectQuery(
+      'journal_entry_lines',
+      `(account_type = 'Income' OR account_type = 'Other Income') AND date >= '${year}-01-01'`,
+      'SUM(credit - debit)',
+      null,
+      supabase
+    ).then(total => ({ revenue: [{ total }] }))
+  }
+  
+  // Expenses this year
+  if (msg.includes('expense') && msg.includes('year')) {
+    return executeDirectQuery(
+      'journal_entry_lines',
+      `(account_type = 'Expenses' OR account_type = 'Cost of Goods Sold') AND date >= '${year}-01-01'`,
+      'SUM(debit - credit)',
+      null,
+      supabase
+    ).then(total => ({ expenses: [{ total }] }))
+  }
+  
+  // Pending payroll
+  if (msg.includes('pending') && msg.includes('payroll')) {
+    return supabase
+      .from('payroll_submissions')
+      .select('*, locations!inner(name)')
+      .eq('status', 'pending')
+      .order('submitted_at', { ascending: false })
+      .limit(20)
+      .then(({ data }) => ({ pending: data || [] }))
+  }
+  
+  return null
+}
+
+// ============================================================================
+// DIRECT QUERY EXECUTION - FAST PATH
+// ============================================================================
+
+async function executeDirectQuery(
   table: string,
-  filters: string | null,
+  filters: string,
   aggregation: string,
   groupBy: string | null,
-  orderBy: string | null,
-  limit: number | null,
   supabase: SupabaseClient
-): Promise<QueryResult[]> {
+): Promise<number> {
   
-  console.log('🔄 Using client-side aggregation fallback...')
-  
-  // Select all necessary columns
+  // Fetch all matching records
   let query = supabase.from(table).select('*')
   
-  // Apply filters using Supabase query builder
-  if (filters) {
-    query = applyFilters(query, filters)
+  // Apply filters (simplified)
+  if (filters.includes('Income') || filters.includes('income')) {
+    query = query.or("account_type.eq.Income,account_type.eq.Other Income")
+  }
+  if (filters.includes('Expense')) {
+    query = query.or("account_type.eq.Expenses,account_type.eq.Cost of Goods Sold")
+  }
+  if (filters.includes(`date >= '${new Date().getFullYear()}`)) {
+    query = query.gte('date', `${new Date().getFullYear()}-01-01`)
   }
   
-  // Fetch ALL matching records for accurate aggregation
   const { data, error } = await query
   
+  if (error || !data) {
+    console.error('Query error:', error)
+    return 0
+  }
+  
+  // Calculate aggregation
+  if (aggregation.includes('SUM(credit - debit)')) {
+    return data.reduce((sum, row) => {
+      return sum + (parseFloat(row.credit || 0) - parseFloat(row.debit || 0))
+    }, 0)
+  }
+  
+  if (aggregation.includes('SUM(debit - credit)')) {
+    return data.reduce((sum, row) => {
+      return sum + (parseFloat(row.debit || 0) - parseFloat(row.credit || 0))
+    }, 0)
+  }
+  
+  return data.length
+}
+
+// ============================================================================
+// QUERY EXECUTOR
+// ============================================================================
+
+async function executeQuery(query: any, supabase: SupabaseClient): Promise<QueryResult[]> {
+  const { table, type, filters, groupBy, alias } = query
+  
+  console.log(`🔍 ${alias}: ${table} (${type})`)
+  
+  const year = new Date().getFullYear()
+  const month = new Date().getMonth()
+  
+  // Build Supabase query
+  let sq = supabase.from(table).select('*')
+  
+  // Apply filters based on description
+  if (filters) {
+    const f = filters.toLowerCase()
+    
+    // Account type
+    if (f.includes('income') || f.includes('revenue')) {
+      sq = sq.or("account_type.eq.Income,account_type.eq.Other Income")
+    }
+    if (f.includes('expense')) {
+      sq = sq.or("account_type.eq.Expenses,account_type.eq.Cost of Goods Sold")
+    }
+    
+    // Date ranges
+    if (f.includes('this year')) {
+      sq = sq.gte('date', `${year}-01-01`)
+    }
+    if (f.includes('this month')) {
+      sq = sq.gte('date', new Date(year, month, 1).toISOString().split('T')[0])
+    }
+    if (f.includes('last month')) {
+      const start = new Date(year, month - 1, 1).toISOString().split('T')[0]
+      const end = new Date(year, month, 1).toISOString().split('T')[0]
+      sq = sq.gte('date', start).lt('date', end)
+    }
+    
+    // Status
+    if (f.includes('pending')) sq = sq.eq('status', 'pending')
+    if (f.includes('approved')) sq = sq.eq('status', 'approved')
+    
+    // Open balance
+    if (f.includes('owe') || f.includes('outstanding')) {
+      sq = sq.gt('open_balance', 0)
+    }
+  }
+  
+  // Limit for list queries
+  if (type === 'list') {
+    sq = sq.limit(50)
+  }
+  
+  const { data, error } = await sq
+  
   if (error) {
-    console.error('❌ Query error:', error)
-    throw error
+    console.error(`Query error:`, error)
+    return []
   }
   
   if (!data || data.length === 0) {
     return [{ total: 0, count: 0 }]
   }
   
-  console.log(`📊 Fetched ${data.length} records for aggregation`)
-  
-  // Perform aggregation
-  return performClientSideAggregation(data, aggregation, groupBy, orderBy, limit)
-}
-
-// ============================================================================
-// CLIENT-SIDE AGGREGATION
-// ============================================================================
-
-function performClientSideAggregation(
-  data: any[],
-  aggregation: string,
-  groupBy: string | null,
-  orderBy: string | null,
-  limit: number | null
-): QueryResult[] {
-  
-  if (groupBy) {
-    // Grouped aggregation
-    const grouped = new Map<string, any[]>()
+  // For sum queries, aggregate
+  if (type === 'sum') {
+    let total = 0
     
-    data.forEach(row => {
-      const key = String(row[groupBy] || 'Unknown')
-      if (!grouped.has(key)) grouped.set(key, [])
-      grouped.get(key)!.push(row)
-    })
-    
-    let results = Array.from(grouped.entries()).map(([key, rows]) => {
-      return {
-        [groupBy]: key,
-        total: calculateAggregation(rows, aggregation),
-        count: rows.length
-      }
-    })
-    
-    // Sort results
-    results.sort((a: any, b: any) => (b.total || 0) - (a.total || 0))
-    
-    // Apply limit
-    if (limit) {
-      results = results.slice(0, limit)
+    if (filters?.includes('income') || filters?.includes('revenue')) {
+      total = data.reduce((sum, row) => {
+        return sum + (parseFloat(row.credit || 0) - parseFloat(row.debit || 0))
+      }, 0)
+    } else if (filters?.includes('expense')) {
+      total = data.reduce((sum, row) => {
+        return sum + (parseFloat(row.debit || 0) - parseFloat(row.credit || 0))
+      }, 0)
+    } else {
+      total = data.reduce((sum, row) => sum + parseFloat(row.total_amount || row.open_balance || 0), 0)
     }
     
-    console.log(`✅ Client aggregation: ${results.length} groups`)
-    return results
+    // Group by if specified
+    if (groupBy) {
+      const grouped = new Map<string, number>()
+      data.forEach(row => {
+        const key = row[groupBy] || 'Unknown'
+        const val = parseFloat(row.total_amount || row.open_balance || 
+                    (parseFloat(row.credit || 0) - parseFloat(row.debit || 0)))
+        grouped.set(key, (grouped.get(key) || 0) + val)
+      })
+      
+      return Array.from(grouped.entries())
+        .map(([k, v]) => ({ [groupBy]: k, total: v }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 20)
+    }
     
-  } else {
-    // Simple aggregation
-    const total = calculateAggregation(data, aggregation)
-    console.log(`✅ Client aggregation: ${data.length} records, total = ${total}`)
     return [{ total, count: data.length }]
   }
+  
+  // For count queries
+  if (type === 'count') {
+    return [{ count: data.length }]
+  }
+  
+  // For list queries, return raw data
+  return data.slice(0, 20)
 }
 
 // ============================================================================
-// AGGREGATION CALCULATION
+// RESPONSE GENERATOR - FAST
 // ============================================================================
 
-function calculateAggregation(rows: any[], aggregation: string): number {
-  if (aggregation.includes('SUM(credit - debit)')) {
-    return rows.reduce((sum, row) => {
-      const credit = parseFloat(String(row.credit || 0))
-      const debit = parseFloat(String(row.debit || 0))
-      return sum + (credit - debit)
-    }, 0)
-  }
+async function generateResponse(
+  question: string,
+  data: Record<string, any>,
+  apiKey: string
+): Promise<string> {
   
-  if (aggregation.includes('SUM(debit - credit)')) {
-    return rows.reduce((sum, row) => {
-      const debit = parseFloat(String(row.debit || 0))
-      const credit = parseFloat(String(row.credit || 0))
-      return sum + (debit - credit)
-    }, 0)
-  }
-  
-  if (aggregation.includes('SUM(')) {
-    const fieldMatch = aggregation.match(/SUM\(([^)]+)\)/)
-    const field = fieldMatch ? fieldMatch[1] : 'total_amount'
-    return rows.reduce((sum, row) => sum + parseFloat(String(row[field] || 0)), 0)
-  }
-  
-  if (aggregation.includes('COUNT')) {
-    return rows.length
-  }
-  
-  if (aggregation.includes('AVG(')) {
-    const fieldMatch = aggregation.match(/AVG\(([^)]+)\)/)
-    const field = fieldMatch ? fieldMatch[1] : 'total_amount'
-    const sum = rows.reduce((s, row) => s + parseFloat(String(row[field] || 0)), 0)
-    return sum / rows.length
-  }
-  
-  return 0
-}
+  const prompt = `Question: "${question}"
 
-// ============================================================================
-// LIST QUERY ENGINE (For non-aggregation queries)
-// ============================================================================
+Data: ${JSON.stringify(data, null, 2)}
 
-async function executeListQuery(
-  table: string,
-  filters: string | null,
-  groupBy: string | null,
-  orderBy: string | null,
-  limit: number | null,
-  supabase: SupabaseClient
-): Promise<QueryResult[]> {
-  
-  console.log('📋 Executing list query...')
-  
-  // Handle payroll_submissions with location join
-  if (table === 'payroll_submissions') {
-    let query = supabase
-      .from('payroll_submissions')
-      .select(`
-        id,
-        submission_number,
-        pay_date,
-        payroll_group,
-        total_amount,
-        total_employees,
-        total_hours,
-        total_units,
-        status,
-        submitted_at,
-        approved_at,
-        locations!inner(name)
-      `)
-    
-    if (filters) {
-      query = applyFilters(query, filters)
-    }
-    
-    if (orderBy) {
-      const [col, dir] = orderBy.split(' ')
-      query = query.order(col, { ascending: dir?.toUpperCase() !== 'DESC' })
-    }
-    
-    query = query.limit(limit || 50)
-    
-    const { data, error } = await query
-    if (error) throw error
-    
-    return (data || []).map(record => ({
-      ...record,
-      location_name: (record.locations as any)?.name || 'Unknown',
-      locations: undefined
-    }))
-  }
-  
-  // Standard table query
-  let query = supabase.from(table).select('*')
-  
-  if (filters) {
-    query = applyFilters(query, filters)
-  }
-  
-  if (orderBy) {
-    const [col, dir] = orderBy.split(' ')
-    query = query.order(col, { ascending: dir?.toUpperCase() !== 'DESC' })
-  }
-  
-  query = query.limit(limit || 100)
-  
-  const { data, error } = await query
-  if (error) throw error
-  
-  return data || []
-}
+Provide a concise, professional answer (<100 words). Format currency with $ and commas. If comparing values, show growth %. Be direct and helpful.`
 
-// ============================================================================
-// FILTER APPLICATION
-// ============================================================================
+  const response = await fetch(ANTHROPIC_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 300,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  })
 
-function applyFilters(query: any, filters: string): any {
-  const filterLower = filters.toLowerCase()
-  
-  // Account type filters
-  if (filterLower.includes('income') || filterLower.includes('revenue')) {
-    query = query.or("account_type.eq.Income,account_type.eq.Other Income")
+  if (!response.ok) {
+    throw new Error(`Response generation failed: ${response.status}`)
   }
-  
-  if (filterLower.includes('expenses') || filterLower.includes('expense')) {
-    query = query.or("account_type.eq.Expenses,account_type.eq.Cost of Goods Sold")
-  }
-  
-  // Open balance
-  if (filterLower.includes('open_balance > 0')) {
-    query = query.gt('open_balance', 0)
-  }
-  
-  // Status filters
-  if (filterLower.includes("status = 'pending'")) {
-    query = query.eq('status', 'pending')
-  }
-  if (filterLower.includes("status = 'approved'")) {
-    query = query.eq('status', 'approved')
-  }
-  
-  // Date filters - Handle various formats
-  const currentDate = new Date()
-  
-  // This year
-  if (filterLower.includes(`date >= '${currentDate.getFullYear()}-01-01'`)) {
-    query = query.gte('date', `${currentDate.getFullYear()}-01-01`)
-  }
-  
-  // This month
-  if (filterLower.includes("date_trunc('month', current_date)") || 
-      filterLower.includes('this month')) {
-    const startOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-      .toISOString().split('T')[0]
-    query = query.gte('date', startOfMonth)
-  }
-  
-  // Last month
-  if (filterLower.includes("interval '1 month'") && filterLower.includes("date <")) {
-    const startOfLastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
-      .toISOString().split('T')[0]
-    const endOfLastMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1)
-      .toISOString().split('T')[0]
-    query = query.gte('date', startOfLastMonth).lt('date', endOfLastMonth)
-  }
-  
-  // Due date (overdue)
-  if (filterLower.includes('due_date < current_date')) {
-    query = query.lt('due_date', currentDate.toISOString().split('T')[0])
-  }
-  
-  // Customer/Vendor NOT NULL
-  if (filterLower.includes('customer is not null')) {
-    query = query.not('customer', 'is', null)
-  }
-  if (filterLower.includes('vendor is not null')) {
-    query = query.not('vendor', 'is', null)
-  }
-  
-  return query
-}
 
-// ============================================================================
-// POST-QUERY CALCULATIONS
-// ============================================================================
-
-function performCalculations(dataResults: Record<string, any>, calculation: string): any {
-  console.log('🧮 Performing calculation:', calculation)
-  
-  const results: Record<string, any> = {}
-  
-  try {
-    // Extract values from data results
-    const values: Record<string, number> = {}
-    
-    for (const [key, data] of Object.entries(dataResults)) {
-      if (Array.isArray(data) && data.length > 0) {
-        values[key] = data[0].total || data[0].count || 0
-      }
-    }
-    
-    console.log('📊 Values for calculation:', values)
-    
-    // Growth rate calculations
-    if (calculation.includes('growth_rate')) {
-      const current = values['current_month'] || values['current_year'] || values['current']
-      const previous = values['last_month'] || values['last_year'] || values['previous']
-      
-      if (previous && previous !== 0) {
-        results.growth_rate = ((current - previous) / Math.abs(previous)) * 100
-        results.growth_amount = current - previous
-        results.current_value = current
-        results.previous_value = previous
-      }
-    }
-    
-    // Profit margin calculations
-    if (calculation.includes('profit_margin')) {
-      const revenue = values['revenue'] || 0
-      const expenses = values['expenses'] || 0
-      const profit = revenue - expenses
-      
-      if (revenue !== 0) {
-        results.profit_margin = (profit / revenue) * 100
-        results.net_profit = profit
-        results.revenue = revenue
-        results.expenses = expenses
-      }
-    }
-    
-    // Gross margin calculations
-    if (calculation.includes('gross_margin')) {
-      const revenue = values['revenue'] || 0
-      const cogs = values['cogs'] || values['cost_of_goods_sold'] || 0
-      const gross_profit = revenue - cogs
-      
-      if (revenue !== 0) {
-        results.gross_margin = (gross_profit / revenue) * 100
-        results.gross_profit = gross_profit
-        results.revenue = revenue
-        results.cogs = cogs
-      }
-    }
-    
-    // Burn rate / runway
-    if (calculation.includes('burn_rate') || calculation.includes('runway')) {
-      const monthly_expenses = values['monthly_expenses'] || 0
-      const cash_balance = values['cash_balance'] || 0
-      
-      if (monthly_expenses > 0) {
-        results.burn_rate = monthly_expenses
-        results.runway_months = cash_balance / monthly_expenses
-        results.cash_balance = cash_balance
-      }
-    }
-    
-    // Average calculations
-    if (calculation.includes('average')) {
-      const total = values['total'] || 0
-      const count = values['count'] || 1
-      results.average = total / count
-    }
-    
-    console.log('✅ Calculation results:', results)
-    return results
-    
-  } catch (error) {
-    console.error('❌ Calculation error:', error)
-    return null
-  }
+  const result = await response.json()
+  return result.content?.[0]?.text || 'Unable to generate response.'
 }
