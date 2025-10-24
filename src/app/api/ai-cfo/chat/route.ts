@@ -187,6 +187,7 @@ JSON only, no explanation:`
           const calculatedTotal = result.reduce((sum, row) => sum + (parseFloat(row.total) || 0), 0)
           dataMap[`${q.alias}_total`] = calculatedTotal
           dataMap[`${q.alias}_count`] = result.length
+          console.log(`💰 Pre-calculated total for ${q.alias}: $${calculatedTotal.toFixed(2)} from ${result.length} rows`)
         }
       })
 
@@ -470,13 +471,23 @@ async function generateResponse(
   apiKey: string
 ): Promise<string> {
   
+  // Extract pre-calculated total if it exists
+  let totalNote = ''
+  for (const key in data) {
+    if (key.endsWith('_total')) {
+      const alias = key.replace('_total', '')
+      const total = data[key]
+      totalNote = `\n\nPRE-CALCULATED TOTAL for ${alias}: $${total.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})} - USE THIS EXACT VALUE, DO NOT RECALCULATE`
+    }
+  }
+  
   const prompt = `Question: "${question}"
 
-Data: ${JSON.stringify(data, null, 2)}
+Data: ${JSON.stringify(data, null, 2)}${totalNote}
 
 Provide a concise, professional answer (<100 words). Format currency with $ and commas. If comparing values, show growth %. Be direct and helpful.
 
-IMPORTANT: If the data includes a field ending in "_total", that is the pre-calculated accurate total. Use that value, do not recalculate.`
+CRITICAL: Use the PRE-CALCULATED TOTAL value provided above. Do not add up the individual rows yourself.`
 
   const response = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
