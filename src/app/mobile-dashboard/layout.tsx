@@ -50,16 +50,47 @@ export default function MobileDashboardLayout({
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [autoSpeak, setAutoSpeak] = useState(true)
   const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [selectedVoice, setSelectedVoice] = useState<string>('')
+  const [showVoiceMenu, setShowVoiceMenu] = useState(false)
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const recognitionRef = useRef<any>(null)
   const synthRef = useRef<SpeechSynthesis | null>(null)
 
-  // Initialize Speech Recognition and Synthesis
+  // Load available voices
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      synthRef.current = window.speechSynthesis
+      
+      const loadVoices = () => {
+        const voices = synthRef.current?.getVoices() || []
+        setAvailableVoices(voices)
+        
+        // Auto-select best voice
+        if (!selectedVoice && voices.length > 0) {
+          const preferredVoice = voices.find(v => 
+            v.name.includes('Samantha') || 
+            v.name.includes('Karen') ||
+            v.name.includes('Google US English')
+          ) || voices[0]
+          setSelectedVoice(preferredVoice.name)
+        }
+      }
+      
+      loadVoices()
+      synthRef.current?.addEventListener?.('voiceschanged', loadVoices)
+      
+      return () => {
+        synthRef.current?.removeEventListener?.('voiceschanged', loadVoices)
+      }
+    }
+  }, [])
+
+  // Initialize Speech Recognition
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      // Speech Recognition
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (SpeechRecognition) {
         recognitionRef.current = new SpeechRecognition()
@@ -74,7 +105,6 @@ export default function MobileDashboardLayout({
           
           setInputMessage(transcript)
           
-          // Auto-submit when user stops talking (final result)
           if (event.results[0].isFinal) {
             setTimeout(() => {
               if (transcript.trim()) {
@@ -100,11 +130,6 @@ export default function MobileDashboardLayout({
         recognitionRef.current.onend = () => {
           setIsListening(false)
         }
-      }
-
-      // Speech Synthesis
-      if ('speechSynthesis' in window) {
-        synthRef.current = window.speechSynthesis
       }
     }
 
@@ -159,10 +184,8 @@ export default function MobileDashboardLayout({
   const speakResponse = (text: string) => {
     if (!synthRef.current || !autoSpeak) return
 
-    // Cancel any ongoing speech
     synthRef.current.cancel()
 
-    // Clean up text
     const cleanText = text
       .replace(/\*\*/g, '')
       .replace(/\*/g, '')
@@ -178,16 +201,10 @@ export default function MobileDashboardLayout({
     utterance.pitch = 1.0
     utterance.volume = 1.0
 
-    // Use best available voice
-    const voices = synthRef.current.getVoices()
-    const preferredVoice = voices.find(voice => 
-      voice.name.includes('Samantha') || 
-      voice.name.includes('Karen') || 
-      voice.name.includes('Google US English') ||
-      voice.name.includes('Microsoft Zira')
-    )
-    if (preferredVoice) {
-      utterance.voice = preferredVoice
+    // Use selected voice
+    const voice = availableVoices.find(v => v.name === selectedVoice)
+    if (voice) {
+      utterance.voice = voice
     }
 
     utterance.onstart = () => setIsSpeaking(true)
@@ -208,7 +225,6 @@ export default function MobileDashboardLayout({
     const messageText = text || inputMessage
     if (!messageText.trim() || isLoading) return
 
-    // Stop any ongoing speech or listening
     stopSpeaking()
     if (isListening && recognitionRef.current) {
       recognitionRef.current.stop()
@@ -249,8 +265,6 @@ export default function MobileDashboardLayout({
       }
 
       setMessages(prev => [...prev, assistantMessage])
-
-      // Speak the response
       speakResponse(assistantMessage.content)
 
     } catch (error) {
@@ -285,6 +299,24 @@ export default function MobileDashboardLayout({
   const handleQuickAction = (action: string) => {
     setInputMessage(action)
     setTimeout(() => handleSendMessage(), 100)
+  }
+
+  // Get voice display name with flag emoji
+  const getVoiceDisplay = (voice: SpeechSynthesisVoice) => {
+    const name = voice.name
+    const lang = voice.lang
+    
+    // Add flag emojis based on language
+    if (lang.includes('en-US')) return `🇺🇸 ${name}`
+    if (lang.includes('en-GB')) return `🇬🇧 ${name}`
+    if (lang.includes('en-AU')) return `🇦🇺 ${name}`
+    if (lang.includes('en-IE')) return `🇮🇪 ${name}`
+    if (lang.includes('en-ZA')) return `🇿🇦 ${name}`
+    if (lang.includes('fr')) return `🇫🇷 ${name}`
+    if (lang.includes('es')) return `🇪🇸 ${name}`
+    if (lang.includes('de')) return `🇩🇪 ${name}`
+    
+    return name
   }
 
   return (
@@ -391,7 +423,32 @@ export default function MobileDashboardLayout({
 
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
-                onClick={() => setAutoSpeak(!autoSpeak)}
+                onClick={() => setShowVoiceMenu(!showVoiceMenu)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer',
+                  color: 'white',
+                  fontSize: '12px'
+                }}
+                title="Change voice"
+              >
+                🎭 Voice
+              </button>
+              <button
+                onClick={() => {
+                  const newState = !autoSpeak
+                  setAutoSpeak(newState)
+                  // If turning off, stop any current speech
+                  if (!newState) {
+                    stopSpeaking()
+                  }
+                }}
                 style={{
                   background: 'rgba(255, 255, 255, 0.2)',
                   border: 'none',
@@ -403,7 +460,7 @@ export default function MobileDashboardLayout({
                   justifyContent: 'center',
                   cursor: 'pointer'
                 }}
-                title={autoSpeak ? 'Voice on' : 'Voice off'}
+                title={autoSpeak ? 'Voice on - Click to mute' : 'Voice off - Click to enable'}
               >
                 {autoSpeak ? <Volume2 size={18} color="white" /> : <VolumeX size={18} color="white" />}
               </button>
@@ -425,6 +482,59 @@ export default function MobileDashboardLayout({
               </button>
             </div>
           </div>
+
+          {/* Voice Selection Menu */}
+          {showVoiceMenu && (
+            <div style={{
+              padding: '16px 20px',
+              background: BRAND_COLORS.gray[50],
+              borderBottom: `1px solid ${BRAND_COLORS.gray[200]}`,
+              maxHeight: '200px',
+              overflowY: 'auto'
+            }}>
+              <p style={{
+                margin: '0 0 12px 0',
+                fontSize: '13px',
+                fontWeight: '600',
+                color: BRAND_COLORS.gray[700]
+              }}>
+                Select Voice:
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {availableVoices.map((voice) => (
+                  <button
+                    key={voice.name}
+                    onClick={() => {
+                      setSelectedVoice(voice.name)
+                      setShowVoiceMenu(false)
+                      
+                      // Test the voice
+                      if (synthRef.current) {
+                        synthRef.current.cancel()
+                        const test = new SpeechSynthesisUtterance("Hello, I'm your AI CFO assistant.")
+                        test.voice = voice
+                        test.rate = 1.0
+                        synthRef.current.speak(test)
+                      }
+                    }}
+                    style={{
+                      padding: '10px 14px',
+                      background: selectedVoice === voice.name ? BRAND_COLORS.primary : 'white',
+                      border: `1px solid ${selectedVoice === voice.name ? BRAND_COLORS.primary : BRAND_COLORS.gray[300]}`,
+                      borderRadius: '8px',
+                      fontSize: '13px',
+                      color: selectedVoice === voice.name ? 'white' : BRAND_COLORS.gray[700],
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    {getVoiceDisplay(voice)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Voice Error Banner */}
           {voiceError && (
@@ -636,7 +746,8 @@ export default function MobileDashboardLayout({
                   cursor: isLoading ? 'not-allowed' : 'pointer',
                   transition: 'background 0.2s ease',
                   flexShrink: 0,
-                  position: 'relative'
+                  position: 'relative',
+                  boxShadow: isListening ? '0 0 0 4px rgba(239, 68, 68, 0.3)' : '0 2px 4px rgba(0,0,0,0.1)'
                 }}
                 title={isListening ? 'Stop listening' : 'Start voice input'}
               >
