@@ -280,12 +280,13 @@ async function executePaginatedAggregation(
       baseQuery = baseQuery.gt('open_balance', 0)
     }
     
-    if (filterLower.includes('this month') || filterLower.includes('current_date')) {
+    // Date filters - handle both plain text and PostgreSQL DATE_TRUNC syntax
+    if (filterLower.includes('this month') || filterLower.includes('current_date') || filterLower.includes("date_trunc('month'")) {
       const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
       baseQuery = baseQuery.gte('date', startOfMonth)
     }
     
-    if (filterLower.includes('this year')) {
+    if (filterLower.includes('this year') || filterLower.includes("date_trunc('year'")) {
       const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
       baseQuery = baseQuery.gte('date', startOfYear)
     }
@@ -359,6 +360,15 @@ async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<Qu
   // USE PAGINATED AGGREGATION for large tables with SUM aggregations
   // This handles 30K+ records accurately
   const largeTables = ['journal_entry_lines', 'ar_aging_detail', 'ap_aging', 'payments']
+  
+  console.log('🔍 Checking pagination conditions:', {
+    table,
+    isLargeTable: largeTables.includes(table),
+    hasAggregation: !!aggregation,
+    aggregationType: aggregation,
+    includesSUM: aggregation?.includes('SUM')
+  })
+  
   if (largeTables.includes(table) && aggregation && aggregation.includes('SUM')) {
     console.log(`🚀 Using paginated aggregation for ${table} to ensure accurate totals...`)
     return await executePaginatedAggregation(table, filters, aggregation, supabase)
