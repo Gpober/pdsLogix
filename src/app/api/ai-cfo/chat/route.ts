@@ -333,68 +333,168 @@ async function executeQuery(query: any, supabase: SupabaseClient): Promise<Query
   const month = new Date().getMonth()
   
   // SIMPLE APPROACH: For month grouping on journal_entry_lines, fetch all and group in JS
-  if (groupBy === 'month' && table === 'journal_entry_lines') {
-    const isIncome = filters?.includes('income') || filters?.includes('revenue')
-    const isExpense = filters?.includes('expense')
+  if (groupBy === 'month' && (table === 'journal_entry_lines' || table === 'payments' || table === 'payroll_submissions')) {
     
-    // Fetch the raw data
-    let query = supabase.from(table).select('date, credit, debit, account_type')
-    
-    // Apply filters
-    if (isIncome) {
-      query = query.or("account_type.eq.Income,account_type.eq.Other Income")
-    } else if (isExpense) {
-      query = query.or("account_type.eq.Expenses,account_type.eq.Cost of Goods Sold")
-    }
-    
-    if (filters?.includes('this year')) {
-      query = query.gte('date', `${year}-01-01`)
-    }
-    
-    const { data, error } = await query
-    
-    if (error) {
-      console.error('❌ Query Error:', error)
-      return [{ total: 0, count: 0 }]
-    }
-    
-    if (!data || data.length === 0) {
-      console.log('⚠️ No data returned')
-      return [{ total: 0, count: 0 }]
-    }
-    
-    console.log(`📊 Fetched ${data.length} rows, grouping by month...`)
-    
-    // Group by month
-    const monthlyTotals = new Map<string, number>()
-    
-    data.forEach((row, idx) => {
-      if (idx < 3) console.log(`   Row ${idx + 1}:`, row)
+    // Handle journal_entry_lines (revenue/expenses)
+    if (table === 'journal_entry_lines') {
+      const isIncome = filters?.includes('income') || filters?.includes('revenue')
+      const isExpense = filters?.includes('expense')
       
-      const date = new Date(row.date)
-      const monthKey = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+      // Fetch the raw data
+      let query = supabase.from(table).select('date, credit, debit, account_type')
       
-      let value = 0
+      // Apply filters
       if (isIncome) {
-        value = (parseFloat(row.credit) || 0) - (parseFloat(row.debit) || 0)
+        query = query.or("account_type.eq.Income,account_type.eq.Other Income")
       } else if (isExpense) {
-        value = (parseFloat(row.debit) || 0) - (parseFloat(row.credit) || 0)
+        query = query.or("account_type.eq.Expenses,account_type.eq.Cost of Goods Sold")
       }
       
-      if (idx < 3) console.log(`   Month: ${monthKey}, Value: ${value}`)
+      if (filters?.includes('this year')) {
+        query = query.gte('date', `${year}-01-01`)
+      }
       
-      monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + value)
-    })
+      const { data, error } = await query
+      
+      if (error) {
+        console.error('❌ Query Error:', error)
+        return [{ total: 0, count: 0 }]
+      }
+      
+      if (!data || data.length === 0) {
+        console.log('⚠️ No data returned')
+        return [{ total: 0, count: 0 }]
+      }
+      
+      console.log(`📊 Fetched ${data.length} rows, grouping by month...`)
+      
+      // Group by month
+      const monthlyTotals = new Map<string, number>()
+      
+      data.forEach((row, idx) => {
+        if (idx < 3) console.log(`   Row ${idx + 1}:`, row)
+        
+        const date = new Date(row.date)
+        const monthKey = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+        
+        let value = 0
+        if (isIncome) {
+          value = (parseFloat(row.credit) || 0) - (parseFloat(row.debit) || 0)
+        } else if (isExpense) {
+          value = (parseFloat(row.debit) || 0) - (parseFloat(row.credit) || 0)
+        }
+        
+        if (idx < 3) console.log(`   Month: ${monthKey}, Value: ${value}`)
+        
+        monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + value)
+      })
+      
+      // Convert to array and sort
+      const results = Array.from(monthlyTotals.entries())
+        .map(([month, total]) => ({ month, total }))
+        .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+      
+      console.log(`✅ Grouped into ${results.length} months`)
+      console.log(`📦 Results:`, results)
+      
+      return results
+    }
     
-    // Convert to array and sort
-    const results = Array.from(monthlyTotals.entries())
-      .map(([month, total]) => ({ month, total }))
-      .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+    // Handle payments table (payroll by month)
+    if (table === 'payments') {
+      let query = supabase.from(table).select('date, total_amount, department, location')
+      
+      if (filters?.includes('this year')) {
+        query = query.gte('date', `${year}-01-01`)
+      }
+      
+      if (filters?.includes('this month')) {
+        query = query.gte('date', new Date(year, month, 1).toISOString().split('T')[0])
+      }
+      
+      const { data, error } = await query
+      
+      if (error || !data || data.length === 0) {
+        console.error('❌ Query Error:', error)
+        return [{ total: 0, count: 0 }]
+      }
+      
+      console.log(`📊 Fetched ${data.length} payment rows, grouping by month...`)
+      
+      // Group by month
+      const monthlyTotals = new Map<string, number>()
+      
+      data.forEach((row, idx) => {
+        if (idx < 3) console.log(`   Payment Row ${idx + 1}:`, row)
+        
+        const date = new Date(row.date)
+        const monthKey = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+        const value = parseFloat(row.total_amount) || 0
+        
+        if (idx < 3) console.log(`   Month: ${monthKey}, Amount: ${value}`)
+        
+        monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + value)
+      })
+      
+      const results = Array.from(monthlyTotals.entries())
+        .map(([month, total]) => ({ month, total }))
+        .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+      
+      console.log(`✅ Grouped into ${results.length} months`)
+      console.log(`📦 Payroll Results:`, results)
+      
+      return results
+    }
     
-    console.log(`✅ Grouped into ${results.length} months`)
-    console.log(`📦 Results:`, results)
-    
-    return results
+    // Handle payroll_submissions table
+    if (table === 'payroll_submissions') {
+      let query = supabase.from(table).select('pay_date, total_amount, status, location_id')
+      
+      if (filters?.includes('this year')) {
+        query = query.gte('pay_date', `${year}-01-01`)
+      }
+      
+      if (filters?.includes('pending')) {
+        query = query.eq('status', 'pending')
+      }
+      
+      if (filters?.includes('approved')) {
+        query = query.eq('status', 'approved')
+      }
+      
+      const { data, error } = await query
+      
+      if (error || !data || data.length === 0) {
+        console.error('❌ Query Error:', error)
+        return [{ total: 0, count: 0 }]
+      }
+      
+      console.log(`📊 Fetched ${data.length} payroll submission rows, grouping by month...`)
+      
+      // Group by month
+      const monthlyTotals = new Map<string, number>()
+      
+      data.forEach((row, idx) => {
+        if (idx < 3) console.log(`   Payroll Row ${idx + 1}:`, row)
+        
+        const date = new Date(row.pay_date)
+        const monthKey = date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+        const value = parseFloat(row.total_amount) || 0
+        
+        if (idx < 3) console.log(`   Month: ${monthKey}, Amount: ${value}`)
+        
+        monthlyTotals.set(monthKey, (monthlyTotals.get(monthKey) || 0) + value)
+      })
+      
+      const results = Array.from(monthlyTotals.entries())
+        .map(([month, total]) => ({ month, total }))
+        .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime())
+      
+      console.log(`✅ Grouped into ${results.length} months`)
+      console.log(`📦 Payroll Submission Results:`, results)
+      
+      return results
+    }
   }
   
   // FALLBACK: Original method for non-month grouping
