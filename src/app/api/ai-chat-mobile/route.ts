@@ -251,11 +251,118 @@ You are a friendly CFO assistant. Answer their question directly using the data 
   }
 }
 
+// Paginated aggregation for handling 30K+ records
+async function executePaginatedAggregation(
+  table: string,
+  filters: string | null,
+  aggregation: string,
+  supabase: SupabaseClient
+): Promise<QueryResult[]> {
+  
+  console.log('🔄 Starting paginated aggregation for large dataset...')
+  
+  // Build base query with filters
+  let baseQuery = supabase.from(table).select('*', { count: 'exact', head: false })
+  
+  // Apply filters
+  if (filters) {
+    const filterLower = filters.toLowerCase()
+    
+    if (filterLower.includes('income') || filterLower.includes('revenue')) {
+      baseQuery = baseQuery.or('account_type.ilike.%income%,account_type.ilike.%revenue%')
+    }
+    
+    if (filterLower.includes('expense')) {
+      baseQuery = baseQuery.ilike('account_type', '%expense%')
+    }
+    
+    if (filterLower.includes('open_balance > 0')) {
+      baseQuery = baseQuery.gt('open_balance', 0)
+    }
+    
+    if (filterLower.includes('this month') || filterLower.includes('current_date')) {
+      const startOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
+      baseQuery = baseQuery.gte('date', startOfMonth)
+    }
+    
+    if (filterLower.includes('this year')) {
+      const startOfYear = new Date(new Date().getFullYear(), 0, 1).toISOString().split('T')[0]
+      baseQuery = baseQuery.gte('date', startOfYear)
+    }
+  }
+
+  // Paginate through ALL records
+  const PAGE_SIZE = 1000 // Supabase recommended page size
+  let allRecords: any[] = []
+  let currentPage = 0
+  let hasMore = true
+
+  while (hasMore) {
+    const { data, error } = await baseQuery
+      .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1)
+
+    if (error) {
+      console.error('❌ Pagination error:', error)
+      break
+    }
+
+    if (data && data.length > 0) {
+      allRecords = allRecords.concat(data)
+      currentPage++
+      hasMore = data.length === PAGE_SIZE
+      
+      console.log(`📊 Page ${currentPage}: ${data.length} records (total: ${allRecords.length})`)
+      
+      // Safety limit: stop at 100K records to prevent memory issues
+      if (allRecords.length >= 100000) {
+        console.log('⚠️ Reached 100K record safety limit')
+        break
+      }
+    } else {
+      hasMore = false
+    }
+  }
+
+  console.log(`✅ Pagination complete: ${allRecords.length} total records`)
+
+  // Aggregate all records
+  if (aggregation.includes('SUM')) {
+    if (aggregation.includes('credit - debit')) {
+      const total = allRecords.reduce((sum, row) => {
+        const credit = parseFloat(String(row.credit || 0))
+        const debit = parseFloat(String(row.debit || 0))
+        return sum + (credit - debit)
+      }, 0)
+      
+      return [{ total, record_count: allRecords.length }]
+    } else if (aggregation.includes('total_amount') || aggregation.includes('open_balance')) {
+      const field = aggregation.includes('total_amount') ? 'total_amount' : 'open_balance'
+      const total = allRecords.reduce((sum, row) => {
+        return sum + parseFloat(String(row[field] || 0))
+      }, 0)
+      
+      return [{ total, record_count: allRecords.length }]
+    }
+  } else if (aggregation.includes('COUNT')) {
+    return [{ count: allRecords.length }]
+  }
+
+  return [{ error: 'Aggregation type not supported' }]
+}
+
 // Execute query based on Claude's plan
 async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<QueryResult[]> {
   const { table, filters, aggregation, groupBy, orderBy, limit } = plan
   
   console.log('📊 Executing query plan:', plan)
+
+  // USE PAGINATED AGGREGATION for large tables with SUM aggregations
+  // This handles 30K+ records accurately
+  const largeTables = ['journal_entry_lines', 'ar_aging_detail', 'ap_aging', 'payments']
+  if (largeTables.includes(table) && aggregation && aggregation.includes('SUM')) {
+    console.log(`🚀 Using paginated aggregation for ${table} to ensure accurate totals...`)
+    return await executePaginatedAggregation(table, filters, aggregation, supabase)
+  }
 
   // Handle joins for payroll_submissions
   if (table === 'payroll_submissions') {
@@ -341,49 +448,20 @@ async function executeQueryPlan(plan: any, supabase: SupabaseClient): Promise<Qu
     }
   }
 
-  // Apply ordering (only if not aggregating)
+  // Apply ordering (for non-aggregations only, since aggregations use pagination)
   if (orderBy && !aggregation) {
     const desc = orderBy.toLowerCase().includes('desc')
     const col = orderBy.replace(/DESC|ASC/gi, '').trim()
     query = query.order(col, { ascending: !desc })
   }
 
-  // CRITICAL FIX: Only apply limit if NOT aggregating
-  // For aggregations, we need ALL records to get accurate totals
-  if (!aggregation) {
-    query = query.limit(limit || 100)
-  } else {
-    // For aggregations, fetch up to 10,000 records (reasonable limit for accurate totals)
-    query = query.limit(10000)
-  }
-
+  // Apply normal limit for non-aggregations
+  query = query.limit(limit || 100)
+  
   const { data, error } = await query
   if (error) throw new Error(error.message)
 
   let results = (data || []) as QueryResult[]
-
-  // Handle aggregations in JavaScript
-  if (aggregation && results.length > 0) {
-    if (aggregation.includes('SUM')) {
-      // Extract what we're summing
-      if (aggregation.includes('credit - debit')) {
-        const total = results.reduce((sum, row: any) => {
-          const credit = parseFloat(String(row.credit || 0))
-          const debit = parseFloat(String(row.debit || 0))
-          return sum + (credit - debit)
-        }, 0)
-        results = [{ total, record_count: results.length }]
-      } else if (aggregation.includes('total_amount') || aggregation.includes('open_balance')) {
-        const field = aggregation.includes('total_amount') ? 'total_amount' : 'open_balance'
-        const total = results.reduce((sum, row: any) => {
-          return sum + parseFloat(String(row[field] || 0))
-        }, 0)
-        results = [{ total, record_count: results.length }]
-      }
-    } else if (aggregation.includes('COUNT')) {
-      results = [{ count: results.length }]
-    }
-  }
 
   // Handle grouping
   if (groupBy && !aggregation) {
