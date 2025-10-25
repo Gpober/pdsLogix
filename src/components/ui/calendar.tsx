@@ -1,9 +1,9 @@
 "use client";
 
-import { DayPicker } from "react-day-picker";
+import { DayPicker, type NavProps } from "react-day-picker";
 import { cn } from "@/lib/utils";
 import * as React from "react";
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export type CalendarProps = React.ComponentProps<typeof DayPicker> & {
   className?: string;
@@ -48,12 +48,6 @@ function Calendar({
         month: "space-y-4",
         caption: "flex justify-center pt-1 relative items-center",
         caption_label: "text-sm font-medium",
-        nav: "space-x-1 flex items-center",
-        nav_button: cn(
-          "h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100"
-        ),
-        nav_button_previous: "absolute left-1",
-        nav_button_next: "absolute right-1",
         table: "w-full border-collapse space-y-1",
         head_row: "flex",
         head_cell:
@@ -75,9 +69,28 @@ function Calendar({
         day_hidden: "invisible",
         ...classNames,
       }}
+      captionLayout="dropdown"
+      fromYear={1900}
+      toYear={2100}
       components={{
-        IconLeft: () => <ChevronLeft className="h-4 w-4" />,
-        IconRight: () => <ChevronRight className="h-4 w-4" />,
+        Nav: (props: NavProps) => (
+          <div className="flex items-center justify-between mb-2">
+            <button
+              type="button"
+              onClick={props.onPreviousClick}
+              className="h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={props.onNextClick}
+              className="h-7 w-7 bg-transparent p-0 opacity-50 hover:opacity-100"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        ),
       }}
       {...props}
     />
