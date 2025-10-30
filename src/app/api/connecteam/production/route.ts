@@ -181,18 +181,22 @@ export async function POST(request: NextRequest) {
     
     const unitsMap: Record<string, number> = {}
     
-    // Initialize all employees with 0
+    // Initialize all employees with 0 (using original case from database)
     employeeEmails.forEach((email: string) => {
-      unitsMap[email.toLowerCase()] = 0
+      unitsMap[email] = 0
     })
 
     // Count submissions by userId
     submissions.forEach((submission: any) => {
       const userId = submission.userId || submission.submittedBy?.userId
-      const userEmail = userIdToEmail[userId]
+      const userEmail = userIdToEmail[userId] // This is already lowercase from STEP 2
       
-      if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
-        unitsMap[userEmail] = (unitsMap[userEmail] || 0) + 1
+      if (userEmail) {
+        // Find the original email case from employeeEmails
+        const originalEmail = employeeEmails.find((e: string) => e.toLowerCase() === userEmail)
+        if (originalEmail) {
+          unitsMap[originalEmail] = (unitsMap[originalEmail] || 0) + 1
+        }
       }
     })
 
