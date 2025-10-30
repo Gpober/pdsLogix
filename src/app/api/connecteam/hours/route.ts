@@ -1,16 +1,58 @@
 // app/api/connecteam/hours/route.ts
-import { NextResponse } from 'next/server'
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    // ✅ Authenticate using cookies
-    const supabase = createRouteHandlerClient({ cookies })
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    // ✅ Get auth token from cookies or Authorization header
+    const authHeader = request.headers.get('authorization')
+    const cookieHeader = request.headers.get('cookie')
+    
+    // Extract token from Authorization header or cookies
+    let accessToken: string | null = null
+    
+    if (authHeader?.startsWith('Bearer ')) {
+      accessToken = authHeader.replace('Bearer ', '')
+    } else if (cookieHeader) {
+      // Try to extract access token from cookies
+      const cookies = cookieHeader.split(';').map(c => c.trim())
+      const authCookie = cookies.find(c => c.startsWith('sb-') && c.includes('auth-token'))
+      if (authCookie) {
+        try {
+          const [, value] = authCookie.split('=')
+          const decoded = JSON.parse(decodeURIComponent(value))
+          accessToken = decoded.access_token || decoded[0]?.access_token
+        } catch (e) {
+          console.log('Could not parse auth cookie')
+        }
+      }
+    }
 
-    if (authError || !user) {
-      console.error('❌ Auth error:', authError)
+    // Create Supabase client to verify auth
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error('❌ Missing Supabase credentials')
+      return NextResponse.json(
+        { error: 'Server configuration error' },
+        { status: 500 }
+      )
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseAnonKey)
+
+    // Verify the user is authenticated
+    let user = null
+    if (accessToken) {
+      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser(accessToken)
+      if (!authError && authUser) {
+        user = authUser
+      }
+    }
+
+    if (!user) {
+      console.error('❌ No authenticated user found')
       return NextResponse.json(
         { error: 'Unauthorized - please log in' },
         { status: 401 }
@@ -61,7 +103,6 @@ export async function POST(request: Request) {
     console.log(`🔑 Using time clock ID ${timeClockId} for payroll group ${payrollGroup}`)
 
     // ✅ Call Connecteam API
-    // Connecteam API expects dates in YYYY-MM-DD format and uses the timeclock entries endpoint
     const connecteamUrl = `https://api.connecteam.com/api/v1/timeclock/${timeClockId}/entries?from=${periodStart}&to=${periodEnd}`
     
     console.log('🔗 Calling Connecteam API:', connecteamUrl)
@@ -101,7 +142,6 @@ export async function POST(request: Request) {
         
         if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
           // Calculate hours from the entry
-          // Connecteam typically returns duration in minutes or milliseconds
           let hours = 0
           
           if (entry.duration) {
