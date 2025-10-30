@@ -39,17 +39,17 @@ export async function POST(request: NextRequest) {
     }
 
     const formsData = JSON.parse(await formsResponse.text())
-    const forms = formsData.data?.forms || []
+    const forms = formsData.data?.forms || formsData.forms || []
     
-    console.log(`📝 Found ${forms.length} total forms`)
-    
-    // Find form that matches location name
+    console.log(`📋 Found ${forms.length} total forms in Connecteam`)
+
+    // Find form that matches the location name
     const locationForm = forms.find((form: any) => 
-      form.name?.toLowerCase() === locationName.toLowerCase()
+      form.name.toLowerCase() === locationName.toLowerCase()
     )
-    
+
     if (!locationForm) {
-      console.log(`❌ No form found matching location: "${locationName}"`)
+      console.log('❌ No form found matching location:', locationName)
       console.log('Available forms:', forms.map((f: any) => f.name))
       return NextResponse.json({
         error: `No form found for location "${locationName}"`,
@@ -57,22 +57,17 @@ export async function POST(request: NextRequest) {
       }, { status: 404 })
     }
 
-    const formId = locationForm.formId || locationForm.id
-    console.log(`✅ Found form: "${locationForm.name}" (ID: ${formId})`)
+    console.log(`✅ Found form: "${locationForm.name}" (ID: ${locationForm.id})`)
 
-    // STEP 2: Get all users to map userId → email
-    console.log('\n📋 STEP 2: Getting user list...')
-    
-    const userIdToEmail: Record<number, string> = {}
-    const emailToUserId: Record<string, number> = {}
-    
-    let page = 1
+    // STEP 2: Get all users to map emails to userIds
+    console.log('\n👥 STEP 2: Getting users from Connecteam...')
+    let allUsers: any[] = []
+    let currentPage = 1
     let hasMore = true
-    let totalUsers = 0
-    
-    while (hasMore && page <= 10) {
-      const usersUrl = `https://api.connecteam.com/users/v1/users?page=${page}&limit=100`
-      console.log(`📄 Fetching page ${page}...`)
+
+    while (hasMore) {
+      const usersUrl = `https://api.connecteam.com/users/v1/users?page=${currentPage}&limit=100`
+      console.log(`  📄 Fetching page ${currentPage}...`)
       
       const usersResponse = await fetch(usersUrl, {
         method: 'GET',
@@ -83,57 +78,56 @@ export async function POST(request: NextRequest) {
       })
 
       if (!usersResponse.ok) {
-        return NextResponse.json({
-          error: 'Failed to get users from Connecteam',
-          status: usersResponse.status
-        }, { status: 502 })
+        throw new Error(`Failed to get users: ${usersResponse.status}`)
       }
 
       const usersData = JSON.parse(await usersResponse.text())
-      const users = usersData.data?.users || []
-      
-      if (users.length === 0) {
-        hasMore = false
-        break
-      }
-      
-      users.forEach((user: any) => {
-        if (user.userId && user.email) {
-          userIdToEmail[user.userId] = user.email.toLowerCase()
-          emailToUserId[user.email.toLowerCase()] = user.userId
-          totalUsers++
-        }
-      })
-      
-      hasMore = users.length === 100
-      page++
+      const users = usersData.data?.users || usersData.users || []
+      allUsers = [...allUsers, ...users]
+
+      console.log(`  ✅ Page ${currentPage}: ${users.length} users`)
+
+      // Check if there are more pages
+      const totalUsers = usersData.data?.totalResults || usersData.totalResults || 0
+      hasMore = allUsers.length < totalUsers
+      currentPage++
     }
 
-    console.log(`✅ Found ${totalUsers} users`)
-    
-    // Find userIds for production employees
-    console.log('\n📧 Looking for production employee userIds:')
-    const relevantUserIds: number[] = []
-    employeeEmails.forEach((email: string) => {
-      const userId = emailToUserId[email.toLowerCase()]
-      if (userId) {
-        relevantUserIds.push(userId)
-        console.log(`  ✅ ${email} → userId ${userId}`)
-      } else {
-        console.log(`  ❌ ${email} → NOT FOUND in Connecteam`)
+    console.log(`👥 Total users loaded: ${allUsers.length}`)
+
+    // Map email to userId for relevant employees
+    const userIdToEmail: Record<string, string> = {}
+    const relevantUserIds: string[] = []
+
+    allUsers.forEach((user: any) => {
+      const email = user.email?.toLowerCase()
+      if (email && employeeEmails.map((e: string) => e.toLowerCase()).includes(email)) {
+        userIdToEmail[user.id] = email
+        relevantUserIds.push(user.id)
       }
     })
 
-    // STEP 3: Get form submissions for the pay period
-    console.log(`\n📝 STEP 3: Getting form submissions for period...`)
+    console.log(`✅ Mapped ${relevantUserIds.length} relevant employees`)
+    console.log('Relevant users:', Object.entries(userIdToEmail))
+
+    if (relevantUserIds.length === 0) {
+      return NextResponse.json({
+        error: 'No matching users found in Connecteam',
+        employeeEmails
+      }, { status: 404 })
+    }
+
+    // STEP 3: Get form submissions for the period
+    console.log('\n📊 STEP 3: Getting form submissions...')
     
-    // Convert dates to timestamps (forms API might use different format)
-    const startDate = new Date(periodStart).toISOString()
-    const endDate = new Date(periodEnd).toISOString()
+    // Convert dates to ISO format for Connecteam API
+    const startDate = new Date(periodStart + 'T00:00:00')
+    const endDate = new Date(periodEnd + 'T23:59:59')
     
-    const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${formId}/form-submissions?startDate=${startDate}&endDate=${endDate}`
-    console.log('🔗 Calling:', submissionsUrl)
+    const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.id}/form-submissions?fromDate=${startDate.toISOString()}&toDate=${endDate.toISOString()}`
     
+    console.log(`📅 Fetching submissions from ${startDate.toISOString()} to ${endDate.toISOString()}`)
+
     const submissionsResponse = await fetch(submissionsUrl, {
       method: 'GET',
       headers: {
@@ -188,6 +182,7 @@ export async function POST(request: NextRequest) {
       units: unitsMap,
       locationName,
       formName: locationForm.name,
+      formId: locationForm.id,
       period: { start: periodStart, end: periodEnd },
       employeesProcessed: relevantUserIds.length,
       totalSubmissions: submissions.length
