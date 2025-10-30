@@ -124,6 +124,14 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`👥 Total users loaded: ${allUsers.length}`)
+    
+    // DEBUG: Log all user emails to see what we have
+    console.log('📧 All user emails in Connecteam:')
+    allUsers.forEach((user: any, index: number) => {
+      if (index < 10 || user.email?.toLowerCase().includes('chantz') || user.email?.toLowerCase().includes('david')) {
+        console.log(`  ${index + 1}. ${user.email} (userId: ${user.id})`)
+      }
+    })
 
     // Map email to userId for relevant employees
     const userIdToEmail: Record<string, string> = {}
@@ -139,6 +147,17 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Mapped ${relevantUserIds.length} relevant employees`)
     console.log('Relevant users:', Object.entries(userIdToEmail))
+    
+    // DEBUG: Show which emails we're looking for
+    console.log('🔍 Looking for these emails:', employeeEmails)
+    employeeEmails.forEach((email: string) => {
+      const found = allUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase())
+      if (found) {
+        console.log(`  ✅ Found: ${email} → userId ${found.id}`)
+      } else {
+        console.log(`  ❌ NOT FOUND: ${email}`)
+      }
+    })
 
     if (relevantUserIds.length === 0) {
       return NextResponse.json({
