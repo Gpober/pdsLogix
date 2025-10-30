@@ -120,13 +120,9 @@ export async function POST(request: NextRequest) {
     // STEP 3: Get form submissions for the period
     console.log('\n📊 STEP 3: Getting form submissions...')
     
-    // Convert dates to ISO format for Connecteam API
-    const startDate = new Date(periodStart + 'T00:00:00')
-    const endDate = new Date(periodEnd + 'T23:59:59')
+    const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.id}/form-submissions?fromDate=${periodStart}&toDate=${periodEnd}`
     
-    const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.id}/form-submissions?fromDate=${startDate.toISOString()}&toDate=${endDate.toISOString()}`
-    
-    console.log(`📅 Fetching submissions from ${startDate.toISOString()} to ${endDate.toISOString()}`)
+    console.log(`📅 Fetching submissions from ${periodStart} to ${periodEnd}`)
 
     const submissionsResponse = await fetch(submissionsUrl, {
       method: 'GET',
