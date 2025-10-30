@@ -315,93 +315,138 @@ export default function PayrollPage() {
   };
 
   const loadAllLocations = async () => {
-  const { data: locations } = await supabase.from('locations').select('id, name');
-  
-  const getNextFriday = () => {
-    const today = new Date();
-    const dayOfWeek = today.getDay();
-    const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
-    const nextFriday = new Date(today);
-    nextFriday.setDate(today.getDate() + daysUntilFriday);
-    return `${nextFriday.getFullYear()}-${String(nextFriday.getMonth() + 1).padStart(2, '0')}-${String(nextFriday.getDate()).padStart(2, '0')}`;
+    const { data: locations } = await supabase.from('locations').select('id, name');
+    
+    const getNextFriday = () => {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+      const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+      const nextFriday = new Date(today);
+      nextFriday.setDate(today.getDate() + daysUntilFriday);
+      return `${nextFriday.getFullYear()}-${String(nextFriday.getMonth() + 1).padStart(2, '0')}-${String(nextFriday.getDate()).padStart(2, '0')}`;
+    };
+
+    const { data: submissions } = await supabase
+      .from('payroll_submissions')
+      .select('*')
+      .eq('pay_date', getNextFriday());
+    
+    const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
+
+    const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
+      const submission = submissionsMap.get(location.id);
+      if (submission) {
+        // ✅ Treat rejected as not_submitted
+        const status = submission.status === 'rejected' ? 'not_submitted' : submission.status;
+        
+        return {
+          location_id: location.id,
+          location_name: location.name,
+          submission_id: submission.id,
+          status: status as 'approved' | 'pending' | 'not_submitted',
+          total_amount: submission.total_amount,
+          employee_count: submission.employee_count,
+          pay_date: submission.pay_date,
+          payroll_group: submission.payroll_group as 'A' | 'B',
+          submitted_at: submission.submitted_at
+        };
+      }
+      return { 
+        location_id: location.id, 
+        location_name: location.name, 
+        status: 'not_submitted' as const 
+      };
+    });
+
+    setAllLocations(locationStatuses);
   };
 
-  // ✅ Get submissions for next Friday - all statuses
-  const { data: submissions } = await supabase
-    .from('payroll_submissions')
-    .select('*')
-    .eq('pay_date', getNextFriday());
-  
-  const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
+  const handleReviewSubmission = async (submission: PendingSubmission) => {
+    setSelectedSubmission(submission);
+    
+    const { data: details } = await supabase
+      .from('payroll_submission_details')
+      .select('*')
+      .eq('submission_id', submission.id);
+    
+    const employeeIds = details?.map(d => d.employee_id) || [];
+    const { data: employees } = await supabase
+      .from('employees')
+      .select('id, first_name, last_name')
+      .in('id', employeeIds);
+    
+    const employeesMap = new Map(employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`]));
+    const detailsWithNames = (details || []).map(d => ({
+      ...d,
+      employee_name: employeesMap.get(d.employee_id) || 'Unknown'
+    }));
+    
+    setSubmissionDetails(detailsWithNames);
+    setShowApprovalModal(true);
+  };
 
-  const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
-    const submission = submissionsMap.get(location.id);
-    if (submission) {
-      // ✅ Only show approved/pending, treat rejected as not_submitted
-      const status = submission.status === 'rejected' ? 'not_submitted' : submission.status;
+  const handleApprove = async () => {
+    if (!selectedSubmission || !userId) return;
+    setIsApproving(true);
+    
+    try {
+      // Insert payments to payments table
+      const paymentsToInsert = submissionDetails.map(detail => ({
+        first_name: detail.employee_name.split(' ')[0],
+        last_name: detail.employee_name.split(' ').slice(1).join(' '),
+        department: selectedSubmission.location_name,
+        date: selectedSubmission.pay_date,
+        total_amount: detail.amount,
+        payment_method: 'Payroll'
+      }));
       
-      return {
-        location_id: location.id,
-        location_name: location.name,
-        submission_id: submission.id,
-        status: status as 'approved' | 'pending' | 'not_submitted',
-        total_amount: submission.total_amount,
-        employee_count: submission.employee_count,
-        pay_date: submission.pay_date,
-        payroll_group: submission.payroll_group as 'A' | 'B',
-        submitted_at: submission.submitted_at
-      };
+      await supabase.from('payments').insert(paymentsToInsert);
+      
+      // Update submission status to approved
+      await supabase
+        .from('payroll_submissions')
+        .update({
+          status: 'approved',
+          approved_by: userId,
+          approved_at: new Date().toISOString()
+        })
+        .eq('id', selectedSubmission.id);
+      
+      showNotification('Payroll approved successfully!', 'success');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      loadPendingSubmissions();
+      loadAllLocations();
+      fetchPayments();
+    } catch (error) {
+      console.error('Approval error:', error);
+      showNotification('Failed to approve payroll', 'error');
+    } finally {
+      setIsApproving(false);
     }
-    return { 
-      location_id: location.id, 
-      location_name: location.name, 
-      status: 'not_submitted' as const 
-    };
-  });
+  };
 
-  setAllLocations(locationStatuses);
-};
-
-// 2. handleReject is already correct, but make sure notification is clear
-const handleReject = async () => {
-  if (!selectedSubmission || !userId) return;
-  setIsApproving(true);
-  try {
-    // Update status to rejected
-    await supabase
-      .from('payroll_submissions')
-      .update({ 
-        status: 'rejected', 
-        approved_by: userId, 
-        approved_at: new Date().toISOString() 
-      })
-      .eq('id', selectedSubmission.id);
-    
-    showNotification('Payroll rejected - location can resubmit', 'warning');
-    setShowApprovalModal(false);
-    setSelectedSubmission(null);
-    
-    // Reload both lists
-    loadPendingSubmissions();
-    loadAllLocations();
-  } catch (error) {
-    console.error('Rejection error:', error);
-    showNotification('Failed to reject payroll', 'error');
-  } finally {
-    setIsApproving(false);
-  }
-};
   const handleReject = async () => {
     if (!selectedSubmission || !userId) return;
     setIsApproving(true);
+    
     try {
-      await supabase.from('payroll_submissions').update({ status: 'rejected', approved_by: userId, approved_at: new Date().toISOString() }).eq('id', selectedSubmission.id);
-      showNotification('Payroll rejected', 'warning');
+      await supabase
+        .from('payroll_submissions')
+        .update({ 
+          status: 'rejected', 
+          approved_by: userId, 
+          approved_at: new Date().toISOString() 
+        })
+        .eq('id', selectedSubmission.id);
+      
+      showNotification('Payroll rejected - location can resubmit', 'warning');
       setShowApprovalModal(false);
       setSelectedSubmission(null);
       loadPendingSubmissions();
       loadAllLocations();
     } catch (error) {
+      console.error('Rejection error:', error);
       showNotification('Failed to reject payroll', 'error');
     } finally {
       setIsApproving(false);
@@ -409,7 +454,12 @@ const handleReject = async () => {
   };
 
   const fetchPayments = async () => {
-    const { data } = await supabase.from("payments").select("id, last_name, first_name, department, payment_method, date, total_amount").order("date", { ascending: false }).limit(5000);
+    const { data } = await supabase
+      .from("payments")
+      .select("id, last_name, first_name, department, payment_method, date, total_amount")
+      .order("date", { ascending: false })
+      .limit(5000);
+    
     setPayments((data ?? []) as Payment[]);
   };
 
@@ -698,7 +748,7 @@ const handleReject = async () => {
                         <h4 className="font-bold text-lg" style={{ color: BRAND_COLORS.accent }}>{loc.location_name}</h4>
                         <span className="px-3 py-1 rounded-full text-xs font-bold text-white flex items-center gap-1" style={{ backgroundColor: color }}>
                           <StatusIcon size={12} />
-                          {loc.status.toUpperCase()}
+                          {loc.status.toUpperCase().replace('_', ' ')}
                         </span>
                       </div>
                       {loc.total_amount && (
