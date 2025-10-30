@@ -27,6 +27,16 @@ import { useAuth } from '@/lib/hooks/useAuth'
 import { handlePkceCallbackFromUrl } from '@/lib/supabase/pkce-callback-handler'
 import { createClient } from '@/lib/supabase/client'
 
+// 🚨 CAPTURE HASH IMMEDIATELY
+let CAPTURED_HASH = ''
+let HASH_CAPTURED = false
+
+if (typeof window !== 'undefined' && !HASH_CAPTURED) {
+  CAPTURED_HASH = window.location.hash.substring(1)
+  HASH_CAPTURED = true
+  console.log('🔒 CAPTURED HASH ON LOAD:', CAPTURED_HASH.substring(0, 100))
+}
+
 const inter = Inter({ subsets: ["latin"] })
 
 const BRAND_COLORS = {
@@ -77,11 +87,11 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
-// ✅ Component that handles session transfer BEFORE anything else
 function SessionTransferHandler({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
   const [debugLog, setDebugLog] = useState<string[]>([])
   const pathname = usePathname()
+  const router = useRouter()
   const supabase = createClient()
 
   const log = (msg: string) => {
@@ -91,88 +101,86 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     async function handleSessionTransfer() {
-      log(`Starting session transfer handler`)
+      log(`=== SESSION TRANSFER START ===`)
       log(`Pathname: ${pathname}`)
-      log(`Full URL: ${window.location.href}`)
       
-      // Skip if on login page
-      if (pathname === '/login') {
-        log('Skipping - on login page')
+      // Check if we just transferred
+      const justTransferred = sessionStorage.getItem('session_transferred')
+      log(`Just transferred flag: ${justTransferred || 'null'}`)
+      
+      if (justTransferred) {
+        log('✅ Previously transferred - clearing flag and proceeding')
+        sessionStorage.removeItem('session_transferred')
+        CAPTURED_HASH = ''
         setReady(true)
         return
       }
 
       try {
-        // Check for session in URL hash
-        const hash = window.location.hash.substring(1)
-        log(`URL hash length: ${hash.length}`)
-        log(`URL hash (first 100 chars): ${hash.substring(0, 100)}`)
+        log(`Captured hash length: ${CAPTURED_HASH.length}`)
+        log(`Hash preview: ${CAPTURED_HASH.substring(0, 150)}...`)
         
-        if (!hash) {
-          log('No hash in URL - proceeding normally')
+        if (!CAPTURED_HASH) {
+          log('⚠️ No hash - proceeding normally')
           setReady(true)
           return
         }
 
-        const params = new URLSearchParams(hash)
+        const params = new URLSearchParams(CAPTURED_HASH)
         const accessToken = params.get('access_token')
         const refreshToken = params.get('refresh_token')
         const isSuperAdmin = params.get('super_admin') === 'true'
 
-        log(`Has access_token: ${!!accessToken}`)
-        log(`Access token length: ${accessToken?.length || 0}`)
-        log(`Has refresh_token: ${!!refreshToken}`)
-        log(`Refresh token length: ${refreshToken?.length || 0}`)
-        log(`Is super_admin flag: ${isSuperAdmin}`)
+        log(`Access token: ${accessToken ? `YES (${accessToken.length} chars)` : 'NO'}`)
+        log(`Refresh token: ${refreshToken ? `YES (${refreshToken.length} chars)` : 'NO'}`)
+        log(`Super admin: ${isSuperAdmin}`)
 
         if (accessToken && refreshToken) {
-          log('✅ Found tokens in hash - attempting to set session')
+          log('🚀 Setting session...')
           
-          // Set the session SYNCHRONOUSLY before anything else loads
           const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           })
 
           if (error) {
-            log(`❌ Failed to set session: ${error.message}`)
-            console.error('Session set error:', error)
+            log(`❌ setSession FAILED: ${error.message}`)
+            console.error('Full error:', error)
             setReady(true)
             return
           }
 
-          log(`✅ Session set successfully!`)
-          log(`User email: ${data.user?.email}`)
-          log(`User ID: ${data.user?.id}`)
+          log(`✅ Session set! User: ${data.user?.email}`)
 
-          // Verify the session was actually saved
+          // Verify
           const { data: checkData } = await supabase.auth.getSession()
-          log(`Session verification: ${!!checkData.session}`)
-          log(`Verified email: ${checkData.session?.user?.email}`)
+          log(`Session verified: ${checkData.session ? 'YES' : 'NO'}`)
 
-          // Clean up URL
-          log('Cleaning URL hash...')
+          // Clean URL
           window.history.replaceState({}, document.title, window.location.pathname)
-          log('URL hash cleaned')
+          log('URL cleaned')
 
-          // Verify access
           const currentSubdomain = window.location.hostname.split('.')[0]
-          log(`Current subdomain: ${currentSubdomain}`)
+          log(`Subdomain: ${currentSubdomain}`)
           
           if (isSuperAdmin) {
-            log('✅ Super admin detected - granting access')
+            log('👑 SUPER ADMIN - GRANTED')
             sessionStorage.setItem('session_transferred', 'true')
             sessionStorage.setItem('super_admin_access', 'true')
-            log('Reloading page in 1 second...')
-            setTimeout(() => {
+            
+            // If on /login, redirect to dashboard
+            if (pathname === '/login') {
+              log('Redirecting from /login to /')
+              window.location.href = '/'
+            } else {
+              log('Reloading page...')
               window.location.reload()
-            }, 1000)
+            }
             return
           }
 
-          log('Regular user - checking org access...')
+          log('Checking user org...')
           
-          // Regular user - check org access
           const { data: userData, error: userError } = await supabase
             .from('users')
             .select('organization_id, organizations(subdomain)')
@@ -180,56 +188,47 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
             .single()
 
           if (userError) {
-            log(`❌ Error fetching user data: ${userError.message}`)
+            log(`❌ User data error: ${userError.message}`)
             setReady(true)
             return
           }
 
           const userSubdomain = (userData as any)?.organizations?.subdomain
-          log(`User's subdomain: ${userSubdomain}`)
+          log(`User subdomain: ${userSubdomain}`)
 
           if (userSubdomain === currentSubdomain) {
-            log('✅ User belongs to this org')
+            log('✅ User belongs here')
             sessionStorage.setItem('session_transferred', 'true')
-            log('Reloading page in 1 second...')
-            setTimeout(() => {
+            
+            if (pathname === '/login') {
+              log('Redirecting from /login to /')
+              window.location.href = '/'
+            } else {
+              log('Reloading...')
               window.location.reload()
-            }, 1000)
+            }
             return
           }
 
-          // No access
-          log('❌ User does not belong to this org')
+          log('❌ Wrong org')
           alert('You do not have access to this organization')
           await supabase.auth.signOut()
           window.location.href = 'https://iamcfo.com/login'
           return
         }
 
-        log('No valid tokens in hash - proceeding normally')
+        log('⚠️ No tokens in hash')
         setReady(true)
       } catch (error) {
         log(`❌ Exception: ${error}`)
-        console.error('Session transfer error:', error)
+        console.error('Exception:', error)
         setReady(true)
       }
     }
 
-    // Check if we just transferred (prevents infinite reload)
-    const justTransferred = sessionStorage.getItem('session_transferred')
-    log(`Just transferred flag: ${justTransferred}`)
-    
-    if (justTransferred) {
-      log('Session was just transferred - clearing flag and proceeding')
-      sessionStorage.removeItem('session_transferred')
-      setReady(true)
-      return
-    }
-
     handleSessionTransfer()
-  }, [pathname, supabase])
+  }, [pathname, router, supabase])
 
-  // Show debug log on screen
   const showDebug = debugLog.length > 0
 
   if (!ready) {
@@ -237,17 +236,18 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Processing authentication...</p>
+          <p className="mt-4 text-gray-600 font-semibold">Authenticating...</p>
         </div>
         
         {showDebug && (
-          <div className="fixed top-4 right-4 bg-black text-white p-4 rounded-lg max-w-2xl max-h-[80vh] overflow-auto text-xs font-mono shadow-2xl z-50">
-            <div className="font-bold mb-2 text-yellow-300">🔍 DEBUG LOG (Session Transfer)</div>
+          <div className="fixed top-4 left-4 right-4 bg-black text-white p-4 rounded-lg max-h-[90vh] overflow-auto text-xs font-mono shadow-2xl z-50">
+            <div className="font-bold mb-2 text-yellow-300 text-lg">🔍 DEBUG LOG</div>
             <div className="space-y-1">
               {debugLog.map((log, i) => (
                 <div key={i} className={
-                  log.includes('❌') ? 'text-red-400' :
-                  log.includes('✅') ? 'text-green-400' :
+                  log.includes('❌') ? 'text-red-400 font-bold' :
+                  log.includes('✅') || log.includes('SUCCESS') ? 'text-green-400 font-bold' :
+                  log.includes('👑') ? 'text-purple-400 font-bold' :
                   'text-gray-300'
                 }>{log}</div>
               ))}
@@ -258,35 +258,10 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
     )
   }
 
-  return (
-    <>
-      {children}
-      {showDebug && (
-        <div className="fixed bottom-4 right-4 bg-black text-white p-4 rounded-lg max-w-2xl max-h-96 overflow-auto text-xs font-mono shadow-2xl z-50">
-          <div className="font-bold mb-2 text-yellow-300">🔍 DEBUG LOG (After Transfer)</div>
-          <div className="space-y-1">
-            {debugLog.map((log, i) => (
-              <div key={i} className={
-                log.includes('❌') ? 'text-red-400' :
-                log.includes('✅') ? 'text-green-400' :
-                'text-gray-300'
-              }>{log}</div>
-            ))}
-          </div>
-          <button 
-            onClick={() => setDebugLog([])}
-            className="mt-2 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs"
-          >
-            Clear Log
-          </button>
-        </div>
-      )}
-    </>
-  )
+  return <>{children}</>
 }
 
 export default function ClientRootLayout({ children }: { children: React.ReactNode }) {
-  // ✅ Handle PKCE callback
   handlePkceCallbackFromUrl()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -346,15 +321,9 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
           <div className="min-h-screen bg-gray-50">
             <div className="hidden lg:block fixed inset-y-0 left-0 w-2 z-40" onMouseEnter={() => setSidebarVisible(true)} />
 
-            {/* Sidebar code unchanged... */}
-            <div className={`flex flex-col flex-1 transition-all duration-300 ${sidebarVisible ? "lg:pl-64" : ""}`}>
-              <div className="sticky top-0 z-10 bg-white pl-1 pt-1 sm:pl-3 sm:pt-3 lg:hidden">
-                <button type="button" className="-ml-0.5 -mt-0.5 inline-flex h-12 w-12 items-center justify-center rounded-md text-gray-500 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-inset" onClick={() => setSidebarOpen(true)}>
-                  <Menu className="h-6 w-6" />
-                </button>
-              </div>
-              <main className="flex-1">{children}</main>
-            </div>
+            {/* Rest of your sidebar code... */}
+            
+            <main className="flex-1">{children}</main>
           </div>
         </SessionTransferHandler>
       </body>
