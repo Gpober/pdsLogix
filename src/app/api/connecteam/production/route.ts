@@ -7,6 +7,14 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE!
 
+// Map location names to Connecteam form IDs
+const LOCATION_TO_FORM_ID: Record<string, number> = {
+  'Manheim Dallas': 4875728,
+  'Enterprise Alabama': 3837714,
+  'Enterprise Atlanta': 1856326,
+  // Add other locations as needed
+}
+
 export async function POST(request: NextRequest) {
   try {
     console.log('🔵 Production API (Supabase) called')
@@ -18,6 +26,18 @@ export async function POST(request: NextRequest) {
     console.log('📍 Location:', locationName)
     console.log('📧 Employee emails:', employeeEmails)
 
+    // Get the form ID for this location
+    const formId = LOCATION_TO_FORM_ID[locationName]
+    
+    if (!formId) {
+      console.error('❌ Unknown location:', locationName)
+      return NextResponse.json({ 
+        error: `Unknown location: ${locationName}. Available locations: ${Object.keys(LOCATION_TO_FORM_ID).join(', ')}` 
+      }, { status: 400 })
+    }
+
+    console.log(`📋 Using form_id: ${formId}`)
+
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     // Convert ISO dates to Unix timestamps (seconds)
@@ -26,11 +46,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`📊 Querying submissions from ${startTimestamp} to ${endTimestamp}`)
 
-    // Query Supabase for submissions in this period
+    // Query Supabase for submissions in this period by form_id
     const { data: submissions, error } = await supabase
       .from('connecteam_form_submissions')
       .select('*')
-      .eq('location_name', locationName)
+      .eq('form_id', formId)  // Query by form_id instead of location_name
       .gte('submission_timestamp', startTimestamp)
       .lte('submission_timestamp', endTimestamp)
       .is('deleted_at', null) // Exclude soft-deleted submissions
@@ -76,6 +96,7 @@ export async function POST(request: NextRequest) {
       success: true,
       units: unitsMap,
       locationName,
+      formId,
       period: { start: periodStart, end: periodEnd },
       totalSubmissions: submissions.length
     })
