@@ -40,27 +40,23 @@ export async function POST(request: NextRequest) {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    // Convert ISO dates to Unix timestamps (seconds)
-    const startTimestamp = Math.floor(new Date(periodStart).getTime() / 1000)
-    const endTimestamp = Math.floor(new Date(periodEnd).getTime() / 1000)
+    console.log(`📊 Querying submissions for form ${formId} from ${periodStart} to ${periodEnd}...`)
 
-    console.log(`📊 Querying submissions from ${startTimestamp} to ${endTimestamp}`)
-
-    // Query Supabase for submissions in this period by form_id
+    // Query Supabase by date (much cleaner than timestamp conversion!)
     const { data: submissions, error } = await supabase
       .from('connecteam_form_submissions')
       .select('*')
-      .eq('form_id', formId)  // Query by form_id instead of location_name
-.gte('submission_date', periodStart)
-.lte('submission_date', periodEnd)
-      .is('deleted_at', null) // Exclude soft-deleted submissions
+      .eq('form_id', formId)
+      .gte('submission_date', periodStart)
+      .lte('submission_date', periodEnd)
+      .is('deleted_at', null)
 
     if (error) {
       console.error('❌ Supabase query error:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    console.log(`✅ Found ${submissions.length} total submissions`)
+    console.log(`✅ Found ${submissions.length} submissions in date range`)
 
     // Count submissions per employee
     const unitsMap: Record<string, number> = {}
@@ -70,27 +66,44 @@ export async function POST(request: NextRequest) {
       unitsMap[email] = 0
     })
 
+    // Track submissions we can't match
+    let nullEmailCount = 0
+    let unmatchedEmailCount = 0
+    const unmatchedEmails = new Set<string>()
+
     // Count by email (case-insensitive)
     submissions.forEach((submission: any) => {
       const userEmail = submission.user_email?.toLowerCase()
       
-      if (userEmail) {
-        // Find matching employee email (case-insensitive)
-        const matchingEmail = employeeEmails.find(
-          (e: string) => e.toLowerCase() === userEmail
-        )
-        
-        if (matchingEmail) {
-          unitsMap[matchingEmail] = (unitsMap[matchingEmail] || 0) + 1
-        }
+      if (!userEmail) {
+        nullEmailCount++
+        return
+      }
+      
+      // Find matching employee email (case-insensitive)
+      const matchingEmail = employeeEmails.find(
+        (e: string) => e.toLowerCase() === userEmail
+      )
+      
+      if (matchingEmail) {
+        unitsMap[matchingEmail] = (unitsMap[matchingEmail] || 0) + 1
+      } else {
+        unmatchedEmailCount++
+        unmatchedEmails.add(userEmail)
       }
     })
 
-    // Log results
+    // Log detailed results
     console.log('\n📊 Production counts:')
     Object.entries(unitsMap).forEach(([email, count]) => {
       console.log(`  ${email}: ${count} units`)
     })
+    
+    console.log(`\n⚠️ Submissions with null email: ${nullEmailCount}`)
+    console.log(`⚠️ Submissions with unmatched email: ${unmatchedEmailCount}`)
+    if (unmatchedEmails.size > 0) {
+      console.log(`📧 Unmatched emails: ${Array.from(unmatchedEmails).join(', ')}`)
+    }
 
     return NextResponse.json({
       success: true,
@@ -98,7 +111,9 @@ export async function POST(request: NextRequest) {
       locationName,
       formId,
       period: { start: periodStart, end: periodEnd },
-      totalSubmissions: submissions.length
+      totalSubmissions: submissions.length,
+      nullEmailCount,
+      unmatchedEmailCount
     })
 
   } catch (error: any) {
