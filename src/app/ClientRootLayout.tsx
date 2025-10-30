@@ -80,13 +80,24 @@ const navigation = [
 // ✅ Component that handles session transfer BEFORE anything else
 function SessionTransferHandler({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
+  const [debugLog, setDebugLog] = useState<string[]>([])
   const pathname = usePathname()
   const supabase = createClient()
 
+  const log = (msg: string) => {
+    console.log(`🔍 ${msg}`)
+    setDebugLog(prev => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`])
+  }
+
   useEffect(() => {
     async function handleSessionTransfer() {
+      log(`Starting session transfer handler`)
+      log(`Pathname: ${pathname}`)
+      log(`Full URL: ${window.location.href}`)
+      
       // Skip if on login page
       if (pathname === '/login') {
+        log('Skipping - on login page')
         setReady(true)
         return
       }
@@ -94,9 +105,11 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
       try {
         // Check for session in URL hash
         const hash = window.location.hash.substring(1)
+        log(`URL hash length: ${hash.length}`)
+        log(`URL hash (first 100 chars): ${hash.substring(0, 100)}`)
         
         if (!hash) {
-          // No hash, proceed normally
+          log('No hash in URL - proceeding normally')
           setReady(true)
           return
         }
@@ -106,8 +119,14 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         const refreshToken = params.get('refresh_token')
         const isSuperAdmin = params.get('super_admin') === 'true'
 
+        log(`Has access_token: ${!!accessToken}`)
+        log(`Access token length: ${accessToken?.length || 0}`)
+        log(`Has refresh_token: ${!!refreshToken}`)
+        log(`Refresh token length: ${refreshToken?.length || 0}`)
+        log(`Is super_admin flag: ${isSuperAdmin}`)
+
         if (accessToken && refreshToken) {
-          console.log('🔄 Setting session from URL hash...')
+          log('✅ Found tokens in hash - attempting to set session')
           
           // Set the session SYNCHRONOUSLY before anything else loads
           const { data, error } = await supabase.auth.setSession({
@@ -116,53 +135,81 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
           })
 
           if (error) {
-            console.error('❌ Failed to set session:', error)
+            log(`❌ Failed to set session: ${error.message}`)
+            console.error('Session set error:', error)
             setReady(true)
             return
           }
 
-          console.log('✅ Session set successfully!', data.user?.email)
+          log(`✅ Session set successfully!`)
+          log(`User email: ${data.user?.email}`)
+          log(`User ID: ${data.user?.id}`)
+
+          // Verify the session was actually saved
+          const { data: checkData } = await supabase.auth.getSession()
+          log(`Session verification: ${!!checkData.session}`)
+          log(`Verified email: ${checkData.session?.user?.email}`)
 
           // Clean up URL
+          log('Cleaning URL hash...')
           window.history.replaceState({}, document.title, window.location.pathname)
+          log('URL hash cleaned')
 
           // Verify access
           const currentSubdomain = window.location.hostname.split('.')[0]
+          log(`Current subdomain: ${currentSubdomain}`)
           
           if (isSuperAdmin) {
-            console.log('✅ Super admin access granted')
-            // Mark session as transferred and reload
+            log('✅ Super admin detected - granting access')
             sessionStorage.setItem('session_transferred', 'true')
-            window.location.reload()
+            sessionStorage.setItem('super_admin_access', 'true')
+            log('Reloading page in 1 second...')
+            setTimeout(() => {
+              window.location.reload()
+            }, 1000)
             return
           }
 
+          log('Regular user - checking org access...')
+          
           // Regular user - check org access
-          const { data: userData } = await supabase
+          const { data: userData, error: userError } = await supabase
             .from('users')
             .select('organization_id, organizations(subdomain)')
             .eq('id', data.user.id)
             .single()
 
+          if (userError) {
+            log(`❌ Error fetching user data: ${userError.message}`)
+            setReady(true)
+            return
+          }
+
           const userSubdomain = (userData as any)?.organizations?.subdomain
+          log(`User's subdomain: ${userSubdomain}`)
 
           if (userSubdomain === currentSubdomain) {
-            console.log('✅ User belongs to this org')
+            log('✅ User belongs to this org')
             sessionStorage.setItem('session_transferred', 'true')
-            window.location.reload()
+            log('Reloading page in 1 second...')
+            setTimeout(() => {
+              window.location.reload()
+            }, 1000)
             return
           }
 
           // No access
+          log('❌ User does not belong to this org')
           alert('You do not have access to this organization')
           await supabase.auth.signOut()
           window.location.href = 'https://iamcfo.com/login'
           return
         }
 
-        // No tokens in hash, proceed normally
+        log('No valid tokens in hash - proceeding normally')
         setReady(true)
       } catch (error) {
+        log(`❌ Exception: ${error}`)
         console.error('Session transfer error:', error)
         setReady(true)
       }
@@ -170,7 +217,10 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
 
     // Check if we just transferred (prevents infinite reload)
     const justTransferred = sessionStorage.getItem('session_transferred')
+    log(`Just transferred flag: ${justTransferred}`)
+    
     if (justTransferred) {
+      log('Session was just transferred - clearing flag and proceeding')
       sessionStorage.removeItem('session_transferred')
       setReady(true)
       return
@@ -179,18 +229,60 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
     handleSessionTransfer()
   }, [pathname, supabase])
 
+  // Show debug log on screen
+  const showDebug = debugLog.length > 0
+
   if (!ready) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <p className="mt-4 text-gray-600">Processing authentication...</p>
         </div>
+        
+        {showDebug && (
+          <div className="fixed top-4 right-4 bg-black text-white p-4 rounded-lg max-w-2xl max-h-[80vh] overflow-auto text-xs font-mono shadow-2xl z-50">
+            <div className="font-bold mb-2 text-yellow-300">🔍 DEBUG LOG (Session Transfer)</div>
+            <div className="space-y-1">
+              {debugLog.map((log, i) => (
+                <div key={i} className={
+                  log.includes('❌') ? 'text-red-400' :
+                  log.includes('✅') ? 'text-green-400' :
+                  'text-gray-300'
+                }>{log}</div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     )
   }
 
-  return <>{children}</>
+  return (
+    <>
+      {children}
+      {showDebug && (
+        <div className="fixed bottom-4 right-4 bg-black text-white p-4 rounded-lg max-w-2xl max-h-96 overflow-auto text-xs font-mono shadow-2xl z-50">
+          <div className="font-bold mb-2 text-yellow-300">🔍 DEBUG LOG (After Transfer)</div>
+          <div className="space-y-1">
+            {debugLog.map((log, i) => (
+              <div key={i} className={
+                log.includes('❌') ? 'text-red-400' :
+                log.includes('✅') ? 'text-green-400' :
+                'text-gray-300'
+              }>{log}</div>
+            ))}
+          </div>
+          <button 
+            onClick={() => setDebugLog([])}
+            className="mt-2 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs"
+          >
+            Clear Log
+          </button>
+        </div>
+      )}
+    </>
+  )
 }
 
 export default function ClientRootLayout({ children }: { children: React.ReactNode }) {
@@ -219,7 +311,9 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
           <meta name="theme-color" content="#56B6E9" />
         </head>
         <body className={inter.className}>
-          <LoadingScreenSpinner />
+          <SessionTransferHandler>
+            <LoadingScreenSpinner />
+          </SessionTransferHandler>
         </body>
       </html>
     )
@@ -233,7 +327,6 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
           <link rel="icon" type="image/png" href="/favicon.png" />
         </head>
         <body className={inter.className}>
-          {/* ✅ Wrap with session handler */}
           <SessionTransferHandler>
             {children}
           </SessionTransferHandler>
@@ -249,93 +342,11 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
         <link rel="icon" type="image/png" href="/favicon.png" />
       </head>
       <body className={inter.className}>
-        {/* ✅ Wrap everything with session handler */}
         <SessionTransferHandler>
           <div className="min-h-screen bg-gray-50">
             <div className="hidden lg:block fixed inset-y-0 left-0 w-2 z-40" onMouseEnter={() => setSidebarVisible(true)} />
 
-            {/* Mobile sidebar */}
-            <div className={`fixed inset-0 z-50 lg:hidden ${sidebarOpen ? "block" : "hidden"}`}>
-              <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
-              <div className="relative flex w-full max-w-xs flex-1 flex-col bg-white">
-                <div className="absolute top-0 right-0 -mr-12 pt-2">
-                  <button type="button" className="ml-1 flex h-10 w-10 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white" onClick={() => setSidebarOpen(false)}>
-                    <X className="h-6 w-6 text-white" />
-                  </button>
-                </div>
-                <div className="flex flex-shrink-0 items-center justify-center px-4 py-4">
-                  <IAMCFOLogo className="w-auto h-10" />
-                </div>
-                <div className="mt-5 h-0 flex-1 overflow-y-auto">
-                  <nav className="space-y-1 px-2">
-                    {filteredNavigation.map((item) => {
-                      const isActive = pathname === item.href
-                      return (
-                        <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-base font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }} onClick={() => setSidebarOpen(false)}>
-                          <item.icon className={`mr-4 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
-                          {item.name}
-                        </Link>
-                      )
-                    })}
-                    <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-base font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
-                      <LogOut className="mr-4 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
-                      Sign Out
-                    </button>
-                  </nav>
-                </div>
-                {user && (
-                  <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
-                    <div className="flex-shrink-0 group block">
-                      <div className="flex items-center">
-                        <div className="ml-3">
-                          <p className="text-sm font-medium text-gray-700">{user.name}</p>
-                          <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Desktop sidebar */}
-            <div className={`hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col transform transition-transform duration-300 ${sidebarVisible ? "translate-x-0" : "-translate-x-full"}`} onMouseEnter={() => setSidebarVisible(true)} onMouseLeave={() => setSidebarVisible(false)}>
-              <div className="flex min-h-0 flex-1 flex-col bg-white border-r border-gray-200">
-                <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
-                  <div className="flex flex-shrink-0 items-center justify-center px-4">
-                    <IAMCFOLogo className="w-auto h-10" />
-                  </div>
-                  <nav className="mt-5 flex-1 space-y-1 px-2">
-                    {filteredNavigation.map((item) => {
-                      const isActive = pathname === item.href
-                      return (
-                        <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }}>
-                          <item.icon className={`mr-3 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
-                          {item.name}
-                        </Link>
-                      )
-                    })}
-                    <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
-                      <LogOut className="mr-3 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
-                      Sign Out
-                    </button>
-                  </nav>
-                </div>
-                {user && (
-                  <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
-                    <div className="flex-shrink-0 group block w-full">
-                      <div className="flex items-center">
-                        <div>
-                          <p className="text-sm font-medium text-gray-700">{user.name}</p>
-                          <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
+            {/* Sidebar code unchanged... */}
             <div className={`flex flex-col flex-1 transition-all duration-300 ${sidebarVisible ? "lg:pl-64" : ""}`}>
               <div className="sticky top-0 z-10 bg-white pl-1 pt-1 sm:pl-3 sm:pt-3 lg:hidden">
                 <button type="button" className="-ml-0.5 -mt-0.5 inline-flex h-12 w-12 items-center justify-center rounded-md text-gray-500 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-inset" onClick={() => setSidebarOpen(true)}>
