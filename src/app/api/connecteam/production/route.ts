@@ -51,8 +51,8 @@ export async function POST(request: NextRequest) {
       .from('connecteam_form_submissions')
       .select('*')
       .eq('form_id', formId)  // Query by form_id instead of location_name
-      .gte('submission_timestamp', startTimestamp)
-      .lte('submission_timestamp', endTimestamp)
+.gte('submission_date', periodStart)
+.lte('submission_date', periodEnd)
       .is('deleted_at', null) // Exclude soft-deleted submissions
 
     if (error) {
