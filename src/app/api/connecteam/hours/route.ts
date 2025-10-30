@@ -1,5 +1,5 @@
 // app/api/connecteam/hours/route.ts
-// Try punch-clock endpoint since the IDs are from punch-clock docs
+// Using timeclock (one word, no hyphen or dash)
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
@@ -13,27 +13,27 @@ export async function POST(request: NextRequest) {
     console.log('👥 Payroll Group:', payrollGroup)
 
     const connecteamApiKey = process.env.CONNECTEAM_API_KEY
-    const punchClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A
-    const punchClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B
+    const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A
+    const timeClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B
 
     if (!connecteamApiKey) {
       return NextResponse.json({ error: 'API key not configured' }, { status: 500 })
     }
 
-    const punchClockId = payrollGroup === 'A' ? punchClockIdA : punchClockIdB
+    const timeClockId = payrollGroup === 'A' ? timeClockIdA : timeClockIdB
     
-    if (!punchClockId) {
-      return NextResponse.json({ error: 'Punch clock ID not configured' }, { status: 500 })
+    if (!timeClockId) {
+      return NextResponse.json({ error: 'Time clock ID not configured' }, { status: 500 })
     }
 
-    console.log(`🔑 Using punch clock ID ${punchClockId} for payroll group ${payrollGroup}`)
+    console.log(`🔑 Using time clock ID ${timeClockId} for payroll group ${payrollGroup}`)
 
-    // Try multiple endpoint variations for punch-clock
+    // Try multiple timeclock endpoint variations
     const urls = [
-      `https://api.connecteam.com/punch-clock/v1/punch-clocks/${punchClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
-      `https://api.connecteam.com/punch-clock/v1/punchclocks/${punchClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
-      `https://api.connecteam.com/punchclock/v1/${punchClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
-      `https://api.connecteam.com/v1/punch-clock/${punchClockId}/entries?startDate=${periodStart}&endDate=${periodEnd}`,
+      `https://api.connecteam.com/timeclock/v1/timeclocks/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
+      `https://api.connecteam.com/timeclock/v1/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
+      `https://api.connecteam.com/v1/timeclock/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
+      `https://api.connecteam.com/timeclock/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
     ]
 
     let successResponse = null
@@ -50,28 +50,43 @@ export async function POST(request: NextRequest) {
       })
 
       console.log('📡 Status:', connecteamResponse.status)
+      const contentType = connecteamResponse.headers.get('content-type') || ''
+      console.log('📡 Content-Type:', contentType)
 
       const responseText = await connecteamResponse.text()
       console.log('📄 Response preview:', responseText.substring(0, 300))
 
-      if (connecteamResponse.ok && !responseText.includes('<!DOCTYPE')) {
+      // Check if it's JSON (not HTML)
+      const isJson = contentType.includes('application/json') || 
+                     (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))
+
+      if (connecteamResponse.ok && isJson) {
+        console.log('✅ SUCCESS! Got valid JSON')
+        
         try {
           const data = JSON.parse(responseText)
-          console.log('✅ SUCCESS! Got valid JSON')
           successResponse = { data, url: connecteamUrl }
           break
         } catch (e) {
-          console.log('❌ Not valid JSON')
+          console.log('❌ JSON parse failed')
+        }
+      } else if (connecteamResponse.status === 400 || connecteamResponse.status === 404) {
+        // Log specific error messages
+        try {
+          const errorData = JSON.parse(responseText)
+          console.log(`❌ Error ${connecteamResponse.status}:`, errorData)
+        } catch (e) {
+          console.log(`❌ Failed with status ${connecteamResponse.status}`)
         }
       } else {
-        console.log(`❌ Failed with status ${connecteamResponse.status}`)
+        console.log(`❌ Failed: Status ${connecteamResponse.status}, isJson: ${isJson}`)
       }
     }
 
     if (!successResponse) {
       return NextResponse.json({
-        error: 'Could not find working punch clock endpoint',
-        details: 'The punch clock ID may be for a different endpoint. Check Connecteam Swagger docs.',
+        error: 'Could not find working timeclock endpoint',
+        details: 'All timeclock endpoint variations failed. The time clock ID may be incorrect. Check Connecteam account for the correct ID.',
         triedUrls: urls
       }, { status: 502 })
     }
