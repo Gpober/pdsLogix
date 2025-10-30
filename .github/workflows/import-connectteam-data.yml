@@ -1,9 +1,17 @@
-name: Import Connecteam Data
+# .github/workflows/import-connecteam-data.yml
+# Manual GitHub Action to import historic Connecteam submissions from 1/1/2025 to now
+# Run this ONCE from GitHub Actions tab
 
+name: Import Connecteam Historic Data
+
+# Manual trigger only - prevents accidental runs
 on:
-  workflow_dispatch: # Allows manual triggering from GitHub UI
-  schedule:
-    - cron: '0 2 * * *' # Runs daily at 2 AM UTC (optional)
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "IMPORT" to confirm you want to run this'
+        required: true
+        default: ''
 
 jobs:
   import:
@@ -17,14 +25,40 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+      
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 10
       
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install
+      
+      - name: Verify confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "IMPORT" ]; then
+            echo "❌ Confirmation failed. You must type 'IMPORT' to run this action."
+            exit 1
+          fi
+          echo "✅ Confirmation verified"
       
       - name: Run import script
         env:
           CONNECTEAM_API_KEY: ${{ secrets.CONNECTEAM_API_KEY }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: npx tsx scripts/import-historic-submissions.ts
+        run: |
+          echo "🚀 Starting Connecteam data import from 1/1/2025 to now..."
+          npx tsx scripts/import-historic-submissions.ts
+          echo "✅ Import completed!"
+      
+      - name: Summary
+        run: |
+          echo "## ✅ Import Complete! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Historic Connecteam data from 1/1/2025 has been imported to Supabase." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Configure Connecteam webhook" >> $GITHUB_STEP_SUMMARY
+          echo "2. Update frontend to use /api/connecteam/production-v2" >> $GITHUB_STEP_SUMMARY
+          echo "3. Test the new fast sync!" >> $GITHUB_STEP_SUMMARY
