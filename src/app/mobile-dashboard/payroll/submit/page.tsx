@@ -1742,10 +1742,10 @@ export default function MobilePayrollSubmit() {
                         <div className="flex items-center justify-between">
                           <div className="text-sm">
                             <span className="text-blue-200">
-                              {emp.compensation_type === 'hourly' 
-                                ? 'Hours: ' 
-                                : emp.compensation_type === 'production' 
-                                ? 'Units: ' 
+                              {emp.compensation_type === 'hourly'
+                                ? 'Hours: '
+                                : emp.compensation_type === 'production'
+                                ? 'Units: '
                                 : 'Fixed: '}
                             </span>
                             <span className="text-white font-semibold">
@@ -1763,19 +1763,19 @@ export default function MobilePayrollSubmit() {
                       </button>
                     </div>
                   )
-                })
-              )}
-              
-              <button
-                onClick={() => setShowAddEmployee(true)}
-                className="w-full bg-white/5 border-2 border-dashed border-white/20 hover:border-blue-400 hover:bg-white/10 rounded-xl p-4 text-center transition-all group"
-              >
-                <div className="flex items-center justify-center gap-2 text-blue-200 group-hover:text-blue-100">
-                  <Users className="w-5 h-5" />
-                  <span className="font-medium">Add New Employee</span>
-                </div>
-              </button>
-            </div>
+                })}
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowAddEmployee(true)}
+              className="w-full bg-white/5 border-2 border-dashed border-white/20 hover:border-blue-400 hover:bg-white/10 rounded-xl p-4 text-center transition-all group"
+            >
+              <div className="flex items-center justify-center gap-2 text-blue-200 group-hover:text-blue-100">
+                <Users className="w-5 h-5" />
+                <span className="font-medium">Add New Employee</span>
+              </div>
+            </button>
           </>
         )}
       </div>
