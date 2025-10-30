@@ -1,138 +1,173 @@
-// src/app/api/connecteam/hours/route.ts
+// app/api/connecteam/hours/route.ts
+import { NextResponse } from 'next/server'
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs'
+import { cookies } from 'next/headers'
 
-import { NextRequest, NextResponse } from 'next/server';
-
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    // TEMPORARY DEBUG - REMOVE AFTER TESTING
-    console.log('🔑 API Key exists:', !!process.env.CONNECTEAM_API_KEY);
-    console.log('🔑 API Key length:', process.env.CONNECTEAM_API_KEY?.length);
-    console.log('🔑 API Key starts with:', process.env.CONNECTEAM_API_KEY?.substring(0, 10));
-    
-    const { periodStart, periodEnd, employeeEmails, payrollGroup } = await request.json();
+    // ✅ Authenticate using cookies
+    const supabase = createRouteHandlerClient({ cookies })
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      console.error('❌ Auth error:', authError)
+      return NextResponse.json(
+        { error: 'Unauthorized - please log in' },
+        { status: 401 }
+      )
+    }
+
+    console.log('✅ Authenticated user:', user.email)
+
+    // ✅ Parse the request body
+    const body = await request.json()
+    const { periodStart, periodEnd, employeeEmails, payrollGroup } = body
 
     if (!periodStart || !periodEnd || !employeeEmails || !payrollGroup) {
       return NextResponse.json(
-        { error: 'Missing required fields' },
+        { error: 'Missing required fields: periodStart, periodEnd, employeeEmails, payrollGroup' },
         { status: 400 }
-      );
+      )
     }
 
-    const apiKey = process.env.CONNECTEAM_API_KEY;
-    if (!apiKey) {
-      console.error('❌ CONNECTEAM_API_KEY is not set!');
+    console.log('📅 Period:', periodStart, 'to', periodEnd)
+    console.log('👥 Payroll Group:', payrollGroup)
+    console.log('📧 Employee emails:', employeeEmails)
+
+    // ✅ Get Connecteam API credentials
+    const connecteamApiKey = process.env.CONNECTEAM_API_KEY
+    const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A
+    const timeClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B
+
+    if (!connecteamApiKey) {
+      console.error('❌ Missing CONNECTEAM_API_KEY')
       return NextResponse.json(
         { error: 'Connecteam API key not configured' },
         { status: 500 }
-      );
+      )
     }
 
-    // Select the correct time clock based on payroll group
-    const timeClockId = payrollGroup === 'A' 
-      ? process.env.CONNECTEAM_TIME_CLOCK_ID_A 
-      : process.env.CONNECTEAM_TIME_CLOCK_ID_B;
-      
+    // ✅ Select the correct time clock ID based on payroll group
+    const timeClockId = payrollGroup === 'A' ? timeClockIdA : timeClockIdB
+
     if (!timeClockId) {
-      console.error(`❌ Time Clock ID not set for Payroll Group ${payrollGroup}`);
+      console.error(`❌ Missing time clock ID for payroll group ${payrollGroup}`)
       return NextResponse.json(
-        { error: `Connecteam Time Clock ID not configured for Payroll Group ${payrollGroup}` },
+        { error: `Time clock ID not configured for payroll group ${payrollGroup}` },
         { status: 500 }
-      );
+      )
     }
 
-    console.log(`📋 Fetching hours for ${employeeEmails.length} employees, Group ${payrollGroup}`);
-    console.log(`📅 Period: ${periodStart} to ${periodEnd}`);
-    console.log(`🕐 Time Clock ID: ${timeClockId}`);
+    console.log(`🔑 Using time clock ID ${timeClockId} for payroll group ${payrollGroup}`)
 
-    // Call Connecteam Time Clock API to get timesheet totals
-    const response = await fetch(
-      `https://api.connecteam.com/time-clock/v1/time-clocks/${timeClockId}/timesheet?startDate=${periodStart}&endDate=${periodEnd}`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
+    // ✅ Call Connecteam API
+    // Connecteam API expects dates in YYYY-MM-DD format and uses the timeclock entries endpoint
+    const connecteamUrl = `https://api.connecteam.com/api/v1/timeclock/${timeClockId}/entries?from=${periodStart}&to=${periodEnd}`
+    
+    console.log('🔗 Calling Connecteam API:', connecteamUrl)
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('❌ Connecteam API error:', error);
-      return NextResponse.json(
-        { error: 'Failed to fetch hours from Connecteam' },
-        { status: response.status }
-      );
-    }
-
-    const timesheetData = await response.json();
-    console.log('✅ Timesheet data retrieved');
-
-    // Step 1: Get all users to map userId to email
-    const usersResponse = await fetch('https://api.connecteam.com/users/v1/users', {
+    const connecteamResponse = await fetch(connecteamUrl, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'X-API-KEY': connecteamApiKey,
         'Content-Type': 'application/json',
       },
-    });
+    })
 
-    if (!usersResponse.ok) {
-      console.error('❌ Failed to fetch users from Connecteam');
+    if (!connecteamResponse.ok) {
+      const errorText = await connecteamResponse.text()
+      console.error('❌ Connecteam API error:', connecteamResponse.status, errorText)
       return NextResponse.json(
-        { error: 'Failed to fetch user data from Connecteam' },
-        { status: usersResponse.status }
-      );
+        { error: `Connecteam API returned ${connecteamResponse.status}: ${errorText}` },
+        { status: 502 }
+      )
     }
 
-    const usersData = await usersResponse.json();
-    console.log(`✅ Users data retrieved: ${usersData.data?.length || 0} users`);
+    const connecteamData = await connecteamResponse.json()
+    console.log('✅ Connecteam raw response:', JSON.stringify(connecteamData, null, 2))
+
+    // ✅ Process the data and calculate total hours per employee
+    const hoursMap: Record<string, number> = {}
     
-    // Create userId -> email mapping
-    const userIdToEmail: Record<number, string> = {};
-    if (usersData.data && Array.isArray(usersData.data)) {
-      usersData.data.forEach((user: any) => {
-        if (user.id && user.email) {
-          userIdToEmail[user.id] = user.email.toLowerCase();
-        }
-      });
-    }
+    // Initialize all requested employees with 0 hours
+    employeeEmails.forEach((email: string) => {
+      hoursMap[email.toLowerCase()] = 0
+    })
 
-    // Step 2: Process timesheet data and map to emails
-    const hoursMap: Record<string, number> = {};
-
-    if (timesheetData.data && timesheetData.data.users && Array.isArray(timesheetData.data.users)) {
-      timesheetData.data.users.forEach((userRecord: any) => {
-        const userId = userRecord.userId;
-        const email = userIdToEmail[userId];
+    // Process Connecteam entries
+    if (connecteamData && Array.isArray(connecteamData)) {
+      connecteamData.forEach((entry: any) => {
+        const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
         
-        if (email && employeeEmails.includes(email)) {
-          // Sum up daily hours for this user
-          let totalHours = 0;
-          if (userRecord.dailyRecords && Array.isArray(userRecord.dailyRecords)) {
-            userRecord.dailyRecords.forEach((day: any) => {
-              totalHours += day.dailyTotalWorkHours || 0;
-            });
+        if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
+          // Calculate hours from the entry
+          // Connecteam typically returns duration in minutes or milliseconds
+          let hours = 0
+          
+          if (entry.duration) {
+            // If duration is in minutes
+            hours = entry.duration / 60
+          } else if (entry.clockIn && entry.clockOut) {
+            // Calculate from timestamps
+            const clockIn = new Date(entry.clockIn).getTime()
+            const clockOut = new Date(entry.clockOut).getTime()
+            hours = (clockOut - clockIn) / (1000 * 60 * 60) // Convert ms to hours
+          } else if (entry.totalTime) {
+            // Some APIs return totalTime in seconds
+            hours = entry.totalTime / 3600
           }
-          hoursMap[email] = totalHours;
-          console.log(`✅ Synced ${totalHours} hours for ${email}`);
+
+          if (hours > 0) {
+            hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
+            console.log(`✅ Added ${hours.toFixed(2)} hours for ${userEmail}`)
+          }
         }
-      });
+      })
+    } else if (connecteamData && connecteamData.data && Array.isArray(connecteamData.data)) {
+      // Handle if response is wrapped in a data property
+      connecteamData.data.forEach((entry: any) => {
+        const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
+        
+        if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
+          let hours = 0
+          
+          if (entry.duration) {
+            hours = entry.duration / 60
+          } else if (entry.clockIn && entry.clockOut) {
+            const clockIn = new Date(entry.clockIn).getTime()
+            const clockOut = new Date(entry.clockOut).getTime()
+            hours = (clockOut - clockIn) / (1000 * 60 * 60)
+          } else if (entry.totalTime) {
+            hours = entry.totalTime / 3600
+          }
+
+          if (hours > 0) {
+            hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
+            console.log(`✅ Added ${hours.toFixed(2)} hours for ${userEmail}`)
+          }
+        }
+      })
     }
 
-    console.log(`✅ Total synced: ${Object.keys(hoursMap).length} employees`);
+    // Round hours to 2 decimal places
+    Object.keys(hoursMap).forEach(email => {
+      hoursMap[email] = Math.round(hoursMap[email] * 100) / 100
+    })
+
+    console.log('✅ Final hours map:', hoursMap)
 
     return NextResponse.json({
       success: true,
       hours: hoursMap,
+      payrollGroup,
       period: { start: periodStart, end: periodEnd },
-    });
+    })
 
-  } catch (error) {
-    console.error('❌ Error fetching Connecteam hours:', error);
+  } catch (error: any) {
+    console.error('❌ API route error:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: error.message || 'Internal server error' },
       { status: 500 }
-    );
+    )
   }
 }
