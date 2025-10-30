@@ -77,42 +77,39 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
-export default function ClientRootLayout({ children }: { children: React.ReactNode }) {
-  // ✅ Handle PKCE callback first
-  handlePkceCallbackFromUrl()
-
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [sidebarVisible, setSidebarVisible] = useState(false)
-  const [isLoading, setIsLoading] = useState(true)
-  const [sessionTransferred, setSessionTransferred] = useState(false)
+// ✅ Component that handles session transfer BEFORE anything else
+function SessionTransferHandler({ children }: { children: React.ReactNode }) {
+  const [ready, setReady] = useState(false)
   const pathname = usePathname()
-  const router = useRouter()
-  const { user, loading: authLoading, signOut, getFilteredNavigation } = useAuth()
   const supabase = createClient()
 
-  const filteredNavigation = user ? getFilteredNavigation(navigation) : []
-
-  // ✅ NEW: Handle session transfer from platform login (for super admin access)
   useEffect(() => {
     async function handleSessionTransfer() {
-      // Skip if on login page or already transferred
-      if (pathname === '/login' || sessionTransferred) {
+      // Skip if on login page
+      if (pathname === '/login') {
+        setReady(true)
         return
       }
 
       try {
-        // Check for session in URL hash (from platform login redirect)
+        // Check for session in URL hash
         const hash = window.location.hash.substring(1)
-        const params = new URLSearchParams(hash)
         
+        if (!hash) {
+          // No hash, proceed normally
+          setReady(true)
+          return
+        }
+
+        const params = new URLSearchParams(hash)
         const accessToken = params.get('access_token')
         const refreshToken = params.get('refresh_token')
         const isSuperAdmin = params.get('super_admin') === 'true'
 
         if (accessToken && refreshToken) {
-          console.log('🔄 Transferring session from platform login...')
+          console.log('🔄 Setting session from URL hash...')
           
-          // Set the session from URL parameters
+          // Set the session SYNCHRONOUSLY before anything else loads
           const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
@@ -120,24 +117,27 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
 
           if (error) {
             console.error('❌ Failed to set session:', error)
+            setReady(true)
             return
           }
 
-          // Clean up URL (remove hash)
-          window.history.replaceState({}, document.title, window.location.pathname + window.location.search)
+          console.log('✅ Session set successfully!', data.user?.email)
 
-          // Verify access to this subdomain
+          // Clean up URL
+          window.history.replaceState({}, document.title, window.location.pathname)
+
+          // Verify access
           const currentSubdomain = window.location.hostname.split('.')[0]
           
           if (isSuperAdmin) {
             console.log('✅ Super admin access granted')
-            setSessionTransferred(true)
-            // Force reload to pick up new session
+            // Mark session as transferred and reload
+            sessionStorage.setItem('session_transferred', 'true')
             window.location.reload()
             return
           }
 
-          // Regular user - verify they belong to this organization
+          // Regular user - check org access
           const { data: userData } = await supabase
             .from('users')
             .select('organization_id, organizations(subdomain)')
@@ -147,28 +147,64 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
           const userSubdomain = (userData as any)?.organizations?.subdomain
 
           if (userSubdomain === currentSubdomain) {
-            console.log('✅ User belongs to this organization')
-            setSessionTransferred(true)
-            // Force reload to pick up new session
+            console.log('✅ User belongs to this org')
+            sessionStorage.setItem('session_transferred', 'true')
             window.location.reload()
             return
           }
 
-          // User doesn't belong to this organization
-          console.error('❌ User does not have access to this organization')
+          // No access
           alert('You do not have access to this organization')
           await supabase.auth.signOut()
           window.location.href = 'https://iamcfo.com/login'
+          return
         }
+
+        // No tokens in hash, proceed normally
+        setReady(true)
       } catch (error) {
         console.error('Session transfer error:', error)
+        setReady(true)
       }
     }
 
-    handleSessionTransfer()
-  }, [pathname, sessionTransferred, supabase])
+    // Check if we just transferred (prevents infinite reload)
+    const justTransferred = sessionStorage.getItem('session_transferred')
+    if (justTransferred) {
+      sessionStorage.removeItem('session_transferred')
+      setReady(true)
+      return
+    }
 
-  // Existing loading logic
+    handleSessionTransfer()
+  }, [pathname, supabase])
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+
+export default function ClientRootLayout({ children }: { children: React.ReactNode }) {
+  // ✅ Handle PKCE callback
+  handlePkceCallbackFromUrl()
+
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarVisible, setSidebarVisible] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const pathname = usePathname()
+  const { user, loading: authLoading, signOut, getFilteredNavigation } = useAuth()
+
+  const filteredNavigation = user ? getFilteredNavigation(navigation) : []
+
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 1500)
     return () => clearTimeout(timer)
@@ -196,7 +232,12 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
           <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
           <link rel="icon" type="image/png" href="/favicon.png" />
         </head>
-        <body className={inter.className}>{children}</body>
+        <body className={inter.className}>
+          {/* ✅ Wrap with session handler */}
+          <SessionTransferHandler>
+            {children}
+          </SessionTransferHandler>
+        </body>
       </html>
     )
   }
@@ -208,100 +249,103 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
         <link rel="icon" type="image/png" href="/favicon.png" />
       </head>
       <body className={inter.className}>
-        <div className="min-h-screen bg-gray-50">
-          <div className="hidden lg:block fixed inset-y-0 left-0 w-2 z-40" onMouseEnter={() => setSidebarVisible(true)} />
+        {/* ✅ Wrap everything with session handler */}
+        <SessionTransferHandler>
+          <div className="min-h-screen bg-gray-50">
+            <div className="hidden lg:block fixed inset-y-0 left-0 w-2 z-40" onMouseEnter={() => setSidebarVisible(true)} />
 
-          {/* Mobile sidebar */}
-          <div className={`fixed inset-0 z-50 lg:hidden ${sidebarOpen ? "block" : "hidden"}`}>
-            <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
-            <div className="relative flex w-full max-w-xs flex-1 flex-col bg-white">
-              <div className="absolute top-0 right-0 -mr-12 pt-2">
-                <button type="button" className="ml-1 flex h-10 w-10 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white" onClick={() => setSidebarOpen(false)}>
-                  <X className="h-6 w-6 text-white" />
-                </button>
-              </div>
-              <div className="flex flex-shrink-0 items-center justify-center px-4 py-4">
-                <IAMCFOLogo className="w-auto h-10" />
-              </div>
-              <div className="mt-5 h-0 flex-1 overflow-y-auto">
-                <nav className="space-y-1 px-2">
-                  {filteredNavigation.map((item) => {
-                    const isActive = pathname === item.href
-                    return (
-                      <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-base font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }} onClick={() => setSidebarOpen(false)}>
-                        <item.icon className={`mr-4 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
-                        {item.name}
-                      </Link>
-                    )
-                  })}
-                  <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-base font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
-                    <LogOut className="mr-4 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
-                    Sign Out
+            {/* Mobile sidebar */}
+            <div className={`fixed inset-0 z-50 lg:hidden ${sidebarOpen ? "block" : "hidden"}`}>
+              <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
+              <div className="relative flex w-full max-w-xs flex-1 flex-col bg-white">
+                <div className="absolute top-0 right-0 -mr-12 pt-2">
+                  <button type="button" className="ml-1 flex h-10 w-10 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white" onClick={() => setSidebarOpen(false)}>
+                    <X className="h-6 w-6 text-white" />
                   </button>
-                </nav>
-              </div>
-              {user && (
-                <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
-                  <div className="flex-shrink-0 group block">
-                    <div className="flex items-center">
-                      <div className="ml-3">
-                        <p className="text-sm font-medium text-gray-700">{user.name}</p>
-                        <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
-                      </div>
-                    </div>
-                  </div>
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Desktop sidebar */}
-          <div className={`hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col transform transition-transform duration-300 ${sidebarVisible ? "translate-x-0" : "-translate-x-full"}`} onMouseEnter={() => setSidebarVisible(true)} onMouseLeave={() => setSidebarVisible(false)}>
-            <div className="flex min-h-0 flex-1 flex-col bg-white border-r border-gray-200">
-              <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
-                <div className="flex flex-shrink-0 items-center justify-center px-4">
+                <div className="flex flex-shrink-0 items-center justify-center px-4 py-4">
                   <IAMCFOLogo className="w-auto h-10" />
                 </div>
-                <nav className="mt-5 flex-1 space-y-1 px-2">
-                  {filteredNavigation.map((item) => {
-                    const isActive = pathname === item.href
-                    return (
-                      <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }}>
-                        <item.icon className={`mr-3 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
-                        {item.name}
-                      </Link>
-                    )
-                  })}
-                  <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
-                    <LogOut className="mr-3 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
-                    Sign Out
-                  </button>
-                </nav>
-              </div>
-              {user && (
-                <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
-                  <div className="flex-shrink-0 group block w-full">
-                    <div className="flex items-center">
-                      <div>
-                        <p className="text-sm font-medium text-gray-700">{user.name}</p>
-                        <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
+                <div className="mt-5 h-0 flex-1 overflow-y-auto">
+                  <nav className="space-y-1 px-2">
+                    {filteredNavigation.map((item) => {
+                      const isActive = pathname === item.href
+                      return (
+                        <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-base font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }} onClick={() => setSidebarOpen(false)}>
+                          <item.icon className={`mr-4 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
+                          {item.name}
+                        </Link>
+                      )
+                    })}
+                    <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-base font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
+                      <LogOut className="mr-4 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
+                      Sign Out
+                    </button>
+                  </nav>
+                </div>
+                {user && (
+                  <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+                    <div className="flex-shrink-0 group block">
+                      <div className="flex items-center">
+                        <div className="ml-3">
+                          <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                          <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
 
-          <div className={`flex flex-col flex-1 transition-all duration-300 ${sidebarVisible ? "lg:pl-64" : ""}`}>
-            <div className="sticky top-0 z-10 bg-white pl-1 pt-1 sm:pl-3 sm:pt-3 lg:hidden">
-              <button type="button" className="-ml-0.5 -mt-0.5 inline-flex h-12 w-12 items-center justify-center rounded-md text-gray-500 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-inset" onClick={() => setSidebarOpen(true)}>
-                <Menu className="h-6 w-6" />
-              </button>
+            {/* Desktop sidebar */}
+            <div className={`hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col transform transition-transform duration-300 ${sidebarVisible ? "translate-x-0" : "-translate-x-full"}`} onMouseEnter={() => setSidebarVisible(true)} onMouseLeave={() => setSidebarVisible(false)}>
+              <div className="flex min-h-0 flex-1 flex-col bg-white border-r border-gray-200">
+                <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
+                  <div className="flex flex-shrink-0 items-center justify-center px-4">
+                    <IAMCFOLogo className="w-auto h-10" />
+                  </div>
+                  <nav className="mt-5 flex-1 space-y-1 px-2">
+                    {filteredNavigation.map((item) => {
+                      const isActive = pathname === item.href
+                      return (
+                        <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }}>
+                          <item.icon className={`mr-3 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
+                          {item.name}
+                        </Link>
+                      )
+                    })}
+                    <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
+                      <LogOut className="mr-3 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
+                      Sign Out
+                    </button>
+                  </nav>
+                </div>
+                {user && (
+                  <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+                    <div className="flex-shrink-0 group block w-full">
+                      <div className="flex items-center">
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                          <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-            <main className="flex-1">{children}</main>
+
+            <div className={`flex flex-col flex-1 transition-all duration-300 ${sidebarVisible ? "lg:pl-64" : ""}`}>
+              <div className="sticky top-0 z-10 bg-white pl-1 pt-1 sm:pl-3 sm:pt-3 lg:hidden">
+                <button type="button" className="-ml-0.5 -mt-0.5 inline-flex h-12 w-12 items-center justify-center rounded-md text-gray-500 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-inset" onClick={() => setSidebarOpen(true)}>
+                  <Menu className="h-6 w-6" />
+                </button>
+              </div>
+              <main className="flex-1">{children}</main>
+            </div>
           </div>
-        </div>
+        </SessionTransferHandler>
       </body>
     </html>
   )
