@@ -182,10 +182,16 @@ export async function POST(request: NextRequest) {
       
       // Log first response for debugging
       if (submissionsOffset === 0) {
-        console.log('📋 First submissions response:', JSON.stringify(submissionsData, null, 2))
+        console.log('📋 First submissions response structure:', JSON.stringify(submissionsData, null, 2).substring(0, 2000))
       }
       
-      const submissions = submissionsData.data?.submissions || submissionsData.submissions || []
+      // Try different possible response structures
+      const submissions = submissionsData.data?.formSubmissions || 
+                         submissionsData.data?.submissions || 
+                         submissionsData.formSubmissions ||
+                         submissionsData.submissions || 
+                         []
+      
       allSubmissions = [...allSubmissions, ...submissions]
       
       console.log(`  ✅ Loaded ${submissions.length} submissions (total: ${allSubmissions.length})`)
@@ -214,7 +220,8 @@ export async function POST(request: NextRequest) {
 
     // Count submissions by userId
     submissions.forEach((submission: any) => {
-      const userId = submission.userId || submission.submittedBy?.userId
+      // Connecteam uses submittingUserId for form submissions
+      const userId = submission.submittingUserId || submission.userId || submission.submittedBy?.userId
       const userEmail = userIdToEmail[userId] // This is already lowercase from STEP 2
       
       if (userEmail) {
@@ -223,6 +230,8 @@ export async function POST(request: NextRequest) {
         if (originalEmail) {
           unitsMap[originalEmail] = (unitsMap[originalEmail] || 0) + 1
         }
+      } else {
+        console.log(`  ⚠️ Unknown userId ${userId} - no email mapping found`)
       }
     })
 
