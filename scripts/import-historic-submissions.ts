@@ -1,1 +1,221 @@
+// scripts/import-historic-submissions.ts
+// One-time script to import all historic Connecteam form submissions into Supabase
+// Run with: npx tsx scripts/import-historic-submissions.ts
 
+import { createClient } from '@supabase/supabase-js'
+
+const CONNECTEAM_API_KEY = process.env.CONNECTEAM_API_KEY!
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
+interface ConnecteamUser {
+  id: number
+  email: string
+}
+
+interface FormSubmission {
+  formSubmissionId: string
+  formId: number
+  submittingUserId: number
+  submissionTimestamp: number
+  entryNum: number
+  answers: any[]
+}
+
+async function main() {
+  console.log('🚀 Starting historic data import...\n')
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+  // STEP 1: Get all users and build email map
+  console.log('👥 STEP 1: Loading all Connecteam users...')
+  const userEmailMap = await loadAllUsers()
+  console.log(`✅ Loaded ${Object.keys(userEmailMap).length} users\n`)
+
+  // STEP 2: Get all production forms
+  console.log('📋 STEP 2: Loading all production forms...')
+  const forms = await loadAllForms()
+  const productionForms = forms.filter((f: any) => 
+    f.formName?.toLowerCase().includes('manheim') ||
+    f.formName?.toLowerCase().includes('enterprise') ||
+    f.formName?.toLowerCase().includes('auction')
+  )
+  console.log(`✅ Found ${productionForms.length} production forms\n`)
+
+  // STEP 3: Import submissions for each form
+  let totalImported = 0
+  
+  for (const form of productionForms) {
+    console.log(`\n📄 Processing: ${form.formName} (ID: ${form.formId})`)
+    
+    const submissions = await loadAllSubmissions(form.formId)
+    console.log(`  📊 Found ${submissions.length} submissions`)
+    
+    if (submissions.length === 0) continue
+
+    // Batch insert to Supabase
+    const records = submissions.map((sub: FormSubmission) => {
+      const userEmail = userEmailMap[sub.submittingUserId] || null
+      
+      // Extract location from answers
+      const locationAnswer = sub.answers?.find((a: any) => 
+        a.questionType === 'multipleChoice' && 
+        a.selectedAnswers?.[0]?.text
+      )
+      const locationName = locationAnswer?.selectedAnswers?.[0]?.text || form.formName
+
+      return {
+        form_submission_id: sub.formSubmissionId,
+        form_id: sub.formId,
+        submitting_user_id: sub.submittingUserId,
+        user_email: userEmail,
+        location_name: locationName,
+        submission_timestamp: sub.submissionTimestamp,
+        entry_num: sub.entryNum,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        deleted_at: null
+      }
+    })
+
+    // Insert in batches of 1000
+    const BATCH_SIZE = 1000
+    for (let i = 0; i < records.length; i += BATCH_SIZE) {
+      const batch = records.slice(i, i + BATCH_SIZE)
+      
+      const { error } = await supabase
+        .from('connecteam_form_submissions')
+        .upsert(batch, {
+          onConflict: 'form_submission_id'
+        })
+
+      if (error) {
+        console.error(`  ❌ Error inserting batch ${i / BATCH_SIZE + 1}:`, error)
+        continue
+      }
+
+      console.log(`  ✅ Inserted batch ${i / BATCH_SIZE + 1} (${batch.length} records)`)
+      totalImported += batch.length
+    }
+  }
+
+  console.log(`\n\n🎉 Import complete! Total records imported: ${totalImported}`)
+}
+
+async function loadAllUsers(): Promise<Record<number, string>> {
+  const userMap: Record<number, string> = {}
+  let page = 1
+  let hasMore = true
+
+  while (hasMore) {
+    const response = await fetch(
+      `https://api.connecteam.com/users/v1/users?page=${page}&limit=100`,
+      {
+        headers: {
+          'X-API-KEY': CONNECTEAM_API_KEY,
+          'Accept': 'application/json',
+        },
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch users: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const users = data.data?.users || []
+
+    users.forEach((user: any) => {
+      if (user.userId && user.email) {
+        userMap[user.userId] = user.email.toLowerCase()
+      }
+    })
+
+    hasMore = users.length === 100
+    page++
+  }
+
+  return userMap
+}
+
+async function loadAllForms(): Promise<any[]> {
+  const allForms: any[] = []
+  let offset = 0
+  let hasMore = true
+
+  while (hasMore) {
+    const response = await fetch(
+      `https://api.connecteam.com/forms/v1/forms?offset=${offset}`,
+      {
+        headers: {
+          'X-API-KEY': CONNECTEAM_API_KEY,
+          'Accept': 'application/json',
+        },
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch forms: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const forms = data.data?.forms || []
+    allForms.push(...forms)
+
+    hasMore = forms.length > 0 && data.paging?.offset
+    offset = data.paging?.offset || offset + forms.length
+  }
+
+  return allForms
+}
+
+async function loadAllSubmissions(formId: number): Promise<FormSubmission[]> {
+  const allSubmissions: FormSubmission[] = []
+  let submissionsOffset = 0
+  let hasMore = true
+
+  // Get all-time submissions (no date filter)
+  while (hasMore) {
+    const response = await fetch(
+      `https://api.connecteam.com/forms/v1/forms/${formId}/form-submissions?offset=${submissionsOffset}&limit=100`,
+      {
+        headers: {
+          'X-API-KEY': CONNECTEAM_API_KEY,
+          'Accept': 'application/json',
+        },
+      }
+    )
+
+    if (!response.ok) {
+      console.error(`  ❌ Failed to fetch submissions for form ${formId}: ${response.status}`)
+      break
+    }
+
+    const data = await response.json()
+    const submissions = data.data?.formSubmissions || 
+                       data.data?.submissions || 
+                       data.formSubmissions ||
+                       data.submissions || 
+                       []
+
+    allSubmissions.push(...submissions)
+
+    // Check if there are more
+    if (submissions.length < 100) {
+      hasMore = false
+    } else {
+      submissionsOffset += 100
+    }
+
+    // Add small delay to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+
+  return allSubmissions
+}
+
+// Run the import
+main().catch((error) => {
+  console.error('💥 Fatal error:', error)
+  process.exit(1)
+})
