@@ -150,30 +150,56 @@ export async function POST(request: NextRequest) {
     // STEP 3: Get form submissions for the period
     console.log('\n📊 STEP 3: Getting form submissions...')
     
-    const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.formId}/form-submissions?fromDate=${periodStart}&toDate=${periodEnd}`
+    let allSubmissions: any[] = []
+    let offset = 0
+    let hasMoreSubmissions = true
     
-    console.log(`📅 Fetching submissions from ${periodStart} to ${periodEnd}`)
+    while (hasMoreSubmissions) {
+      // Try with pagination
+      const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.formId}/form-submissions?startDate=${periodStart}&endDate=${periodEnd}&offset=${offset}&limit=100`
+      
+      console.log(`📅 Fetching submissions page at offset ${offset}...`)
+      console.log(`🔗 URL: ${submissionsUrl}`)
 
-    const submissionsResponse = await fetch(submissionsUrl, {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': connecteamApiKey,
-        'Accept': 'application/json',
-      },
-    })
+      const submissionsResponse = await fetch(submissionsUrl, {
+        method: 'GET',
+        headers: {
+          'X-API-KEY': connecteamApiKey,
+          'Accept': 'application/json',
+        },
+      })
 
-    if (!submissionsResponse.ok) {
-      const errorText = await submissionsResponse.text()
-      console.log('❌ Submissions API error:', errorText)
-      return NextResponse.json({
-        error: `Failed to get form submissions: ${submissionsResponse.status}`,
-        details: errorText
-      }, { status: 502 })
+      if (!submissionsResponse.ok) {
+        const errorText = await submissionsResponse.text()
+        console.log('❌ Submissions API error:', errorText)
+        return NextResponse.json({
+          error: `Failed to get form submissions: ${submissionsResponse.status}`,
+          details: errorText
+        }, { status: 502 })
+      }
+
+      const submissionsData = JSON.parse(await submissionsResponse.text())
+      
+      // Log first response for debugging
+      if (offset === 0) {
+        console.log('📋 First submissions response:', JSON.stringify(submissionsData, null, 2))
+      }
+      
+      const submissions = submissionsData.data?.submissions || submissionsData.submissions || []
+      allSubmissions = [...allSubmissions, ...submissions]
+      
+      console.log(`  ✅ Loaded ${submissions.length} submissions (total: ${allSubmissions.length})`)
+
+      // Check if there are more submissions
+      const nextOffset = submissionsData.paging?.offset
+      if (nextOffset && submissions.length > 0) {
+        offset = nextOffset
+      } else {
+        hasMoreSubmissions = false
+      }
     }
-
-    const submissionsData = JSON.parse(await submissionsResponse.text())
-    const submissions = submissionsData.data?.submissions || submissionsData.submissions || []
     
+    const submissions = allSubmissions
     console.log(`📊 Found ${submissions.length} total submissions`)
 
     // STEP 4: Count submissions per employee
