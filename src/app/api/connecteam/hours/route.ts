@@ -159,9 +159,19 @@ export async function POST(request: NextRequest) {
         const endTimestamp = shift.end?.timestamp
         
         if (startTimestamp && endTimestamp) {
-          const hours = (endTimestamp - startTimestamp) / 3600 // Convert seconds to hours
-          totalHours += hours
-          console.log(`    Shift ${index + 1}: ${hours.toFixed(2)} hours`)
+          const shiftHours = (endTimestamp - startTimestamp) / 3600 // Convert seconds to hours
+          
+          // Apply auto-break rule: 1 hour deducted for shifts 8+ hours
+          let autoBreakHours = 0
+          if (shiftHours >= 8) {
+            autoBreakHours = 1
+          }
+          
+          const paidShiftHours = shiftHours - autoBreakHours
+          totalHours += paidShiftHours
+          totalBreakHours += autoBreakHours
+          
+          console.log(`    Shift ${index + 1}: ${shiftHours.toFixed(2)}h total - ${autoBreakHours.toFixed(2)}h break = ${paidShiftHours.toFixed(2)}h paid`)
         } else {
           console.log(`    Shift ${index + 1}: Missing timestamps`)
         }
@@ -179,10 +189,10 @@ export async function POST(request: NextRequest) {
         }
       })
 
-      const paidHours = totalHours - totalBreakHours
-      hoursMap[userEmail] = Math.round(paidHours * 100) / 100
+      const totalShiftHours = totalHours + totalBreakHours
+      hoursMap[userEmail] = Math.round(totalHours * 100) / 100
       
-      console.log(`  📊 Total: ${totalHours.toFixed(2)}h - Breaks: ${totalBreakHours.toFixed(2)}h = Paid: ${hoursMap[userEmail]}h`)
+      console.log(`  📊 Total shift time: ${totalShiftHours.toFixed(2)}h - Auto breaks: ${totalBreakHours.toFixed(2)}h = Paid: ${hoursMap[userEmail]}h`)
     })
 
     console.log('\n✅ Final hours:', hoursMap)
