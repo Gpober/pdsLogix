@@ -88,6 +88,7 @@ interface PendingSubmission {
   submitted_by: string;
   submitted_at: string;
   status: string;
+  rejection_note?: string | null;
 }
 
 interface LocationStatus {
@@ -176,6 +177,7 @@ export default function PayrollPage() {
   const [isApproving, setIsApproving] = useState(false);
   const [userId, setUserId] = useState<string | null>("demo-user-id");
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [rejectionNote, setRejectionNote] = useState("");
 
   const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const yearsList = Array.from({ length: 10 }, (_, i) => String(new Date().getFullYear() - 5 + i));
@@ -336,7 +338,7 @@ export default function PayrollPage() {
     const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
       const submission = submissionsMap.get(location.id);
       if (submission) {
-        // ✅ Treat rejected as not_submitted
+        // Treat rejected as not_submitted for display
         const status = submission.status === 'rejected' ? 'not_submitted' : submission.status;
         
         return {
@@ -363,9 +365,10 @@ export default function PayrollPage() {
 
   const handleReviewSubmission = async (submission: PendingSubmission) => {
     setSelectedSubmission(submission);
+    setRejectionNote(""); // Reset rejection note
     
     const { data: details } = await supabase
-      .from('payroll_submission_details')
+      .from('payroll_entries')
       .select('*')
       .eq('submission_id', submission.id);
     
@@ -426,35 +429,34 @@ export default function PayrollPage() {
     }
   };
 
- const handleReject = async () => {
-  if (!selectedSubmission || !userId) return;
-  setIsApproving(true);
-  
-  try {
-    // First delete the submission details
-    await supabase
-      .from('payroll_submission_details')
-      .delete()
-      .eq('submission_id', selectedSubmission.id);
+  const handleReject = async () => {
+    if (!selectedSubmission || !userId) return;
+    setIsApproving(true);
     
-    // Then delete the submission itself
-    await supabase
-      .from('payroll_submissions')
-      .delete()
-      .eq('id', selectedSubmission.id);
-    
-    showNotification('Payroll rejected - location can resubmit', 'warning');
-    setShowApprovalModal(false);
-    setSelectedSubmission(null);
-    loadPendingSubmissions();
-    loadAllLocations();
-  } catch (error) {
-    console.error('Rejection error:', error);
-    showNotification('Failed to reject payroll', 'error');
-  } finally {
-    setIsApproving(false);
-  }
-};
+    try {
+      await supabase
+        .from('payroll_submissions')
+        .update({ 
+          status: 'rejected', 
+          rejected_by: userId,
+          rejected_at: new Date().toISOString(),
+          rejection_note: rejectionNote || null
+        })
+        .eq('id', selectedSubmission.id);
+      
+      showNotification('Payroll rejected - location can edit and resubmit', 'warning');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      setRejectionNote("");
+      loadPendingSubmissions();
+      loadAllLocations();
+    } catch (error) {
+      console.error('Rejection error:', error);
+      showNotification('Failed to reject payroll', 'error');
+    } finally {
+      setIsApproving(false);
+    }
+  };
 
   const fetchPayments = async () => {
     const { data } = await supabase
@@ -1155,6 +1157,24 @@ export default function PayrollPage() {
               <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-6 text-center border-2" style={{ borderColor: BRAND_COLORS.success }}>
                 <div className="text-sm text-gray-600 mb-2">Total Amount</div>
                 <div className="text-4xl font-bold" style={{ color: BRAND_COLORS.success }}>{formatCurrency(selectedSubmission.total_amount)}</div>
+              </div>
+
+              {/* Rejection Note Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Rejection Reason (optional)
+                </label>
+                <textarea
+                  value={rejectionNote}
+                  onChange={(e) => setRejectionNote(e.target.value)}
+                  placeholder="E.g., 'Please verify John Smith's hours' or 'Missing overtime for Jane Doe'"
+                  className="w-full px-4 py-3 border-2 rounded-lg resize-none"
+                  style={{ borderColor: BRAND_COLORS.gray[300] }}
+                  rows={3}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  This note will be shown to the location manager so they can fix the issues.
+                </p>
               </div>
 
               <div className="flex gap-4">
