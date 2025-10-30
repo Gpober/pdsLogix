@@ -151,14 +151,14 @@ export async function POST(request: NextRequest) {
     console.log('\n📊 STEP 3: Getting form submissions...')
     
     let allSubmissions: any[] = []
-    let offset = 0
+    let submissionsOffset = 0
     let hasMoreSubmissions = true
     
     while (hasMoreSubmissions) {
       // Try with pagination
-      const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.formId}/form-submissions?startDate=${periodStart}&endDate=${periodEnd}&offset=${offset}&limit=100`
+      const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.formId}/form-submissions?startDate=${periodStart}&endDate=${periodEnd}&offset=${submissionsOffset}&limit=100`
       
-      console.log(`📅 Fetching submissions page at offset ${offset}...`)
+      console.log(`📅 Fetching submissions page at offset ${submissionsOffset}...`)
       console.log(`🔗 URL: ${submissionsUrl}`)
 
       const submissionsResponse = await fetch(submissionsUrl, {
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
       const submissionsData = JSON.parse(await submissionsResponse.text())
       
       // Log first response for debugging
-      if (offset === 0) {
+      if (submissionsOffset === 0) {
         console.log('📋 First submissions response:', JSON.stringify(submissionsData, null, 2))
       }
       
@@ -193,7 +193,7 @@ export async function POST(request: NextRequest) {
       // Check if there are more submissions
       const nextOffset = submissionsData.paging?.offset
       if (nextOffset && submissions.length > 0) {
-        offset = nextOffset
+        submissionsOffset = nextOffset
       } else {
         hasMoreSubmissions = false
       }
