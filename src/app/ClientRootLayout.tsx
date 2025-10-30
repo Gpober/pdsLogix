@@ -20,11 +20,12 @@ import {
   LogOut,
 } from "lucide-react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import Image from "next/image"
 import LoadingScreenSpinner from './LoadingScreen'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { handlePkceCallbackFromUrl } from '@/lib/supabase/pkce-callback-handler'
+import { createClient } from '@/lib/supabase/client'
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -77,16 +78,97 @@ const navigation = [
 ]
 
 export default function ClientRootLayout({ children }: { children: React.ReactNode }) {
+  // ✅ Handle PKCE callback first
   handlePkceCallbackFromUrl()
 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarVisible, setSidebarVisible] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [sessionTransferred, setSessionTransferred] = useState(false)
   const pathname = usePathname()
+  const router = useRouter()
   const { user, loading: authLoading, signOut, getFilteredNavigation } = useAuth()
+  const supabase = createClient()
 
   const filteredNavigation = user ? getFilteredNavigation(navigation) : []
 
+  // ✅ NEW: Handle session transfer from platform login (for super admin access)
+  useEffect(() => {
+    async function handleSessionTransfer() {
+      // Skip if on login page or already transferred
+      if (pathname === '/login' || sessionTransferred) {
+        return
+      }
+
+      try {
+        // Check for session in URL hash (from platform login redirect)
+        const hash = window.location.hash.substring(1)
+        const params = new URLSearchParams(hash)
+        
+        const accessToken = params.get('access_token')
+        const refreshToken = params.get('refresh_token')
+        const isSuperAdmin = params.get('super_admin') === 'true'
+
+        if (accessToken && refreshToken) {
+          console.log('🔄 Transferring session from platform login...')
+          
+          // Set the session from URL parameters
+          const { data, error } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          })
+
+          if (error) {
+            console.error('❌ Failed to set session:', error)
+            return
+          }
+
+          // Clean up URL (remove hash)
+          window.history.replaceState({}, document.title, window.location.pathname + window.location.search)
+
+          // Verify access to this subdomain
+          const currentSubdomain = window.location.hostname.split('.')[0]
+          
+          if (isSuperAdmin) {
+            console.log('✅ Super admin access granted')
+            setSessionTransferred(true)
+            // Force reload to pick up new session
+            window.location.reload()
+            return
+          }
+
+          // Regular user - verify they belong to this organization
+          const { data: userData } = await supabase
+            .from('users')
+            .select('organization_id, organizations(subdomain)')
+            .eq('id', data.user.id)
+            .single()
+
+          const userSubdomain = (userData as any)?.organizations?.subdomain
+
+          if (userSubdomain === currentSubdomain) {
+            console.log('✅ User belongs to this organization')
+            setSessionTransferred(true)
+            // Force reload to pick up new session
+            window.location.reload()
+            return
+          }
+
+          // User doesn't belong to this organization
+          console.error('❌ User does not have access to this organization')
+          alert('You do not have access to this organization')
+          await supabase.auth.signOut()
+          window.location.href = 'https://iamcfo.com/login'
+        }
+      } catch (error) {
+        console.error('Session transfer error:', error)
+      }
+    }
+
+    handleSessionTransfer()
+  }, [pathname, sessionTransferred, supabase])
+
+  // Existing loading logic
   useEffect(() => {
     const timer = setTimeout(() => setIsLoading(false), 1500)
     return () => clearTimeout(timer)
