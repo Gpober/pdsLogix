@@ -1,11 +1,14 @@
 'use client'
-
 import { useEffect } from 'react'
 
 export default function ClientLoginPage() {
   useEffect(() => {
-    // Redirect to platform login
-    window.location.href = 'https://iamcfo.com/login'
+    // Get the full current URL (the client subdomain page they were trying to access)
+    const currentUrl = window.location.href.split('#')[0] // Remove any hash
+    const returnTo = encodeURIComponent(currentUrl)
+    
+    // Redirect to platform login WITH returnTo parameter
+    window.location.href = `https://iamcfo.com/login?returnTo=${returnTo}`
   }, [])
 
   return (
