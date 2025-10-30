@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAuthClient } from "@/lib/supabase/auth-client";
 import { getDataClient, syncDataClientSession } from "@/lib/supabase/client";
@@ -18,7 +18,6 @@ import {
   Trash2,
   MapPin,
   ChevronDown,
-  RefreshCw,
 } from "lucide-react";
 
 // I AM CFO Brand Colors
@@ -128,14 +127,9 @@ export default function DesktopPayrollSubmit() {
   const [rejectedSubmissionId, setRejectedSubmissionId] = useState<string | null>(null);
   const [rejectionNote, setRejectionNote] = useState<string | null>(null);
   
-  // [OK] UPDATED: Auto-save states (replacing manual draft button)
+  // ✅ NEW: Draft handling state
   const [draftSubmissionId, setDraftSubmissionId] = useState<string | null>(null);
-  const [isAutoSaving, setIsAutoSaving] = useState(false);
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Connecteam sync state
-  const [isSyncingConnecteam, setIsSyncingConnecteam] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
 
   // Get selected location name
   const selectedLocationName = useMemo(() => {
@@ -159,12 +153,12 @@ export default function DesktopPayrollSubmit() {
 
   const initializeUser = async () => {
     try {
-      console.log('[INFO] Desktop Payroll: Starting auth check...');
+      console.log('🔍 Desktop Payroll: Starting auth check...');
 
       const { data: { session }, error: authError } = await authClient.auth.getSession();
 
       if (authError || !session?.user) {
-        console.log('[ERROR] Desktop Payroll: No user found');
+        console.log('❌ Desktop Payroll: No user found');
         router.push("/login");
         return;
       }
@@ -174,7 +168,7 @@ export default function DesktopPayrollSubmit() {
       const user = session.user;
 
       setUserId(user.id);
-      console.log('[OK] Desktop Payroll: User authenticated:', user.email);
+      console.log('✅ Desktop Payroll: User authenticated:', user.email);
 
       // Get user info from Auth Supabase
       const { data: userRecord, error: userError } = await authClient
@@ -184,26 +178,26 @@ export default function DesktopPayrollSubmit() {
         .single();
 
       if (userError || !userRecord) {
-        console.error('[ERROR] Desktop Payroll: User record error:', userError);
+        console.error('❌ Desktop Payroll: User record error:', userError);
         showAlert('Failed to load user data. Please refresh.', 'error');
         setIsInitializing(false);
         return;
       }
 
       const role = userRecord.role as string;
-      console.log('[OK] Desktop Payroll: User role:', role);
+      console.log('✅ Desktop Payroll: User role:', role);
 
       setUserRole(role);
       setUserName(userRecord.name || user.email || 'User');
 
       // Check role permissions
       if (role !== 'employee' && role !== 'super_admin' && role !== 'admin' && role !== 'owner') {
-        console.log('[ERROR] Desktop Payroll: Access denied for role:', role);
+        console.log('❌ Desktop Payroll: Access denied for role:', role);
         router.push('/dashboard');
         return;
       }
 
-      console.log('[OK] Desktop Payroll: Access granted');
+      console.log('✅ Desktop Payroll: Access granted');
 
       // Load locations from location_managers table in Client Supabase
       const { data: locationManagerData, error: locMgrError } = await dataSupabase
@@ -212,21 +206,21 @@ export default function DesktopPayrollSubmit() {
         .eq('user_id', user.id);
 
       if (locMgrError) {
-        console.error('[ERROR] Desktop Payroll: Error fetching location_managers:', locMgrError);
+        console.error('❌ Desktop Payroll: Error fetching location_managers:', locMgrError);
         showAlert('Failed to load your locations. Please contact support.', 'error');
         setIsInitializing(false);
         return;
       }
 
       if (!locationManagerData || locationManagerData.length === 0) {
-        console.error('[ERROR] Desktop Payroll: No locations found for user');
+        console.error('❌ Desktop Payroll: No locations found for user');
         showAlert('You are not assigned to any locations. Please contact support.', 'error');
         setIsInitializing(false);
         return;
       }
 
       const locationIds = locationManagerData.map(lm => lm.location_id);
-      console.log('[OK] Desktop Payroll: User has access to locations:', locationIds);
+      console.log('✅ Desktop Payroll: User has access to locations:', locationIds);
 
       // Fetch location details
       const { data: locationsData, error: locError } = await dataSupabase
@@ -236,7 +230,7 @@ export default function DesktopPayrollSubmit() {
         .order('name');
 
       if (locError) {
-        console.error('[ERROR] Desktop Payroll: Error fetching locations:', locError);
+        console.error('❌ Desktop Payroll: Error fetching locations:', locError);
         showAlert('Failed to load location details.', 'error');
         setIsInitializing(false);
         return;
@@ -247,12 +241,12 @@ export default function DesktopPayrollSubmit() {
       // Auto-select first location
       if (locationsData && locationsData.length > 0) {
         setSelectedLocationId(locationsData[0].id);
-        console.log('[OK] Desktop Payroll: Auto-selected location:', locationsData[0].name);
+        console.log('✅ Desktop Payroll: Auto-selected location:', locationsData[0].name);
       }
 
       setIsInitializing(false);
     } catch (error) {
-      console.error('[ERROR] Desktop Payroll: Critical error:', error);
+      console.error('❌ Desktop Payroll: Critical error:', error);
       showAlert('Something went wrong. Please try again.', 'error');
       setIsInitializing(false);
     }
@@ -286,7 +280,7 @@ export default function DesktopPayrollSubmit() {
       }
 
       if (rejected) {
-        console.log('[SYNC] Found rejected submission:', rejected.id);
+        console.log('🔄 Found rejected submission:', rejected.id);
         setRejectedSubmissionId(rejected.id);
         setRejectionNote(rejected.rejection_note);
         setDraftSubmissionId(null); // Clear draft if rejected exists
@@ -309,7 +303,7 @@ export default function DesktopPayrollSubmit() {
         return;
       }
 
-      // [OK] NEW: Check for draft submission if no rejected found
+      // ✅ NEW: Check for draft submission if no rejected found
       const { data: draft, error: draftError } = await dataSupabase
         .from('payroll_submissions')
         .select('*')
@@ -320,13 +314,13 @@ export default function DesktopPayrollSubmit() {
         .maybeSingle();
 
       if (draft) {
-        console.log('[DRAFT] Found draft submission:', draft.id);
+        console.log('📝 Found draft submission:', draft.id);
         setDraftSubmissionId(draft.id);
         setRejectedSubmissionId(null);
         setRejectionNote(null);
         
         showAlert(
-          'Draft loaded! Continue where you left off.',
+          '📝 Draft loaded! Continue where you left off.',
           'info'
         );
 
@@ -336,7 +330,7 @@ export default function DesktopPayrollSubmit() {
       }
 
       // No rejected or draft submission, load normally
-      console.log('[OK] No draft or rejected submissions found');
+      console.log('✅ No draft or rejected submissions found');
       await loadEmployees();
     } catch (error) {
       console.error("Error loading draft/rejected submission:", error);
@@ -346,7 +340,7 @@ export default function DesktopPayrollSubmit() {
     }
   };
 
-  // [OK] NEW: Extracted common logic for loading submission data
+  // ✅ NEW: Extracted common logic for loading submission data
   const loadSubmissionData = async (submissionId: string) => {
     // Load the submission details
     const { data: details, error: detailsError } = await dataSupabase
@@ -418,7 +412,7 @@ export default function DesktopPayrollSubmit() {
     });
 
     setEmployees(rows);
-    console.log('[OK] Loaded', rows.length, 'employees with submission data pre-filled');
+    console.log('✅ Loaded', rows.length, 'employees with submission data pre-filled');
   };
 
   const loadEmployees = async () => {
@@ -446,7 +440,7 @@ export default function DesktopPayrollSubmit() {
       }));
 
       setEmployees(rows);
-      console.log('[OK] Desktop Payroll: Loaded', rows.length, 'employees');
+      console.log('✅ Desktop Payroll: Loaded', rows.length, 'employees');
     } catch (error) {
       console.error("Error loading employees:", error);
       showAlert("Failed to load employees", "error");
@@ -485,9 +479,6 @@ export default function DesktopPayrollSubmit() {
       updated[index] = emp;
       return updated;
     });
-    
-    // [OK] Trigger auto-save after input change
-    triggerAutoSave();
   };
 
   const totalAmount = useMemo(() => {
@@ -551,7 +542,7 @@ export default function DesktopPayrollSubmit() {
 
       if (error) throw error;
 
-      showAlert(`Employee ${newEmployee.first_name} ${newEmployee.last_name} added successfully!`, "success");
+      showAlert(`✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added successfully!`, "success");
       
       // Reset form
       setNewEmployee({
@@ -576,11 +567,14 @@ export default function DesktopPayrollSubmit() {
     }
   };
 
-  // [OK] UPDATED: Auto-save function (debounced, silent background saves)
-  const autoSaveDraft = useCallback(async (employeesData: Employee[]) => {
-    if (!selectedLocationId || !userId) return;
+  // ✅ NEW: Save Draft Function
+  const handleSaveDraft = async () => {
+    if (!selectedLocationId || !userId) {
+      showAlert("Missing location or user information", "error");
+      return;
+    }
 
-    const employeesWithData = employeesData.filter(
+    const employeesWithData = employees.filter(
       (emp) =>
         (emp.compensation_type === "hourly" && parseFloat(emp.hours) > 0) ||
         (emp.compensation_type === "production" && parseFloat(emp.units) > 0) ||
@@ -588,11 +582,12 @@ export default function DesktopPayrollSubmit() {
     );
 
     if (employeesWithData.length === 0) {
-      // No data to save, clear any existing draft
+      showAlert("Please enter hours or units for at least one employee before saving draft", "error");
       return;
     }
 
-    setIsAutoSaving(true);
+    setIsSavingDraft(true);
+
     try {
       const payDateObj = new Date(payDate);
       const dayOfWeek = payDateObj.getDay();
@@ -606,6 +601,8 @@ export default function DesktopPayrollSubmit() {
 
       if (existingSubmissionId) {
         // UPDATE existing submission as draft
+        console.log('🔄 Updating existing submission as draft:', existingSubmissionId);
+        
         const { error: updateError } = await dataSupabase
           .from('payroll_submissions')
           .update({
@@ -616,17 +613,18 @@ export default function DesktopPayrollSubmit() {
             rejected_by: null,
             rejected_at: null,
             rejection_note: null,
-            updated_at: new Date().toISOString(),
           })
           .eq('id', existingSubmissionId);
 
         if (updateError) throw updateError;
 
         // Delete old details
-        await dataSupabase
+        const { error: deleteError } = await dataSupabase
           .from('payroll_entries')
           .delete()
           .eq('submission_id', existingSubmissionId);
+
+        if (deleteError) throw deleteError;
 
         // Insert new details
         const details = employeesWithData.map((emp) => ({
@@ -653,6 +651,8 @@ export default function DesktopPayrollSubmit() {
 
       } else {
         // CREATE new draft submission
+        console.log('✨ Creating new draft submission');
+        
         const { data: submission, error: submissionError } = await dataSupabase
           .from("payroll_submissions")
           .insert({
@@ -692,123 +692,13 @@ export default function DesktopPayrollSubmit() {
         setDraftSubmissionId(submission.id);
       }
 
-      setLastSavedAt(new Date());
+      showAlert("✅ Draft saved! You can return later to complete.", "success");
 
     } catch (error: any) {
-      console.error('Auto-save error:', error);
-      // Silent fail - don't show alert to user since auto-save is background
+      console.error("Save draft error:", error);
+      showAlert(error.message || "Failed to save draft", "error");
     } finally {
-      setIsAutoSaving(false);
-    }
-  }, [selectedLocationId, userId, payDate, payrollGroup, totalAmount, draftSubmissionId, rejectedSubmissionId, dataSupabase]);
-
-  // [OK] NEW: Trigger auto-save with debounce (2 seconds after last change)
-  const triggerAutoSave = useCallback(() => {
-    // Clear existing timeout
-    if (autoSaveTimeoutRef.current) {
-      clearTimeout(autoSaveTimeoutRef.current);
-    }
-
-    // Set new timeout (2 seconds after last change)
-    autoSaveTimeoutRef.current = setTimeout(() => {
-      autoSaveDraft(employees);
-    }, 2000);
-  }, [employees, autoSaveDraft]);
-
-  // [OK] Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // [OK] NEW: Connecteam sync function
-  const handleSyncConnecteam = async () => {
-    if (!selectedLocationId) return;
-
-    setIsSyncingConnecteam(true);
-    try {
-      const employeeEmails = employees
-        .filter(emp => emp.email && emp.compensation_type === 'hourly')
-        .map(emp => emp.email?.toLowerCase())
-        .filter(Boolean) as string[];
-
-      if (employeeEmails.length === 0) {
-        showAlert('No hourly employees with emails found for Connecteam sync', 'error');
-        return;
-      }
-
-      const payDateObj = new Date(payDate);
-      const dayOfWeek = payDateObj.getDay();
-      const daysToFriday = dayOfWeek === 5 ? 0 : dayOfWeek < 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
-      const periodEnd = new Date(payDateObj);
-      periodEnd.setDate(payDateObj.getDate() + daysToFriday - 1);
-      const periodStart = new Date(periodEnd);
-      periodStart.setDate(periodEnd.getDate() - 6);
-
-      console.log('[SYNC] Syncing hours for employees:', employeeEmails);
-      console.log('[DATES] Period:', periodStart.toISOString().split("T")[0], 'to', periodEnd.toISOString().split("T")[0]);
-      console.log('[GROUP] Payroll Group:', payrollGroup);
-
-      const response = await fetch('/api/connecteam/hours', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          periodStart: periodStart.toISOString().split("T")[0],
-          periodEnd: periodEnd.toISOString().split("T")[0],
-          employeeEmails: employeeEmails,
-          payrollGroup: payrollGroup,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to sync from Connecteam');
-      }
-
-      const result = await response.json();
-      console.log('[OK] Connecteam sync result:', result);
-
-      if (result.hours && Object.keys(result.hours).length > 0) {
-        let syncedCount = 0;
-
-        const updatedEmployees = employees.map(emp => {
-          if (emp.compensation_type !== 'hourly' || !emp.email) return emp;
-
-          const email = emp.email.toLowerCase();
-          const syncedHours = result.hours[email];
-
-          if (syncedHours !== undefined && syncedHours > 0) {
-            syncedCount++;
-            const hoursStr = syncedHours.toString();
-            return {
-              ...emp,
-              hours: hoursStr,
-              amount: syncedHours * (emp.hourly_rate || 0)
-            };
-          }
-          return emp;
-        });
-
-        setEmployees(updatedEmployees);
-
-        if (syncedCount > 0) {
-          showAlert(`Synced hours for ${syncedCount} employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`, 'success');
-          // [OK] Trigger auto-save after syncing
-          triggerAutoSave();
-        } else {
-          showAlert('No hours found in Connecteam for this period', 'error');
-        }
-      } else {
-        showAlert('No hours returned from Connecteam', 'error');
-      }
-    } catch (error: any) {
-      console.error('[ERROR] Connecteam sync error:', error);
-      showAlert(error.message || 'Failed to sync from Connecteam', 'error');
-    } finally {
-      setIsSyncingConnecteam(false);
+      setIsSavingDraft(false);
     }
   };
 
@@ -842,12 +732,12 @@ export default function DesktopPayrollSubmit() {
       const periodStart = new Date(periodEnd);
       periodStart.setDate(periodEnd.getDate() - 6);
 
-      // [OK] Check if updating existing draft or rejected submission
+      // ✅ Check if updating existing draft or rejected submission
       const existingSubmissionId = draftSubmissionId || rejectedSubmissionId;
 
       if (existingSubmissionId) {
         // UPDATE existing submission (draft or rejected) to pending
-        console.log(`[SYNC] Updating existing submission (${rejectedSubmissionId ? 'REJECTED' : 'DRAFT'}):`, existingSubmissionId);
+        console.log(`🔄 Updating existing submission (${rejectedSubmissionId ? 'REJECTED' : 'DRAFT'}):`, existingSubmissionId);
         
         const { error: updateError } = await dataSupabase
           .from('payroll_submissions')
@@ -892,7 +782,7 @@ export default function DesktopPayrollSubmit() {
 
         if (detailsError) throw detailsError;
 
-        showAlert(rejectedSubmissionId ? "Payroll resubmitted for approval!" : "Draft submitted for approval!", "success");
+        showAlert(rejectedSubmissionId ? "✅ Payroll resubmitted for approval!" : "✅ Draft submitted for approval!", "success");
         
         // Clear draft/rejection state and reset form
         setRejectedSubmissionId(null);
@@ -905,7 +795,7 @@ export default function DesktopPayrollSubmit() {
 
       } else {
         // CREATE new submission (normal flow)
-        console.log('[DRAFT] Creating new submission');
+        console.log('📝 Creating new submission');
         
         const { data: submission, error: submissionError } = await dataSupabase
           .from("payroll_submissions")
@@ -945,7 +835,7 @@ export default function DesktopPayrollSubmit() {
 
         if (detailsError) throw detailsError;
 
-        showAlert("Payroll submitted successfully!", "success");
+        showAlert("✅ Payroll submitted successfully!", "success");
         
         // Reset form
         setTimeout(() => {
@@ -977,18 +867,6 @@ export default function DesktopPayrollSubmit() {
       style: "currency",
       currency: "USD",
     }).format(amount);
-  };
-
-  const formatTimeAgo = (date: Date): string => {
-    const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
-    if (seconds < 10) return 'just now';
-    if (seconds < 60) return `${seconds} seconds ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
-    const days = Math.floor(hours / 24);
-    return `${days} day${days !== 1 ? 's' : ''} ago`;
   };
 
   if (isInitializing) {
@@ -1329,7 +1207,7 @@ export default function DesktopPayrollSubmit() {
                                 style={{ borderColor: BRAND_COLORS.gray[300] }}
                               />
                             ) : (
-                              <span className="text-sm text-gray-400">-</span>
+                              <span className="text-sm text-gray-400">—</span>
                             )}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
@@ -1376,53 +1254,35 @@ export default function DesktopPayrollSubmit() {
                     <Plus size={18} />
                     Add Employee
                   </button>
-                  {/* [OK] NEW: Connecteam Sync Button */}
-                  <button
-                    onClick={handleSyncConnecteam}
-                    disabled={isSyncingConnecteam}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ backgroundColor: '#9333EA' }}
-                  >
-                    {isSyncingConnecteam ? (
-                      <>
-                        <RefreshCw size={18} className="animate-spin" />
-                        Syncing...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw size={18} />
-                        Sync Hours
-                      </>
-                    )}
-                  </button>
                 </div>
-                
-                {/* [OK] AUTO-SAVE STATUS INDICATOR (replaces Save Draft button) */}
-                <div className="flex items-center gap-4">
-                  {(isAutoSaving || lastSavedAt) && (
-                    <div className="flex items-center gap-2 text-sm" style={{ color: BRAND_COLORS.gray[600] }}>
-                      {isAutoSaving ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent"></div>
-                          <span>Saving draft...</span>
-                        </>
-                      ) : lastSavedAt ? (
-                        <>
-                          <CheckCircle2 size={16} style={{ color: BRAND_COLORS.success }} />
-                          <span style={{ color: BRAND_COLORS.success }}>
-                            Draft saved {formatTimeAgo(lastSavedAt)}
-                          </span>
-                        </>
-                      ) : null}
-                    </div>
+                {/* ✅ NEW: Save Draft Button */}
+                <button
+                  onClick={handleSaveDraft}
+                  disabled={isSavingDraft || totalAmount === 0}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: BRAND_COLORS.warning }}
+                >
+                  {isSavingDraft ? (
+                    <>
+                      <div
+                        className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"
+                      ></div>
+                      Saving Draft...
+                    </>
+                  ) : (
+                    <>
+                      <Clock size={20} />
+                      {draftSubmissionId ? 'Update Draft' : 'Save as Draft'}
+                    </>
                   )}
-                  
-                  {/* Submit Button */}
-                  <button
-                    onClick={handleSubmit}
-                    disabled={isSubmitting || totalAmount === 0}
-                    className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ backgroundColor: BRAND_COLORS.success }}
+                </button>
+                
+                {/* Submit Button */}
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || totalAmount === 0}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: BRAND_COLORS.success }}
                 >
                   {isSubmitting ? (
                     <>
