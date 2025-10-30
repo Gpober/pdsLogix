@@ -1,5 +1,5 @@
 // app/api/connecteam/hours/route.ts
-// SIMPLIFIED: No auth validation (relies on client-side session check)
+// DEBUG VERSION - Will show us what Connecteam actually returns
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
@@ -10,14 +10,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { periodStart, periodEnd, employeeEmails, payrollGroup } = body
 
-    if (!periodStart || !periodEnd || !employeeEmails || !payrollGroup) {
-      console.error('❌ Missing required fields')
-      return NextResponse.json(
-        { error: 'Missing required fields: periodStart, periodEnd, employeeEmails, payrollGroup' },
-        { status: 400 }
-      )
-    }
-
     console.log('📅 Period:', periodStart, 'to', periodEnd)
     console.log('👥 Payroll Group:', payrollGroup)
     console.log('📧 Employee emails:', employeeEmails)
@@ -26,6 +18,10 @@ export async function POST(request: NextRequest) {
     const connecteamApiKey = process.env.CONNECTEAM_API_KEY
     const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A
     const timeClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B
+
+    console.log('🔑 Connecteam API Key:', connecteamApiKey ? `${connecteamApiKey.substring(0, 10)}...` : 'MISSING')
+    console.log('🔑 Time Clock ID A:', timeClockIdA || 'MISSING')
+    console.log('🔑 Time Clock ID B:', timeClockIdB || 'MISSING')
 
     if (!connecteamApiKey) {
       console.error('❌ Missing CONNECTEAM_API_KEY')
@@ -62,19 +58,41 @@ export async function POST(request: NextRequest) {
     })
 
     console.log('📡 Connecteam response status:', connecteamResponse.status)
+    console.log('📡 Connecteam response headers:', Object.fromEntries(connecteamResponse.headers.entries()))
+
+    // ✅ Get response as text first to see what we're getting
+    const responseText = await connecteamResponse.text()
+    console.log('📄 Connecteam raw response (first 1000 chars):', responseText.substring(0, 1000))
 
     if (!connecteamResponse.ok) {
-      const errorText = await connecteamResponse.text()
-      console.error('❌ Connecteam API error:', connecteamResponse.status, errorText)
+      console.error('❌ Connecteam API error:', connecteamResponse.status)
       return NextResponse.json(
-        { error: `Connecteam API returned ${connecteamResponse.status}: ${errorText}` },
+        { 
+          error: `Connecteam API returned ${connecteamResponse.status}`,
+          details: responseText.substring(0, 500),
+          url: connecteamUrl
+        },
         { status: 502 }
       )
     }
 
-    const connecteamData = await connecteamResponse.json()
-    console.log('✅ Connecteam response received, processing...')
-    console.log('📊 Raw data structure:', JSON.stringify(connecteamData, null, 2).substring(0, 1000))
+    // Try to parse as JSON
+    let connecteamData
+    try {
+      connecteamData = JSON.parse(responseText)
+      console.log('✅ Successfully parsed JSON')
+    } catch (parseError) {
+      console.error('❌ Failed to parse response as JSON')
+      return NextResponse.json(
+        { 
+          error: 'Connecteam returned non-JSON response',
+          responsePreview: responseText.substring(0, 500)
+        },
+        { status: 502 }
+      )
+    }
+
+    console.log('📊 Connecteam data structure:', JSON.stringify(connecteamData, null, 2).substring(0, 1000))
 
     // ✅ Process the data and calculate total hours per employee
     const hoursMap: Record<string, number> = {}
@@ -95,7 +113,7 @@ export async function POST(request: NextRequest) {
       ? connecteamData.entries
       : []
 
-    console.log(`📝 Processing ${entries.length} entries from Connecteam`)
+    console.log(`📝 Found ${entries.length} entries from Connecteam`)
 
     entries.forEach((entry: any) => {
       const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
@@ -105,23 +123,19 @@ export async function POST(request: NextRequest) {
         let hours = 0
         
         if (entry.duration) {
-          // If duration is in minutes
           hours = entry.duration / 60
           console.log(`  ⏱️  ${userEmail}: ${entry.duration} minutes = ${hours.toFixed(2)} hours`)
         } else if (entry.clockIn && entry.clockOut) {
-          // Calculate from timestamps
           const clockIn = new Date(entry.clockIn).getTime()
           const clockOut = new Date(entry.clockOut).getTime()
-          hours = (clockOut - clockIn) / (1000 * 60 * 60) // Convert ms to hours
-          console.log(`  🕐 ${userEmail}: ${new Date(entry.clockIn).toLocaleString()} to ${new Date(entry.clockOut).toLocaleString()} = ${hours.toFixed(2)} hours`)
+          hours = (clockOut - clockIn) / (1000 * 60 * 60)
+          console.log(`  🕐 ${userEmail}: ${hours.toFixed(2)} hours`)
         } else if (entry.totalTime) {
-          // Some APIs return totalTime in seconds
           hours = entry.totalTime / 3600
-          console.log(`  ⌚ ${userEmail}: ${entry.totalTime} seconds = ${hours.toFixed(2)} hours`)
+          console.log(`  ⌚ ${userEmail}: ${hours.toFixed(2)} hours`)
         } else if (entry.hours) {
-          // Direct hours value
           hours = parseFloat(entry.hours)
-          console.log(`  ✅ ${userEmail}: ${hours.toFixed(2)} hours (direct)`)
+          console.log(`  ✅ ${userEmail}: ${hours.toFixed(2)} hours`)
         }
 
         if (hours > 0) {
@@ -150,6 +164,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('❌ API route error:', error)
+    console.error('❌ Error message:', error.message)
     console.error('❌ Error stack:', error.stack)
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
