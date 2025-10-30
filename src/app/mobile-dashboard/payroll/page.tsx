@@ -1,1883 +1,2162 @@
-'use client'
+"use client";
 
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
-import { getAuthClient } from '@/lib/supabase/auth-client'
-import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
-import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar, MapPin, ChevronDown, RefreshCw, Hash } from 'lucide-react'
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+} from "react";
+import {
+  Menu,
+  X,
+  ChevronLeft,
+  Award,
+  Target,
+  Home,
+  Clock,
+  Check,
+  AlertCircle,
+  User,
+  ChevronRight,
+  CheckCircle,
+  XCircle,
+  ClipboardCheck,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { getAuthClient } from '@/lib/supabase/auth-client';
+import { getDataClient, syncDataClientSession } from '@/lib/supabase/client';
 
-// Types
-type PayrollGroup = 'A' | 'B'
-type CompensationType = 'hourly' | 'production' | 'fixed'
-
-type Employee = {
-  id: string
-  first_name: string
-  last_name: string
-  email: string | null
-  payroll_group: PayrollGroup
-  compensation_type: CompensationType
-  hourly_rate: number | null
-  piece_rate: number | null
-  fixed_pay: number | null
-}
-
-type EmployeeRow = Employee & {
-  hours: string
-  units: string
-  count: string
-  adjustment: string  // NEW: For deductions/bonuses on fixed-pay employees
-  notes: string
-  amount: number
-}
-
-type Location = {
-  id: string
-  name: string
-}
-
-type Alert = {
-  type: 'success' | 'error'
-  message: string
-}
-
-// Date helper functions
-function parseLocalDate(dateStr: string): Date | null {
-  const parts = dateStr.split('-').map(Number)
-  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) return null
-  const [year, month, day] = parts
-  return new Date(year, month - 1, day)
-}
-
-function formatInputDate(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
-
-function formatCurrency(
-  value: number | string | null | undefined,
-  fractionDigits = 2,
-): string {
-  const numericValue =
-    typeof value === 'string'
-      ? Number.parseFloat(value)
-      : typeof value === 'number'
-      ? value
-      : 0
-
-  const safeValue = Number.isFinite(numericValue) ? numericValue : 0
-
-  return safeValue.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
-  })
-}
-
-function calculatePayrollInfo(payDateStr: string): {
-  payrollGroup: PayrollGroup
-  periodStart: string
-  periodEnd: string
-} {
-  const payDate = parseLocalDate(payDateStr)
-  if (!payDate) {
-    return { payrollGroup: 'A', periodStart: payDateStr, periodEnd: payDateStr }
+// I AM CFO Brand Colors
+const BRAND_COLORS = {
+  primary: '#56B6E9',
+  secondary: '#3A9BD1',
+  tertiary: '#7CC4ED',
+  accent: '#2E86C1',
+  success: '#27AE60',
+  warning: '#F39C12',
+  danger: '#E74C3C',
+  gray: {
+    50: '#F8FAFC',
+    100: '#F1F5F9',
+    200: '#E2E8F0'
   }
+};
+
+interface PropertySummary {
+  name: string;
+  expenses?: number;
+}
+
+interface Category {
+  name: string;
+  total: number;
+}
+
+interface Transaction {
+  date: string;
+  amount: number;
+  running: number;
+  payee?: string | null;
+  memo?: string | null;
+  customer?: string | null;
+  entryNumber?: string;
+}
+
+interface PendingSubmission {
+  id: string;
+  location_id: string;
+  location_name?: string;
+  pay_date: string;
+  payroll_group: 'A' | 'B';
+  period_start: string;
+  period_end: string;
+  total_amount: number;
+  employee_count: number;
+  submitted_by: string;
+  submitted_at: string;
+  status: string;
+}
+
+interface LocationStatus {
+  location_id: string;
+  location_name: string;
+  submission_id?: string;
+  status: 'approved' | 'pending' | 'not_submitted';
+  total_amount?: number;
+  employee_count?: number;
+  pay_date?: string;
+  payroll_group?: 'A' | 'B';
+  submitted_at?: string;
+}
+
+interface SubmissionDetail {
+  employee_id: string;
+  employee_name: string;
+  hours: number | null;
+  units: number | null;
+  amount: number;
+  notes: string | null;
+  organization_id: string; // ✅ ADDED - Required for payments insert
+}
+
+type ViewMode = "overview" | "summary" | "report" | "detail" | "approvals";
+type RankingMetric = "payrollDept" | "payrollEmployee";
+
+const getMonthName = (m: number) =>
+  new Date(0, m - 1).toLocaleString("en-US", { month: "long" });
+
+const formatDate = (date: string) =>
+  new Date(date).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+
+export default function PayrollDashboard() {
+  const router = useRouter();
+  const authClient = useMemo(() => getAuthClient(), []);
+  const dataClient = useMemo(() => getDataClient(), []);
+  const supabase = dataClient;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [reportPeriod, setReportPeriod] = useState<
+    "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly"
+  >("Monthly");
+  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
+  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
+  const [view, setView] = useState<ViewMode>("overview");
+  const [properties, setProperties] = useState<PropertySummary[]>([]);
+  const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [rankingMetric, setRankingMetric] = useState<RankingMetric | null>(null);
+  const [employeeTotals, setEmployeeTotals] = useState<Category[]>([]);
+  const [employeeBreakdown, setEmployeeBreakdown] = useState<Record<string, { total: number; payments: Transaction[] }>>({});
+  const [payrollTotals, setPayrollTotals] = useState<number>(0);
   
-  const periodEnd = new Date(payDate)
-  periodEnd.setDate(payDate.getDate() - 9)
-  
-  const periodStart = new Date(periodEnd)
-  periodStart.setDate(periodEnd.getDate() - 13)
-  
-  const referenceDate = new Date(2025, 0, 3)
-  const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
-  const weeksDifference = Math.floor(daysDifference / 7)
-  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'B' : 'A'
-  
-  return {
-    payrollGroup,
-    periodStart: formatInputDate(periodStart),
-    periodEnd: formatInputDate(periodEnd),
-  }
-}
+  // Approval States
+  const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
+  const [allLocations, setAllLocations] = useState<LocationStatus[]>([]);
+  const [selectedSubmission, setSelectedSubmission] = useState<PendingSubmission | null>(null);
+  const [submissionDetails, setSubmissionDetails] = useState<SubmissionDetail[]>([]);
+  const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+  const [rejectionNote, setRejectionNote] = useState(''); // ✅ NEW: For rejection notes
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [subdomainOrgId, setSubdomainOrgId] = useState<string | null>(null);
 
-function getNextFriday(): string {
-  const today = new Date()
-  const dayOfWeek = today.getDay()
-  const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 6
-  const nextFriday = new Date(today)
-  nextFriday.setDate(today.getDate() + daysUntilFriday)
-  return formatInputDate(nextFriday)
-}
-
-function formatDateRange(startDate: string, endDate: string): string {
-  const start = parseLocalDate(startDate)
-  const end = parseLocalDate(endDate)
-  if (!start || !end) return `${startDate} - ${endDate}`
-
-  const startMonth = start.toLocaleDateString('en-US', { month: 'short' })
-  const startDay = start.getDate()
-  const endMonth = end.toLocaleDateString('en-US', { month: 'short' })
-  const endDay = end.getDate()
-
-  if (startMonth === endMonth) {
-    return `${startMonth} ${startDay}-${endDay}`
-  } else {
-    return `${startMonth} ${startDay} - ${endMonth} ${endDay}`
-  }
-}
-
-function generateFridayOptions(pastCount = 6, futureCount = 12) {
-  const today = new Date()
-  const dayOfWeek = today.getDay()
-  const daysUntilNextFriday = (5 - dayOfWeek + 7) % 7
-  const nextFriday = new Date(today)
-  nextFriday.setDate(today.getDate() + daysUntilNextFriday)
-
-  const startDate = new Date(nextFriday)
-  startDate.setDate(nextFriday.getDate() - pastCount * 7)
-
-  const options: { value: string; label: string }[] = []
-  for (let i = 0; i <= pastCount + futureCount; i++) {
-    const optionDate = new Date(startDate)
-    optionDate.setDate(startDate.getDate() + i * 7)
-    options.push({
-      value: formatInputDate(optionDate),
-      label: optionDate.toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      }),
-    })
-  }
-  return options
-}
-
-export default function MobilePayrollSubmit() {
-  const router = useRouter()
-  const authClient = useMemo(() => getAuthClient(), [])
-  const dataSupabase = useMemo(() => getDataClient(), [])
-  const [loading, setLoading] = useState(true)
-  const [userId, setUserId] = useState<string | null>(null)
-  const [userName, setUserName] = useState<string>('')
-  const [availableLocations, setAvailableLocations] = useState<Location[]>([])
-  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null)
-  const [showLocationPicker, setShowLocationPicker] = useState(false)
-  const [employees, setEmployees] = useState<EmployeeRow[]>([])
-  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null)
-  const [payDate, setPayDate] = useState<string>('')
-  const [payrollGroup, setPayrollGroup] = useState<PayrollGroup>('A')
-  const [periodStart, setPeriodStart] = useState<string>('')
-  const [periodEnd, setPeriodEnd] = useState<string>('')
-  const [alert, setAlert] = useState<Alert | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isSyncingConnecteam, setIsSyncingConnecteam] = useState(false)
-  const [showAddEmployee, setShowAddEmployee] = useState(false)
-  
-  // ✅ NEW: Draft and Rejected Submission States with Auto-save
-  const [draftSubmissionId, setDraftSubmissionId] = useState<string | null>(null)
-  const [rejectedSubmissionId, setRejectedSubmissionId] = useState<string | null>(null)
-  const [rejectionNote, setRejectionNote] = useState<string | null>(null)
-  const [isAutoSaving, setIsAutoSaving] = useState(false)
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const [showEditEmployee, setShowEditEmployee] = useState(false)
-  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
-  const [swipedEmployeeId, setSwipedEmployeeId] = useState<string | null>(null)
-  const [touchStart, setTouchStart] = useState<{ x: number; y: number } | null>(null)
-  const [touchOffset, setTouchOffset] = useState(0)
-  const [newEmployee, setNewEmployee] = useState({
-    first_name: '',
-    last_name: '',
-    email: '',
-    payroll_group: 'A' as PayrollGroup,
-    compensation_type: 'hourly' as CompensationType,
-    hourly_rate: '',
-    piece_rate: '',
-    fixed_pay: '',
-  })
-
-  const fridayOptions = useMemo(() => generateFridayOptions(), [])
-
-  // Initialize pay date
-  useEffect(() => {
-    if (fridayOptions.length === 0) return
-    const nextFriday = getNextFriday()
-    const defaultDate = fridayOptions.find((option) => option.value === nextFriday)?.value ?? fridayOptions[fridayOptions.length - 1]?.value ?? nextFriday
-    setPayDate(defaultDate)
-    const info = calculatePayrollInfo(defaultDate)
-    setPayrollGroup(info.payrollGroup)
-    setPeriodStart(info.periodStart)
-    setPeriodEnd(info.periodEnd)
-  }, [fridayOptions])
-
-  // Auth check
-  useEffect(() => {
-    async function checkSession() {
-      try {
-        const { data: { session }, error } = await authClient.auth.getSession()
-        
-        // Only redirect if there's truly no session
-        if (!session) {
-          console.log('No session found, redirecting to login')
-          router.push('/login')
-          return
-        }
-
-        setUserId(session.user.id)
-        setUserName(session.user.email || 'User')
-
-        // FIX: Use location_managers table (not user_locations)
-        const { data: locationManagers, error: locError } = await dataSupabase
-          .from('location_managers')
-          .select('location_id, locations(id, name)')
-          .eq('user_id', session.user.id)
-
-        if (locError) {
-          console.error('Error loading locations:', locError)
-          // Don't throw - just log and continue
-        }
-
-        const locations = locationManagers
-          ?.map((lm: any) => lm.locations)
-          .filter(Boolean) as Location[]
-
-        console.log('Loaded locations for user:', locations)
-        setAvailableLocations(locations || [])
-
-        if (locations && locations.length === 1) {
-          setSelectedLocationId(locations[0].id)
-          await loadEmployees(locations[0].id)
-        } else if (locations && locations.length > 1) {
-          setShowLocationPicker(true)
-        } else {
-          console.warn('No locations found for user')
-          setShowLocationPicker(true)
-        }
-      } catch (error) {
-        console.error('Auth error:', error)
-        // Don't redirect on error - just finish loading
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    checkSession()
-  }, [authClient, dataSupabase, router])
-
-  // ✅ NEW: Check for draft or rejected submissions when location/payDate/payrollGroup changes
-  useEffect(() => {
-    if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
-      loadDraftOrRejected(selectedLocationId)
-    }
-  }, [selectedLocationId, payDate, payrollGroup])
-
-  async function loadEmployees(locationId: string) {
-    try {
-      const { data, error } = await dataSupabase
-        .from('employees')
-        .select('*')
-        .eq('location_id', locationId)
-        .eq('is_active', true)
-        .order('first_name')
-
-      if (error) throw error
-
-      const employeeRows: EmployeeRow[] = (data || []).map((emp: Employee) => ({
-        ...emp,
-        hours: '',
-        units: '',
-        count: '1',
-        adjustment: '0',
-        notes: '',
-        amount: 0,
-      }))
-
-      setEmployees(employeeRows)
-    } catch (error) {
-      console.error('Error loading employees:', error)
-      showAlert('error', 'Failed to load employees')
-    }
-  }
-
-  // ✅ NEW: Check for draft or rejected submissions and pre-fill data
-  async function loadDraftOrRejected(locationId: string) {
-    try {
-      console.log('🔍 Checking for draft or rejected submissions...')
-      
-      // Check for rejected submission first (higher priority)
-      const { data: rejected, error: rejectedError } = await dataSupabase
-        .from('payroll_submissions')
-        .select('*')
-        .eq('location_id', locationId)
-        .eq('pay_date', payDate)
-        .eq('payroll_group', payrollGroup)
-        .eq('status', 'rejected')
-        .maybeSingle()
-
-      if (rejected) {
-        console.log('❌ Found rejected submission:', rejected.id)
-        setRejectedSubmissionId(rejected.id)
-        setRejectionNote(rejected.rejection_note)
-        
-        // Show rejection alert
-        if (rejected.rejection_note) {
-          showAlert('error', `⚠️ Previous submission was rejected: ${rejected.rejection_note}`)
-        } else {
-          showAlert('error', '⚠️ Previous submission was rejected. Please review and correct the data below.')
-        }
-
-        await loadSubmissionData(rejected.id)
-        return
-      }
-
-      // Check for draft submission
-      const { data: draft, error: draftError } = await dataSupabase
-        .from('payroll_submissions')
-        .select('*')
-        .eq('location_id', locationId)
-        .eq('pay_date', payDate)
-        .eq('payroll_group', payrollGroup)
-        .eq('status', 'draft')
-        .maybeSingle()
-
-      if (draft) {
-        console.log('📝 Found draft submission:', draft.id)
-        setDraftSubmissionId(draft.id)
-        showAlert('success', '📝 Draft loaded! Continue where you left off.')
-        await loadSubmissionData(draft.id)
-        return
-      }
-
-      console.log('✅ No draft or rejected submissions found')
-    } catch (error) {
-      console.error('Error checking for draft/rejected:', error)
-    }
-  }
-
-  // ✅ NEW: Load submission data and pre-fill employee fields
-  async function loadSubmissionData(submissionId: string) {
-    try {
-      const { data: entries, error } = await dataSupabase
-        .from('payroll_entries')
-        .select('*')
-        .eq('submission_id', submissionId)
-
-      if (error) throw error
-
-      if (!entries || entries.length === 0) return
-
-      // Create map of previous data
-      const entriesMap = new Map(
-        entries.map(e => [
-          e.employee_id,
-          {
-            hours: e.hours?.toString() || '',
-            units: e.units?.toString() || '',
-            count: e.count?.toString() || '1',
-            adjustment: e.adjustment?.toString() || '0',
-            notes: e.notes || '',
-            amount: e.amount || 0
-          }
-        ])
-      )
-
-      // Update employees with previous data
-      setEmployees(prevEmployees => 
-        prevEmployees.map(emp => {
-          const prevData = entriesMap.get(emp.id)
-          if (prevData) {
-            return { ...emp, ...prevData }
-          }
-          return emp
-        })
-      )
-
-      console.log(`✅ Pre-filled data for ${entries.length} employees`)
-    } catch (error) {
-      console.error('Error loading submission data:', error)
-    }
-  }
-
-  const filteredEmployees = useMemo(() => {
-    return employees.filter(emp => emp.payroll_group === payrollGroup)
-  }, [employees, payrollGroup])
-
-  const totals = useMemo(() => {
-    const employeesWithData = filteredEmployees.filter(emp => {
-      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-      return false
-    })
-
-    const totalHours = filteredEmployees
-      .filter(emp => emp.compensation_type === 'hourly')
-      .reduce((sum, emp) => sum + parseFloat(emp.hours || '0'), 0)
-
-    const totalAmount = filteredEmployees.reduce((sum, emp) => sum + emp.amount, 0)
-
-    return {
-      employees: employeesWithData.length,
-      totalHours,
-      totalAmount,
-    }
-  }, [filteredEmployees])
-
-  const selectedEmployeeAdjustment =
-    selectedEmployee ? Number.parseFloat(selectedEmployee.adjustment || '0') || 0 : 0
-
-  const selectedEmployeeCount =
-    selectedEmployee ? Number.parseInt(selectedEmployee.count || '1', 10) || 0 : 0
-
-  function showAlert(type: 'success' | 'error', message: string) {
-    setAlert({ type, message })
-    setTimeout(() => setAlert(null), 4000)
-  }
-
-  function handlePayDateChange(newDate: string) {
-    setPayDate(newDate)
-    const info = calculatePayrollInfo(newDate)
-    setPayrollGroup(info.payrollGroup)
-    setPeriodStart(info.periodStart)
-    setPeriodEnd(info.periodEnd)
-  }
-
-  function handleEmployeeSelect(emp: EmployeeRow) {
-    setSelectedEmployee({ ...emp })
-  }
-
-  function handleInputChange(field: 'hours' | 'units' | 'count' | 'adjustment' | 'notes', value: string) {
-    if (!selectedEmployee) return
-
-    const updated = { ...selectedEmployee, [field]: value }
-
-    // Calculate amount based on compensation type
-    if (selectedEmployee.compensation_type === 'hourly') {
-      const hours = parseFloat(field === 'hours' ? value : updated.hours) || 0
-      updated.amount = hours * (selectedEmployee.hourly_rate || 0)
-    } else if (selectedEmployee.compensation_type === 'production') {
-      const units = parseFloat(field === 'units' ? value : updated.units) || 0
-      updated.amount = units * (selectedEmployee.piece_rate || 0)
-    } else if (selectedEmployee.compensation_type === 'fixed') {
-      const count = parseFloat(field === 'count' ? value : updated.count) || 0
-      const adjustment = parseFloat(field === 'adjustment' ? value : updated.adjustment) || 0
-      const baseAmount = count * (selectedEmployee.fixed_pay || 0)
-      updated.amount = baseAmount + adjustment
-    }
-
-    setSelectedEmployee(updated)
-  }
-
-  function handleSaveEmployee() {
-    if (!selectedEmployee) return
-
-    // Validate input based on compensation type
-    if (selectedEmployee.compensation_type === 'hourly' && parseFloat(selectedEmployee.hours || '0') <= 0) {
-      showAlert('error', 'Please enter hours worked')
-      return
-    }
-    if (selectedEmployee.compensation_type === 'production' && parseFloat(selectedEmployee.units || '0') <= 0) {
-      showAlert('error', 'Please enter units produced')
-      return
-    }
-    if (selectedEmployee.compensation_type === 'fixed' && parseFloat(selectedEmployee.count || '0') <= 0) {
-      showAlert('error', 'Please enter count (at least 1)')
-      return
-    }
-
-    const updatedEmployees = employees.map(emp =>
-      emp.id === selectedEmployee.id ? selectedEmployee : emp
-    )
-    setEmployees(updatedEmployees)
-    setSelectedEmployee(null)
-    
-    showAlert('success', `✓ ${selectedEmployee.first_name} ${selectedEmployee.last_name} updated!`)
-  }
-
-  async function handleSyncConnecteam() {
-  if (!selectedLocationId) return
-
-  setIsSyncingConnecteam(true)
-  try {
-    // Get all employee emails for this location and payroll group
-    const employeeEmails = filteredEmployees
-      .filter(emp => emp.email && emp.compensation_type === 'hourly') // Only sync hourly employees with emails
-      .map(emp => emp.email?.toLowerCase())
-      .filter(Boolean) as string[]
-
-    if (employeeEmails.length === 0) {
-      showAlert('error', 'No hourly employees with emails found for Connecteam sync')
-      return
-    }
-
-    console.log('🔄 Syncing hours for employees:', employeeEmails)
-    console.log('📅 Period:', periodStart, 'to', periodEnd)
-    console.log('👥 Payroll Group:', payrollGroup)
-
-    const response = await fetch('/api/connecteam/hours', { // FIXED: Changed from sync-hours to hours
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        periodStart: periodStart,    // FIXED: Changed from period_start
-        periodEnd: periodEnd,          // FIXED: Changed from period_end
-        employeeEmails: employeeEmails, // FIXED: Added employee emails array
-        payrollGroup: payrollGroup,    // FIXED: Added payroll group
-      }),
-    })
-
-    if (!response.ok) {
-      const error = await response.json()
-      throw new Error(error.error || 'Failed to sync from Connecteam')
-    }
-
-    const result = await response.json()
-    console.log('✅ Connecteam sync result:', result)
-    
-    if (result.hours && Object.keys(result.hours).length > 0) {
-      let syncedCount = 0
-      
-      // Update employees with synced hours
-      const updatedEmployees = employees.map(emp => {
-        if (emp.compensation_type !== 'hourly' || !emp.email) return emp
-        
-        const email = emp.email.toLowerCase()
-        const syncedHours = result.hours[email]
-        
-        if (syncedHours !== undefined && syncedHours > 0) {
-          syncedCount++
-          const hoursStr = syncedHours.toString()
-          return {
-            ...emp,
-            hours: hoursStr,
-            amount: syncedHours * (emp.hourly_rate || 0)
-          }
-        }
-        return emp
-      })
-      
-      setEmployees(updatedEmployees)
-      
-      if (syncedCount > 0) {
-        showAlert('success', `✓ Synced hours for ${syncedCount} employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`)
-      } else {
-        showAlert('error', 'No hours found in Connecteam for this period')
-      }
+  const showNotification = (
+    message: string,
+    type: 'info' | 'success' | 'error' = 'info'
+  ) => {
+    if (type === 'error') {
+      console.error(message);
+    } else if (type === 'success') {
+      console.log(message);
     } else {
-      showAlert('error', 'No hours returned from Connecteam')
+      console.info(message);
     }
-  } catch (error: any) {
-    console.error('❌ Connecteam sync error:', error)
-    showAlert('error', error.message || 'Failed to sync from Connecteam')
-  } finally {
-    setIsSyncingConnecteam(false)
-  }
-}
 
-  // ✅ NEW: Auto-save function (replaces manual Save Draft)
-  const autoSaveDraft = useCallback(async (employeesData: EmployeeRow[]) => {
-    if (!selectedLocationId || !userId) return
-
-    const employeesWithData = employeesData.filter(emp => {
-      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-      return false
-    })
-
-    if (employeesWithData.length === 0) return
-
-    setIsAutoSaving(true)
-    try {
-      const { data: locationData, error: locationError } = await dataSupabase
-        .from('locations')
-        .select('organization_id')
-        .eq('id', selectedLocationId)
-        .single()
-
-      if (locationError || !locationData?.organization_id) {
-        throw new Error('Failed to get organization ID')
-      }
-
-      const organizationId = locationData.organization_id
-      const totalAmount = employeesWithData.reduce((sum, emp) => sum + emp.amount, 0)
-      const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
-
-      if (existingSubmissionId) {
-        const { error: updateError } = await dataSupabase
-          .from('payroll_submissions')
-          .update({
-            status: 'draft',
-            total_amount: totalAmount,
-            employee_count: employeesWithData.length,
-            submitted_by: userId,
-            rejected_by: null,
-            rejected_at: null,
-            rejection_note: null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', existingSubmissionId)
-
-        if (updateError) throw updateError
-
-        await dataSupabase
-          .from('payroll_entries')
-          .delete()
-          .eq('submission_id', existingSubmissionId)
-
-        const details = employeesWithData.map(emp => ({
-          organization_id: organizationId,
-          submission_id: existingSubmissionId,
-          employee_id: emp.id,
-          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-          amount: emp.amount,
-          notes: emp.notes || null,
-          status: 'draft',
-        }))
-
-        const { error: detailsError } = await dataSupabase
-          .from('payroll_entries')
-          .insert(details)
-
-        if (detailsError) throw detailsError
-
-        setDraftSubmissionId(existingSubmissionId)
-        setRejectedSubmissionId(null)
-        setRejectionNote(null)
-
-      } else {
-        const { data: submission, error: submissionError } = await dataSupabase
-          .from('payroll_submissions')
-          .insert({
-            organization_id: organizationId,
-            location_id: selectedLocationId,
-            pay_date: payDate,
-            payroll_group: payrollGroup,
-            period_start: periodStart,
-            period_end: periodEnd,
-            total_amount: totalAmount,
-            employee_count: employeesWithData.length,
-            submitted_by: userId,
-            status: 'draft',
-          })
-          .select()
-          .single()
-
-        if (submissionError) throw submissionError
-
-        const details = employeesWithData.map(emp => ({
-          organization_id: organizationId,
-          submission_id: submission.id,
-          employee_id: emp.id,
-          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-          amount: emp.amount,
-          notes: emp.notes || null,
-          status: 'draft',
-        }))
-
-        const { error: detailsError } = await dataSupabase
-          .from('payroll_entries')
-          .insert(details)
-
-        if (detailsError) throw detailsError
-
-        setDraftSubmissionId(submission.id)
-      }
-
-      setLastSavedAt(new Date())
-      
-    } catch (error: any) {
-      console.error('Auto-save error:', error)
-    } finally {
-      setIsAutoSaving(false)
+    if (typeof window !== 'undefined') {
+      window.alert(message);
     }
-  }, [selectedLocationId, userId, payDate, payrollGroup, periodStart, periodEnd, draftSubmissionId, rejectedSubmissionId, dataSupabase])
+  };
 
-  // ✅ NEW: Trigger auto-save with debounce
-  const triggerAutoSave = useCallback(() => {
-    if (autoSaveTimeoutRef.current) {
-      clearTimeout(autoSaveTimeoutRef.current)
+  const transactionTotal = useMemo(
+    () => transactions.reduce((sum, t) => sum + t.amount, 0),
+    [transactions],
+  );
+
+  const getDateRange = useCallback(() => {
+    const makeUTCDate = (y: number, m: number, d: number) =>
+      new Date(Date.UTC(y, m, d));
+    const y = year;
+    const m = month;
+    if (reportPeriod === "Custom" && customStart && customEnd) {
+      return { start: customStart, end: customEnd };
     }
-    autoSaveTimeoutRef.current = setTimeout(() => {
-      autoSaveDraft(employees)
-    }, 2000)
-  }, [employees, autoSaveDraft])
+    if (reportPeriod === "Monthly") {
+      const startDate = makeUTCDate(y, m - 1, 1);
+      const endDate = makeUTCDate(y, m, 0);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    if (reportPeriod === "Quarterly") {
+      const qStart = Math.floor((m - 1) / 3) * 3;
+      const startDate = makeUTCDate(y, qStart, 1);
+      const endDate = makeUTCDate(y, qStart + 3, 0);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    if (reportPeriod === "Year to Date") {
+      const startDate = makeUTCDate(y, 0, 1);
+      const endDate = makeUTCDate(y, m, 0);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    if (reportPeriod === "Trailing 12") {
+      const endDate = makeUTCDate(y, m, 0);
+      const startDate = makeUTCDate(y, m - 11, 1);
+      return {
+        start: startDate.toISOString().split("T")[0],
+        end: endDate.toISOString().split("T")[0],
+      };
+    }
+    return { start: `${y}-01-01`, end: `${y}-12-31` };
+  }, [reportPeriod, month, year, customStart, customEnd]);
 
-  // Cleanup timeout on unmount
   useEffect(() => {
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current)
+    const getOrgFromSubdomain = async () => {
+      // Extract subdomain from URL
+      const hostname = window.location.hostname;
+      const parts = hostname.split('.');
+
+      // Check if we have a subdomain (e.g., pdslogix.iamcfo.com)
+      if (parts.length >= 3) {
+        const subdomain = parts[0];
+        console.log('🌐 Detected subdomain:', subdomain);
+
+        const { data: { session } } = await authClient.auth.getSession();
+
+        if (!session) {
+          return;
+        }
+
+        await syncDataClientSession(session);
+
+        // Look up organization by subdomain
+        const { data: org, error } = await dataClient
+          .from('organizations')
+          .select('id')
+          .eq('subdomain', subdomain)
+          .single();
+
+        if (!error && org) {
+          console.log('🏢 Found organization for subdomain:', org.id);
+          setSubdomainOrgId(org.id);
+        } else {
+          console.warn('⚠️ No organization found for subdomain:', subdomain);
+        }
       }
+    };
+
+    getOrgFromSubdomain();
+  }, []);
+
+  // Check auth and role
+  useEffect(() => {
+    const checkAuth = async () => {
+      console.log('🔍 Starting auth check...');
+      const { data: { session }, error: authError } = await authClient.auth.getSession();
+
+      if (authError || !session?.user) {
+        console.log('❌ Auth error or no user:', authError);
+        router.push('/login');
+        return;
+      }
+
+      await syncDataClientSession(session);
+
+      const user = session.user;
+
+      console.log('👤 User ID:', user.id);
+      setUserId(user.id);
+
+      const { data: userData, error: userError } = await authClient
+        .from('users')
+        .select('role, organization_id')
+        .eq('id', user.id)
+        .single();
+
+      console.log('📋 User data from database:', userData);
+      console.log('🏢 Organization ID:', userData?.organization_id);
+      console.log('👔 User role:', userData?.role);
+
+      if (userError || !userData) {
+        console.error('❌ User error:', userError);
+        router.push('/dashboard');
+        return;
+      }
+
+      setUserRole(userData.role);
+      setOrganizationId(userData.organization_id);
+
+      console.log('✅ State will be set - userRole:', userData.role, 'orgId:', userData.organization_id);
+
+      // Only allow admins/owners
+      if (userData.role !== 'super_admin' && userData.role !== 'admin' && userData.role !== 'owner') {
+        console.log('⛔ Access denied - role:', userData.role);
+        router.push('/dashboard');
+        return;
+      }
+
+      console.log('✅ Access granted, ready to load data');
+    };
+
+    checkAuth();
+  }, [router]);
+
+  // Load pending submissions and all locations
+  useEffect(() => {
+    console.log('🔄 useEffect triggered with:', { userRole, organizationId, subdomainOrgId });
+
+    // For super_admin, use subdomain org; for others, use their org
+    const effectiveOrgId = userRole === 'super_admin' ? subdomainOrgId : organizationId;
+
+    if (userRole && effectiveOrgId) {
+      console.log('✅ Conditions met, loading data with org:', effectiveOrgId);
+      loadPendingSubmissions(effectiveOrgId);
+      loadAllLocations(effectiveOrgId);
+    } else {
+      console.log('⚠️ Conditions NOT met:', {
+        hasRole: !!userRole,
+        hasOrgId: !!organizationId,
+        hasSubdomainOrgId: !!subdomainOrgId,
+        effectiveOrgId,
+      });
     }
-  }, [])
+  }, [userRole, organizationId, subdomainOrgId]);
 
- async function handleSubmit() {
-  if (!selectedLocationId || !userId) {
-    showAlert('error', 'Missing required data')
-    return
+  const loadPendingSubmissions = async (orgId?: string) => {
+    console.log('📥 Loading pending submissions for org:', orgId);
+
+    let query = dataClient
+      .from('payroll_submissions')
+      .select('*')
+      .eq('status', 'pending')
+      .order('submitted_at', { ascending: false });
+
+    if (orgId) {
+      query = query.eq('organization_id', orgId);
+    }
+
+    const { data: submissions, error } = await query;
+
+    if (error) {
+      console.error('❌ Error loading pending submissions:', error);
+      return;
+    }
+
+    console.log('📊 Found submissions:', submissions?.length || 0, submissions);
+
+    // Get location names
+    const locationsIds = [...new Set(submissions?.map(s => s.location_id))];
+    console.log('📍 Location IDs to fetch:', locationsIds);
+
+    const { data: locations } = await dataClient
+      .from('locations')
+      .select('id, name')
+      .in('id', locationsIds);
+
+    console.log('📍 Locations found:', locations);
+
+    const locationsMap = new Map(locations?.map(l => [l.id, l.name]));
+
+    const submissionsWithNames = (submissions || []).map(s => ({
+      ...s,
+      location_name: locationsMap.get(s.location_id) || 'Unknown Location'
+    }));
+
+    console.log('✅ Final submissions with names:', submissionsWithNames);
+    setPendingSubmissions(submissionsWithNames);
+  };
+
+  const loadAllLocations = async (orgId?: string) => {
+  console.log('📥 Loading all locations for organization:', orgId);
+
+  if (!orgId) {
+    console.warn('⚠️ No organizationId, skipping location load');
+    return;
   }
 
-  const employeesToSubmit = filteredEmployees.filter(emp => {
-    if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-    if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-    if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-    return false
-  })
+  // Get all locations for this org
+  const { data: locations, error: locationsError } = await dataClient
+    .from('locations')
+    .select('id, name')
+    .eq('organization_id', orgId);
 
-  if (employeesToSubmit.length === 0) {
-    showAlert('error', 'Please enter payroll data for at least one employee')
-    return
+  if (locationsError) {
+    console.error('❌ Error loading locations:', locationsError);
+    return;
   }
 
-  setIsSubmitting(true)
-  try {
-    // ✅ STEP 1: Get organization_id FIRST before creating submission
-    const { data: locationData, error: locationError } = await dataSupabase
+  console.log('📍 Found locations:', locations?.length || 0, locations);
+
+  // Get next Friday for default pay date
+  const getNextFriday = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+    const nextFriday = new Date(today);
+    nextFriday.setDate(today.getDate() + daysUntilFriday);
+
+    const year = nextFriday.getFullYear();
+    const month = String(nextFriday.getMonth() + 1).padStart(2, '0');
+    const day = String(nextFriday.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const nextFriday = getNextFriday();
+  console.log('📅 Next Friday (pay date):', nextFriday);
+
+  // Get all submissions for this pay period
+  const { data: submissions } = await dataClient
+    .from('payroll_submissions')
+    .select('*')
+    .eq('organization_id', orgId)
+    .eq('pay_date', nextFriday);
+
+  console.log('📊 Submissions for this pay period:', submissions?.length || 0, submissions);
+
+  const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
+
+  // ✅ FIXED: Helper function to properly map submission status to location status
+  const mapSubmissionStatus = (submissionStatus: string): 'approved' | 'pending' | 'not_submitted' => {
+    switch (submissionStatus) {
+      case 'approved':
+      case 'posted':  // ✅ Treat 'posted' as approved since it's already processed
+        return 'approved';
+      case 'pending':
+        return 'pending';
+      case 'rejected':
+      case 'draft':
+      default:
+        return 'not_submitted';  // ✅ Rejected/draft submissions show as not submitted
+    }
+  };
+
+  // Build location status array
+  const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
+    const submission = submissionsMap.get(location.id);
+
+    if (submission) {
+      return {
+        location_id: location.id,
+        location_name: location.name,
+        submission_id: submission.id,
+        status: mapSubmissionStatus(submission.status), // ✅ FIXED: Use helper function
+        total_amount: submission.total_amount,
+        employee_count: submission.employee_count,
+        pay_date: submission.pay_date,
+        payroll_group: submission.payroll_group as 'A' | 'B',
+        submitted_at: submission.submitted_at
+      };
+    } else {
+      return {
+        location_id: location.id,
+        location_name: location.name,
+        status: 'not_submitted' as const
+      };
+    }
+  });
+
+  console.log('✅ Final location statuses:', locationStatuses);
+  setAllLocations(locationStatuses);
+};
+
+
+  // ✅ FIXED: Fetch organization_id early and include in submissionDetails
+  const handleReviewSubmission = async (submission: PendingSubmission) => {
+    setSelectedSubmission(submission);
+    setRejectionNote(''); // ✅ NEW: Reset rejection note
+
+    // ✅ Step 1: Get organization_id from location FIRST
+    const { data: locationData, error: locationError } = await supabase
       .from('locations')
       .select('organization_id')
-      .eq('id', selectedLocationId)
-      .single()
+      .eq('id', submission.location_id)
+      .single();
 
-    if (locationError || !locationData?.organization_id) {
-      throw new Error('Failed to get organization ID from location')
+    if (locationError || !locationData) {
+      console.error('Error fetching location:', locationError);
+      showNotification('Failed to load location details', 'error');
+      return;
     }
 
-    const organizationId = locationData.organization_id
-    console.log('🏢 Organization ID:', organizationId)
+    console.log('🏢 Organization ID for submission:', locationData.organization_id);
 
-    const totalAmount = employeesToSubmit.reduce((sum, emp) => sum + emp.amount, 0)
+    // Step 2: Fetch payroll entries
+    const { data: entries, error: entriesError } = await supabase
+      .from('payroll_entries')
+      .select('*')
+      .eq('submission_id', submission.id);
 
-    // ✅ NEW: Check if updating existing draft or rejected submission
-    const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
+    if (entriesError) {
+      console.error('Error fetching payroll entries:', entriesError);
+      showNotification('Failed to load submission details', 'error');
+      return;
+    }
 
-    if (existingSubmissionId) {
-      console.log(`🔄 Updating existing submission (${rejectedSubmissionId ? 'REJECTED' : 'DRAFT'}):`, existingSubmissionId)
+    // Get employee IDs from entries
+    const employeeIds = entries?.map(e => e.employee_id) || [];
+
+    // Fetch employee names
+    const { data: employees, error: employeesError } = await supabase
+      .from('employees')
+      .select('id, first_name, last_name')
+      .in('id', employeeIds);
+
+    if (employeesError) {
+      console.error('Error fetching employees:', employeesError);
+      showNotification('Failed to load employee details', 'error');
+      return;
+    }
+
+    // Create map of employee IDs to names
+    const employeesMap = new Map(
+      employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`]) || []
+    );
+
+    // ✅ Step 3: Combine entries with employee names AND organization_id
+    const detailsWithNames: SubmissionDetail[] = (entries || []).map(entry => ({
+      employee_id: entry.employee_id,
+      employee_name: employeesMap.get(entry.employee_id) || 'Unknown',
+      hours: entry.hours,
+      units: entry.units,
+      amount: entry.amount,
+      notes: entry.notes,
+      organization_id: locationData.organization_id, // ✅ CRITICAL FIX
+    }));
+
+    console.log('✅ Submission details with org_id:', detailsWithNames);
+    setSubmissionDetails(detailsWithNames);
+    setShowApprovalModal(true);
+  };
+
+  // ✅ FIXED: Use organization_id from submissionDetails
+  const handleApprove = async () => {
+    if (!selectedSubmission || !userId) return;
+
+    setIsApproving(true);
+
+    try {
+      // ✅ Get organization_id from submissionDetails (already fetched in handleReviewSubmission)
+      const organizationId = submissionDetails[0]?.organization_id;
       
-      // UPDATE existing submission to pending
-      const { error: updateError } = await dataSupabase
+      if (!organizationId) {
+        throw new Error('Organization ID not found in submission details');
+      }
+
+      console.log('🎯 Approving with organization_id:', organizationId);
+
+      // STEP 1: Update payroll_submissions status to 'approved'
+      const { error: updateSubmissionError } = await dataClient
         .from('payroll_submissions')
         .update({
-          status: 'pending',
-          total_amount: totalAmount,
-          employee_count: employeesToSubmit.length,
-          submitted_at: new Date().toISOString(),
-          submitted_by: userId,
-          rejected_by: null,
-          rejected_at: null,
-          rejection_note: null,
+          status: 'approved',
+          approved_by: userId,
+          approved_at: new Date().toISOString()
         })
-        .eq('id', existingSubmissionId)
+        .eq('id', selectedSubmission.id);
 
-      if (updateError) throw updateError
+      if (updateSubmissionError) throw updateSubmissionError;
 
-      // Delete old entries
-      const { error: deleteError } = await dataSupabase
+      // STEP 2: Update all payroll_entries for this submission to 'approved'
+      const { error: updateEntriesError } = await dataClient
         .from('payroll_entries')
-        .delete()
-        .eq('submission_id', existingSubmissionId)
+        .update({
+          status: 'approved'
+        })
+        .eq('submission_id', selectedSubmission.id);
 
-      if (deleteError) throw deleteError
+      if (updateEntriesError) throw updateEntriesError;
 
-      // Insert new entries
-      const details = employeesToSubmit.map(emp => ({
-        organization_id: organizationId,
-        submission_id: existingSubmissionId,
-        employee_id: emp.id,
-        hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-        status: 'pending',
-      }))
-
-      const { error: detailsError } = await dataSupabase
-        .from('payroll_entries')
-        .insert(details)
-
-      if (detailsError) throw detailsError
-
-      showAlert('success', rejectedSubmissionId ? '✅ Payroll resubmitted for approval!' : '✅ Draft submitted for approval!')
-      
-      // Clear states
-      setDraftSubmissionId(null)
-      setRejectedSubmissionId(null)
-      setRejectionNote(null)
-
-    } else {
-      console.log('✨ Creating NEW submission')
-      
-      // ✅ STEP 2: Create NEW submission
-      const { data: submission, error: submissionError } = await dataSupabase
-        .from('payroll_submissions')
+      // STEP 3: Create approval audit log
+      const { error: approvalLogError } = await dataClient
+        .from('payroll_approvals')
         .insert({
           organization_id: organizationId,
-          location_id: selectedLocationId,
-          pay_date: payDate,
-          payroll_group: payrollGroup,
-          period_start: periodStart,
-          period_end: periodEnd,
-          total_amount: totalAmount,
-          employee_count: employeesToSubmit.length,
-          submitted_by: userId,
-          status: 'pending',
-        })
-        .select()
-        .single()
+          submission_id: selectedSubmission.id,
+          action: 'approved',
+          approved_by: userId,
+          previous_status: 'pending',
+          notes: `Approved via mobile dashboard`
+        });
 
-      if (submissionError) throw submissionError
+      if (approvalLogError) {
+        console.warn('Failed to create approval log:', approvalLogError);
+        // Don't fail the whole process if audit log fails
+      }
 
-      // ✅ STEP 3: Create payroll entries with the same organization_id
-      const details = employeesToSubmit.map(emp => ({
-        organization_id: organizationId,
-        submission_id: submission.id,
-        employee_id: emp.id,
-        hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-        status: 'pending',
-      }))
+      // STEP 4: Post to payments table with ALL required fields
+      // ✅ organization_id now comes from submissionDetails
+      const paymentsToInsert = submissionDetails.map(detail => ({
+        // Link back to source data
+        employee_id: detail.employee_id,
+        submission_id: selectedSubmission.id,
+        location_id: selectedSubmission.location_id,
+        organization_id: detail.organization_id, // ✅ NOW PROPERLY DEFINED
+        
+        // Payment details
+        first_name: detail.employee_name.split(' ')[0],
+        last_name: detail.employee_name.split(' ').slice(1).join(' ') || detail.employee_name.split(' ')[0],
+        department: selectedSubmission.location_name,
+        date: selectedSubmission.pay_date,
+        total_amount: detail.amount,
+        payment_method: 'Direct Deposit',
+        
+        // Payroll details
+        payroll_group: selectedSubmission.payroll_group,
+        hours: detail.hours,
+        units: detail.units,
+        
+        // Tracking
+        source: 'system'
+      }));
 
-      const { error: detailsError } = await dataSupabase
-        .from('payroll_entries')
-        .insert(details)
+      console.log('💾 Inserting payments:', paymentsToInsert);
 
-      if (detailsError) throw detailsError
+      const { error: paymentsError } = await dataClient
+        .from('payments')
+        .insert(paymentsToInsert);
 
-      showAlert('success', '✅ Payroll submitted successfully!')
-    }
-    
-    await loadEmployees(selectedLocationId)
-    
-  } catch (error: any) {
-    console.error('Submit error:', error)
-    showAlert('error', error.message || 'Failed to submit payroll')
-  } finally {
-    setIsSubmitting(false)
-  }
-}
-  async function handleSignOut() {
-    await authClient.auth.signOut()
-    await syncDataClientSession(null)
-    router.push('/login')
-  }
+      if (paymentsError) {
+        console.error('❌ Payments insert error:', paymentsError);
+        throw paymentsError;
+      }
 
- async function handleAddEmployee() {
-  if (!selectedLocationId) {
-    showAlert('error', 'Please select a location first')
-    return
-  }
-
-  if (!newEmployee.first_name || !newEmployee.last_name) {
-    showAlert('error', 'Please fill in all required fields')
-    return
-  }
-
-  if (newEmployee.compensation_type === 'hourly' && !newEmployee.hourly_rate) {
-    showAlert('error', 'Please enter hourly rate')
-    return
-  }
-
-  if (newEmployee.compensation_type === 'production' && !newEmployee.piece_rate) {
-    showAlert('error', 'Please enter piece rate')
-    return
-  }
-
-  if (newEmployee.compensation_type === 'fixed' && !newEmployee.fixed_pay) {
-    showAlert('error', 'Please enter fixed pay amount')
-    return
-  }
-
-  try {
-    // ✅ GET ORGANIZATION_ID DYNAMICALLY
-    const { data: locationData, error: locationError } = await dataSupabase
-      .from('locations')
-      .select('organization_id')
-      .eq('id', selectedLocationId)
-      .single()
-
-    if (locationError || !locationData?.organization_id) {
-      throw new Error('Failed to get organization ID from location')
-    }
-
-    const organizationId = locationData.organization_id
-
-    // ✅ NOW USE THE DYNAMIC organizationId
-    const { data, error } = await dataSupabase
-      .from('employees')
-      .insert([
-        {
-          organization_id: organizationId, // ✅ DYNAMIC!
-          location_id: selectedLocationId,
-          first_name: newEmployee.first_name,
-          last_name: newEmployee.last_name,
-          email: newEmployee.email || null,
-          payroll_group: newEmployee.payroll_group,
-          compensation_type: newEmployee.compensation_type,
-          hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
-          piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
-          fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
-          is_active: true,
-          hire_date: new Date().toISOString().split('T')[0],
-        },
-      ])
-      .select()
-
-    if (error) throw error
-
-    showAlert('success', `✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added!`)
-    
-    setNewEmployee({
-      first_name: '',
-      last_name: '',
-      email: '',
-      payroll_group: 'A',
-      compensation_type: 'hourly',
-      hourly_rate: '',
-      piece_rate: '',
-      fixed_pay: '',
-    })
-    
-    setShowAddEmployee(false)
-    
-    if (selectedLocationId) {
-      await loadEmployees(selectedLocationId)
-    }
-  } catch (error: any) {
-    console.error('Error adding employee:', error)
-    showAlert('error', error.message || 'Failed to add employee')
-  }
-}
-
-  async function handleEditEmployee() {
-    if (!editingEmployee) return
-
-    try {
-      const { error } = await dataSupabase
-        .from('employees')
+      // STEP 5: Update submission to 'posted' status
+      const { error: postedError } = await dataClient
+        .from('payroll_submissions')
         .update({
-          first_name: editingEmployee.first_name,
-          last_name: editingEmployee.last_name,
-          email: editingEmployee.email,
-          payroll_group: editingEmployee.payroll_group,
-          compensation_type: editingEmployee.compensation_type,
-          hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
-          piece_rate: editingEmployee.compensation_type === 'production' ? editingEmployee.piece_rate : null,
-          fixed_pay: editingEmployee.compensation_type === 'fixed' ? editingEmployee.fixed_pay : null,
+          status: 'posted',
+          processed_by: userId,
+          processed_at: new Date().toISOString()
         })
-        .eq('id', editingEmployee.id)
+        .eq('id', selectedSubmission.id);
 
-      if (error) throw error
+      if (postedError) throw postedError;
 
-      showAlert('success', '✓ Employee updated!')
-      setShowEditEmployee(false)
-      setEditingEmployee(null)
+      // STEP 6: Update entries to 'posted'
+      const { error: entriesPostedError } = await dataClient
+        .from('payroll_entries')
+        .update({
+          status: 'posted'
+        })
+        .eq('submission_id', selectedSubmission.id);
+
+      if (entriesPostedError) throw entriesPostedError;
+
+      // Success!
+      alert('✅ Payroll approved and posted successfully!');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      loadPendingSubmissions(organizationId);
+      loadAllLocations(organizationId);
       
-      if (selectedLocationId) {
-        await loadEmployees(selectedLocationId)
-      }
-    } catch (error: any) {
-      console.error('Error updating employee:', error)
-      showAlert('error', error.message || 'Failed to update employee')
-    }
-  }
+      // Reload historical data
+      const load = async () => {
+        const { start, end } = getDateRange();
+        const { data } = await dataClient
+          .from("payments")
+          .select("department, total_amount, date, first_name, last_name")
+          .gte("date", start)
+          .lte("date", end);
+          
+        const deptMap: Record<string, PropertySummary> = {};
+        const empMap: Record<string, Category> = {};
+        
+        (data || []).forEach((rec: any) => {
+          const dept = rec.department || "Unknown";
+          if (!deptMap[dept]) {
+            deptMap[dept] = { name: dept, expenses: 0 };
+          }
+          deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
 
-  async function handleArchiveEmployee(employeeId: string) {
+          const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
+          if (!empMap[emp]) {
+            empMap[emp] = { name: emp, total: 0 };
+          }
+          empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
+        });
+        
+        setProperties(Object.values(deptMap));
+        setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
+      };
+      load();
+
+    } catch (error) {
+      console.error('Error approving payroll:', error);
+      alert('❌ Failed to approve payroll. Please try again.');
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleReject = async () => {
+    if (!selectedSubmission || !userId) return;
+
+    setIsApproving(true);
+
     try {
-      const { error } = await dataSupabase
-        .from('employees')
-        .update({ is_active: false })
-        .eq('id', employeeId)
+      // Get organization_id from submissionDetails (already loaded)
+      const organizationId = submissionDetails[0]?.organization_id;
 
-      if (error) throw error
-
-      showAlert('success', '✓ Employee archived!')
-      setSwipedEmployeeId(null)
-      
-      if (selectedLocationId) {
-        await loadEmployees(selectedLocationId)
+      if (!organizationId) {
+        throw new Error('Organization ID not found');
       }
-    } catch (error: any) {
-      console.error('Error archiving employee:', error)
-      showAlert('error', error.message || 'Failed to archive employee')
+
+      // ✅ FIXED: Update submission with rejection fields
+      const { error: submissionError } = await dataClient
+        .from('payroll_submissions')
+        .update({
+          status: 'rejected',
+          rejected_by: userId,  // ✅ FIXED: Use rejected_by instead of approved_by
+          rejected_at: new Date().toISOString(),  // ✅ FIXED: Use rejected_at
+          rejection_note: rejectionNote || null  // ✅ NEW: Save rejection note
+        })
+        .eq('id', selectedSubmission.id);
+
+      if (submissionError) throw submissionError;
+
+      // Update entries status
+      const { error: entriesError } = await dataClient
+        .from('payroll_entries')
+        .update({
+          status: 'rejected'
+        })
+        .eq('submission_id', selectedSubmission.id);
+
+      if (entriesError) throw entriesError;
+
+      // Log rejection
+      const { error: approvalLogError } = await dataClient
+        .from('payroll_approvals')
+        .insert({
+          organization_id: organizationId,
+          submission_id: selectedSubmission.id,
+          action: 'rejected',
+          approved_by: userId,
+          previous_status: 'pending',
+          notes: rejectionNote || 'Rejected via mobile dashboard'  // ✅ FIXED: Use rejection note
+        });
+
+      if (approvalLogError) {
+        console.warn('Failed to create rejection log:', approvalLogError);
+      }
+
+      alert('❌ Payroll rejected. Location manager can resubmit.');
+      setShowApprovalModal(false);
+      setSelectedSubmission(null);
+      setRejectionNote('');  // ✅ NEW: Reset rejection note
+      const effectiveOrgId = userRole === 'super_admin' ? subdomainOrgId : organizationId;
+      loadPendingSubmissions(effectiveOrgId || undefined);
+      loadAllLocations(effectiveOrgId || undefined);
+
+    } catch (error) {
+      console.error('Error rejecting payroll:', error);
+      alert('Failed to reject payroll. Please try again.');
+    } finally {
+      setIsApproving(false);
     }
-  }
+  };
 
-  function handleTouchStart(e: React.TouchEvent, empId: string) {
-    setTouchStart({
-      x: e.touches[0].clientX,
-      y: e.touches[0].clientY,
-    })
-    setSwipedEmployeeId(empId)
-  }
+  // Load payroll data for view mode
+  useEffect(() => {
+    const load = async () => {
+      const { start, end } = getDateRange();
 
-  function handleTouchMove(e: React.TouchEvent) {
-    if (!touchStart) return
+      const { data } = await dataClient
+        .from("payments")
+        .select("department, total_amount, date, first_name, last_name")
+        .gte("date", start)
+        .lte("date", end);
+        
+      const deptMap: Record<string, PropertySummary> = {};
+      const empMap: Record<string, Category> = {};
+      
+      (data || []).forEach((rec: any) => {
+        const dept = rec.department || "Unknown";
+        if (!deptMap[dept]) {
+          deptMap[dept] = { name: dept, expenses: 0 };
+        }
+        deptMap[dept].expenses = (deptMap[dept].expenses || 0) + (Number(rec.total_amount) || 0);
 
-    const currentX = e.touches[0].clientX
-    const currentY = e.touches[0].clientY
-    const deltaX = currentX - touchStart.x
-    const deltaY = currentY - touchStart.y
+        const emp = [rec.first_name, rec.last_name].filter(Boolean).join(" ") || "Unknown";
+        if (!empMap[emp]) {
+          empMap[emp] = { name: emp, total: 0 };
+        }
+        empMap[emp].total = (empMap[emp].total || 0) + (Number(rec.total_amount) || 0);
+      });
+      
+      setProperties(Object.values(deptMap));
+      setEmployeeTotals(Object.values(empMap).sort((a, b) => b.total - a.total));
+    };
+    load();
+  }, [reportPeriod, month, year, customStart, customEnd, getDateRange]);
 
-    if (Math.abs(deltaX) > Math.abs(deltaY)) {
-      e.preventDefault()
-      const offset = Math.max(-150, Math.min(0, deltaX))
-      setTouchOffset(offset)
+  const payrollKing = useMemo(() => {
+    if (!properties.length) return null;
+    return properties.reduce(
+      (max, p) => (p.expenses || 0) > (max.expenses || 0) ? p : max,
+      properties[0],
+    ).name;
+  }, [properties]);
+
+  const payrollTopEmployee = useMemo(() => {
+    if (!employeeTotals.length) return null;
+    return employeeTotals.reduce(
+      (max, e) => (e.total || 0) > (max.total || 0) ? e : max,
+      employeeTotals[0],
+    ).name;
+  }, [employeeTotals]);
+
+  const companyTotals = properties.reduce(
+    (acc, p) => {
+      acc.expenses += p.expenses || 0;
+      acc.net += p.expenses || 0;
+      return acc;
+    },
+    { expenses: 0, net: 0 }
+  );
+
+  const formatCurrency = (n: number) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 0,
+    }).format(n);
+
+  const formatCompactCurrency = (n: number) => {
+    if (Math.abs(n) >= 1000000) {
+      return `${(n / 1000000).toFixed(1)}M`;
+    } else if (Math.abs(n) >= 1000) {
+      return `${(n / 1000).toFixed(1)}K`;
     }
-  }
+    return formatCurrency(n);
+  };
 
-  function handleTouchEnd() {
-    if (touchOffset < -75) {
-      setTouchOffset(-150)
-    } else {
-      setTouchOffset(0)
-      setSwipedEmployeeId(null)
+  const rankingLabels: Record<RankingMetric, string> = {
+    payrollDept: "Payroll",
+    payrollEmployee: "Payroll",
+  };
+
+  const rankedProperties = useMemo(() => {
+    if (!rankingMetric) return [];
+    if (rankingMetric === "payrollDept") {
+      return [...properties].sort((a, b) => (b.expenses || 0) - (a.expenses || 0));
     }
-    setTouchStart(null)
+    return [...employeeTotals].sort((a, b) => b.total - a.total);
+  }, [properties, employeeTotals, rankingMetric]);
+
+  const formatRankingValue = (p: any) => {
+    if (rankingMetric === "payrollDept") {
+      return formatCompactCurrency(p.expenses || 0);
+    }
+    return formatCompactCurrency(p.total || 0);
+  };
+
+  const showRanking = (metric: RankingMetric) => {
+    setRankingMetric(metric);
+    setView("summary");
+  };
+
+  const handlePropertySelect = async (name: string | null) => {
+    setSelectedProperty(name);
+    await loadPayroll(name);
+    setView("report");
+  };
+
+  const loadPayroll = async (department: string | null = selectedProperty) => {
+    const { start, end } = getDateRange();
+
+    let query = dataClient
+      .from("payments")
+      .select("date, total_amount, first_name, last_name, department")
+      .gte("date", start)
+      .lte("date", end);
+      
+    if (department) {
+      query = query.eq("department", department);
+    }
+
+    const { data } = await query;
+    const breakdown: Record<string, { total: number; payments: Transaction[] }> = {};
+
+    ((data as any[]) || [])
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((row) => {
+        const amount = Number(row.total_amount) || 0;
+        const name = [row.first_name, row.last_name].filter(Boolean).join(" ") || "Unknown";
+        
+        if (!breakdown[name]) {
+          breakdown[name] = { total: 0, payments: [] };
+        }
+        
+        breakdown[name].total += amount;
+        breakdown[name].payments.push({
+          date: row.date,
+          amount,
+          running: 0,
+          payee: name,
+          customer: row.department,
+        });
+      });
+      
+    setEmployeeBreakdown(breakdown);
+    setTransactions([]);
+    setPayrollTotals(Object.values(breakdown).reduce((sum, e) => sum + e.total, 0));
+  };
+
+  const showEmployeeTransactions = (employee: string) => {
+    setSelectedCategory(employee);
+    const breakdown = employeeBreakdown[employee];
+    setTransactions(breakdown ? breakdown.payments : []);
+    setView("detail");
+  };
+
+  const back = () => {
+    if (view === "detail") setView("report");
+    else if (view === "report") setView("overview");
+    else if (view === "summary") {
+      setRankingMetric(null);
+      setView("overview");
+    } else if (view === "approvals") {
+      setView("overview");
+    }
+  };
+
+  const getLocationStatusColor = (status: LocationStatus['status']) => {
+  switch (status) {
+    case 'approved': return BRAND_COLORS.success;
+    case 'pending': return BRAND_COLORS.warning;
+    case 'not_submitted': return BRAND_COLORS.danger;
+    default: return BRAND_COLORS.gray[200]; // ✅ DEFAULT CASE
   }
+};
 
-  const selectedLocationName = useMemo(() => {
-    const location = availableLocations.find(loc => loc.id === selectedLocationId)
-    return location?.name || 'Select Location'
-  }, [availableLocations, selectedLocationId])
+const getLocationStatusText = (status: LocationStatus['status']) => {
+  switch (status) {
+    case 'approved': return 'Approved';
+    case 'pending': return 'Pending Approval';
+    case 'not_submitted': return 'Not Submitted';
+    default: return 'Unknown'; // ✅ DEFAULT CASE
+  }
+};
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400"></div>
-          <p className="mt-4 text-blue-100">Loading...</p>
+const getLocationStatusIcon = (status: LocationStatus['status']) => {
+  switch (status) {
+    case 'approved': return CheckCircle;
+    case 'pending': return Clock;
+    case 'not_submitted': return AlertCircle;
+    default: return AlertCircle; // ✅ DEFAULT CASE
+  }
+};
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: BRAND_COLORS.gray[50],
+      padding: '16px',
+      position: 'relative'
+    }}>
+      <style jsx>{`
+        @keyframes slideDown { 
+          0% { opacity: 0; transform: translateY(-10px); } 
+          100% { opacity: 1; transform: translateY(0); } 
+        }
+      `}</style>
+
+      {/* Enhanced Header */}
+      <header style={{
+        background: `linear-gradient(135deg, ${BRAND_COLORS.accent}, ${BRAND_COLORS.tertiary})`,
+        borderRadius: '16px',
+        padding: '20px',
+        marginBottom: '24px',
+        color: 'white',
+        boxShadow: `0 8px 32px ${BRAND_COLORS.accent}33`
+      }}>
+        <div className="relative flex items-center justify-center mb-4">
+          <button
+            onClick={() => router.push('/mobile-dashboard')}
+            className="absolute left-0"
+            style={{
+              background: 'rgba(255, 255, 255, 0.2)',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '8px',
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            <Home size={20} />
+          </button>
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="absolute right-0"
+            style={{
+              background: 'rgba(255, 255, 255, 0.2)',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '8px',
+              color: 'white'
+            }}
+          >
+            {menuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+          <span
+            onClick={() => setView("overview")}
+            style={{ fontSize: '28px', fontWeight: 'bold', color: 'white', cursor: 'pointer' }}
+          >
+            I AM CFO
+          </span>
         </div>
-      </div>
-    )
-  }
 
-  if (showLocationPicker && availableLocations.length > 1) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4 flex items-center justify-center">
-        <div className="w-full max-w-md">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-            <div className="text-center mb-6">
-              <MapPin className="w-12 h-12 text-blue-300 mx-auto mb-4" />
-              <h2 className="text-white text-2xl font-bold mb-2">Select Location</h2>
-              <p className="text-blue-200 text-sm">Choose which location to submit payroll for</p>
+        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+          <h1 style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' }}>
+            Payroll Dashboard
+          </h1>
+          <p style={{ fontSize: '14px', opacity: 0.9 }}>
+            {getMonthName(month)} {year} • {properties.length} Departments
+          </p>
+        </div>
+
+        {/* Approvals Button */}
+        <button
+          onClick={() => setView("approvals")}
+          style={{
+            width: '100%',
+            padding: '12px',
+            background: 'rgba(255, 255, 255, 0.2)',
+            color: 'white',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            borderRadius: '10px',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            marginBottom: '16px',
+            transition: 'all 0.2s'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.3)';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+          }}
+        >
+          <ClipboardCheck size={18} />
+          Location Approvals
+          {pendingSubmissions.length > 0 && (
+            <span style={{
+              background: BRAND_COLORS.danger,
+              color: 'white',
+              borderRadius: '12px',
+              padding: '2px 8px',
+              fontSize: '12px',
+              fontWeight: '700'
+            }}>
+              {pendingSubmissions.length}
+            </span>
+          )}
+        </button>
+
+        <div
+          style={{
+            background: 'rgba(255, 255, 255, 0.15)',
+            borderRadius: '12px',
+            padding: '20px',
+            backdropFilter: 'blur(10px)',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            transition: 'all 0.3s ease'
+          }}
+        >
+          <div style={{ textAlign: 'center' }}>
+            <span style={{ fontSize: '14px', opacity: 0.9 }}>Total Payroll</span>
+            <div style={{ fontSize: '32px', fontWeight: 'bold', margin: '8px 0' }}>
+              {formatCompactCurrency(companyTotals.net)}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Hamburger Menu */}
+      {menuOpen && (
+        <div style={{
+          position: 'absolute',
+          top: '80px',
+          left: '16px',
+          right: '16px',
+          background: 'white',
+          borderRadius: '12px',
+          padding: '20px',
+          boxShadow: '0 8px 40px rgba(0, 0, 0, 0.15)',
+          border: `2px solid ${BRAND_COLORS.gray[200]}`,
+          zIndex: 1000,
+          animation: 'slideDown 0.3s ease-out'
+        }}>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '600', color: BRAND_COLORS.accent }}>
+              Report Period
+            </label>
+            <select
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                borderRadius: '8px',
+                fontSize: '16px'
+              }}
+              value={reportPeriod}
+              onChange={(e) =>
+                setReportPeriod(e.target.value as "Monthly" | "Custom" | "Year to Date" | "Trailing 12" | "Quarterly")
+              }
+            >
+              <option value="Monthly">Monthly</option>
+              <option value="Custom">Custom Range</option>
+              <option value="Year to Date">Year to Date</option>
+              <option value="Trailing 12">Trailing 12 Months</option>
+              <option value="Quarterly">Quarterly</option>
+            </select>
+          </div>
+          {reportPeriod === "Custom" ? (
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+              <input
+                type="date"
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '16px'
+                }}
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+              />
+              <input
+                type="date"
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '16px'
+                }}
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+              />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+              <select
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '16px'
+                }}
+                value={month}
+                onChange={(e) => setMonth(Number(e.target.value))}
+              >
+                {Array.from({ length: 12 }, (_, i) => (
+                  <option key={i + 1} value={i + 1}>
+                    {new Date(0, i).toLocaleString("en", { month: "long" })}
+                  </option>
+                ))}
+              </select>
+              <select
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '16px'
+                }}
+                value={year}
+                onChange={(e) => setYear(Number(e.target.value))}
+              >
+                {Array.from({ length: 5 }, (_, i) => {
+                  const y = new Date().getFullYear() - 2 + i;
+                  return (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
+          <button
+            style={{
+              width: '100%',
+              padding: '12px',
+              background: `linear-gradient(135deg, ${BRAND_COLORS.accent}, ${BRAND_COLORS.tertiary})`,
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+            onClick={() => setMenuOpen(false)}
+          >
+            Apply Filters
+          </button>
+        </div>
+      )}
+
+      {view === "overview" && (
+        <div>
+          {/* Pending Approvals Section */}
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            marginBottom: '24px',
+            border: pendingSubmissions.length > 0 
+              ? `2px solid ${BRAND_COLORS.warning}` 
+              : `2px solid ${BRAND_COLORS.success}`,
+            boxShadow: pendingSubmissions.length > 0 
+              ? `0 4px 20px ${BRAND_COLORS.warning}33`
+              : `0 4px 20px ${BRAND_COLORS.success}33`
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+              {pendingSubmissions.length > 0 ? (
+                <>
+                  <Clock size={20} style={{ color: BRAND_COLORS.warning }} />
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', color: BRAND_COLORS.warning }}>
+                    Pending Approvals ({pendingSubmissions.length})
+                  </h3>
+                </>
+              ) : (
+                <>
+                  <CheckCircle size={20} style={{ color: BRAND_COLORS.success }} />
+                  <h3 style={{ fontSize: '18px', fontWeight: '600', color: BRAND_COLORS.success }}>
+                    Pending Approvals
+                  </h3>
+                </>
+              )}
             </div>
 
-            <div className="space-y-3">
-              {availableLocations.map((location) => (
-                <button
-                  key={location.id}
-                  onClick={async () => {
-                    setSelectedLocationId(location.id)
-                    setShowLocationPicker(false)
-                    await loadEmployees(location.id)
+            {pendingSubmissions.length > 0 ? (
+              pendingSubmissions.map((submission) => (
+                <div
+                  key={submission.id}
+                  onClick={() => handleReviewSubmission(submission)}
+                  style={{
+                    padding: '16px',
+                    borderRadius: '12px',
+                    marginBottom: '12px',
+                    background: BRAND_COLORS.gray[50],
+                    border: `2px solid ${BRAND_COLORS.warning}`,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
                   }}
-                  className="w-full bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl p-4 text-white font-medium transition text-left"
                 >
-                  {location.name}
-                </button>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '16px', fontWeight: '700', color: BRAND_COLORS.accent, marginBottom: '4px' }}>
+                        {submission.location_name}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>
+                        Pay Date: {formatDate(submission.pay_date)} • Group {submission.payroll_group}
+                      </div>
+                    </div>
+                    <div style={{
+                      background: BRAND_COLORS.warning,
+                      color: 'white',
+                      padding: '6px 12px',
+                      borderRadius: '20px',
+                      fontSize: '11px',
+                      fontWeight: '700'
+                    }}>
+                      PENDING
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div style={{
+                      background: `${BRAND_COLORS.success}15`,
+                      padding: '10px',
+                      borderRadius: '8px',
+                      textAlign: 'center'
+                    }}>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
+                        {formatCurrency(submission.total_amount)}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>Total Amount</div>
+                    </div>
+                    <div style={{
+                      background: `${BRAND_COLORS.primary}15`,
+                      padding: '10px',
+                      borderRadius: '8px',
+                      textAlign: 'center'
+                    }}>
+                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
+                        {submission.employee_count || 0}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: '12px', fontSize: '11px', color: '#94a3b8', textAlign: 'center' }}>
+                    Submitted {new Date(submission.submitted_at).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit'
+                    })}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div style={{
+                background: `${BRAND_COLORS.success}10`,
+                borderRadius: '12px',
+                padding: '32px 20px',
+                textAlign: 'center',
+                border: `2px dashed ${BRAND_COLORS.success}`
+              }}>
+                <CheckCircle size={48} style={{ color: BRAND_COLORS.success, marginBottom: '12px' }} />
+                <h4 style={{ fontSize: '18px', fontWeight: '700', color: BRAND_COLORS.success, marginBottom: '8px' }}>
+                  All Caught Up!
+                </h4>
+                <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '0' }}>
+                  No pending payroll submissions at this time.
+                </p>
+                <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px' }}>
+                  New submissions will appear here for approval.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Department Insights */}
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            marginBottom: '24px',
+            border: `1px solid ${BRAND_COLORS.gray[200]}`,
+            boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+              <Target size={20} style={{ color: BRAND_COLORS.accent }} />
+              <h3 style={{ fontSize: '18px', fontWeight: '600', color: BRAND_COLORS.accent }}>
+                Historical Analytics
+              </h3>
+            </div>
+            
+            {/* Awards Section */}
+            <div style={{
+              background: `linear-gradient(135deg, ${BRAND_COLORS.gray[50]}, #f0f9ff)`,
+              borderRadius: '12px',
+              padding: '16px',
+              marginBottom: '16px',
+              border: `1px solid ${BRAND_COLORS.tertiary}33`
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+                <Award size={16} style={{ color: BRAND_COLORS.accent }} />
+                <span style={{ fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.accent }}>
+                  Team Champions
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                <div onClick={() => showRanking("payrollDept")} style={{
+                  background: 'white',
+                  borderRadius: '8px',
+                  padding: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  border: `1px solid ${BRAND_COLORS.danger}33`,
+                  cursor: 'pointer'
+                }}>
+                  <span style={{ fontSize: '20px' }}>🏢</span>
+                  <div>
+                    <div style={{ fontSize: '11px', color: BRAND_COLORS.danger, fontWeight: '600' }}>
+                      TOP DEPT
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#64748b' }}>
+                      {payrollKing}
+                    </div>
+                  </div>
+                </div>
+                <div onClick={() => showRanking("payrollEmployee")} style={{
+                  background: 'white',
+                  borderRadius: '8px',
+                  padding: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  border: `1px solid ${BRAND_COLORS.secondary}33`,
+                  cursor: 'pointer'
+                }}>
+                  <span style={{ fontSize: '20px' }}>👤</span>
+                  <div>
+                    <div style={{ fontSize: '11px', color: BRAND_COLORS.secondary, fontWeight: '600' }}>
+                      TOP EMP
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#64748b' }}>
+                      {payrollTopEmployee}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Department Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
+            {properties.map((p) => {
+              const isPayrollKing = p.name === payrollKing;
+              
+              return (
+                <div
+                  key={p.name}
+                  onClick={() => handlePropertySelect(p.name)}
+                  style={{
+                    background: 'white',
+                    borderRadius: '12px',
+                    padding: '16px',
+                    cursor: 'pointer',
+                    border: isPayrollKing 
+                      ? `2px solid ${BRAND_COLORS.danger}`
+                      : `1px solid ${BRAND_COLORS.gray[200]}`,
+                    boxShadow: isPayrollKing 
+                      ? `0 4px 20px ${BRAND_COLORS.danger}33`
+                      : '0 2px 8px rgba(0, 0, 0, 0.05)',
+                    transition: 'all 0.3s ease',
+                    position: 'relative'
+                  }}
+                >
+                  {isPayrollKing && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '-8px',
+                      right: '-8px',
+                      background: BRAND_COLORS.danger,
+                      borderRadius: '50%',
+                      width: '24px',
+                      height: '24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '12px'
+                    }}>
+                      👑
+                    </div>
+                  )}
+                  <div style={{ fontSize: '14px', color: '#64748b', marginBottom: '8px', fontWeight: '500' }}>
+                    {p.name}
+                  </div>
+                  <div style={{ fontSize: '20px', fontWeight: 'bold', color: BRAND_COLORS.accent }}>
+                    {formatCompactCurrency(p.expenses || 0)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+
+{view === "approvals" && (
+  <div>
+    <button
+      onClick={back}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        background: 'white',
+        border: `1px solid ${BRAND_COLORS.gray[200]}`,
+        borderRadius: '8px',
+        padding: '12px 16px',
+        marginBottom: '16px',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: '500',
+        color: BRAND_COLORS.accent
+      }}
+    >
+      <ChevronLeft size={20} />
+      Back to Dashboard
+    </button>
+
+    <div style={{
+      background: 'white',
+      borderRadius: '16px',
+      padding: '20px',
+      marginBottom: '16px',
+      border: `1px solid ${BRAND_COLORS.gray[200]}`,
+      boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
+    }}>
+      <h2 style={{ 
+        fontSize: '20px', 
+        fontWeight: 'bold', 
+        marginBottom: '8px',
+        color: BRAND_COLORS.accent 
+      }}>
+        Location Approvals
+      </h2>
+      <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '20px' }}>
+        {(allLocations || []).filter(l => l.status === 'approved').length} Approved • {' '}
+        {(allLocations || []).filter(l => l.status === 'pending').length} Pending • {' '}
+        {(allLocations || []).filter(l => l.status === 'not_submitted').length} Not Submitted
+      </p>
+
+      {/* ✅ LOADING STATE */}
+      {!allLocations || allLocations.length === 0 ? (
+        <div style={{
+          padding: '40px',
+          textAlign: 'center',
+          color: '#64748b',
+          fontSize: '14px'
+        }}>
+          {!organizationId ? (
+            <>
+              <AlertCircle size={48} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
+              <p>Loading organization data...</p>
+            </>
+          ) : (
+            <>
+              <AlertCircle size={48} style={{ margin: '0 auto 16px', opacity: 0.5 }} />
+              <p>No locations found for this organization</p>
+            </>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: '12px' }}>
+          {allLocations.map((location) => {
+            const StatusIcon = getLocationStatusIcon(location.status);
+            const statusColor = getLocationStatusColor(location.status);
+
+            return (
+              <div
+                key={location.location_id}
+                onClick={() => {
+                  if (location.status === 'pending' && location.submission_id) {
+                    const submission = pendingSubmissions.find(s => s.id === location.submission_id);
+                    if (submission) handleReviewSubmission(submission);
+                  }
+                }}
+                style={{
+                  padding: '16px',
+                  borderRadius: '12px',
+                  background: BRAND_COLORS.gray[50],
+                  border: `3px solid ${statusColor}`,
+                  cursor: location.status === 'pending' ? 'pointer' : 'default',
+                  transition: 'all 0.2s',
+                  position: 'relative'
+                }}
+              >
+                <div style={{
+                  position: 'absolute',
+                  top: '12px',
+                  right: '12px',
+                  background: statusColor,
+                  borderRadius: '20px',
+                  padding: '6px 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <StatusIcon size={14} style={{ color: 'white' }} />
+                  <span style={{ 
+                    fontSize: '11px', 
+                    fontWeight: '700', 
+                    color: 'white',
+                    textTransform: 'uppercase'
+                  }}>
+                    {getLocationStatusText(location.status)}
+                  </span>
+                </div>
+
+                <h3 style={{ 
+                  fontSize: '18px', 
+                  fontWeight: 'bold', 
+                  marginBottom: '12px',
+                  color: BRAND_COLORS.accent,
+                  paddingRight: '140px'
+                }}>
+                  {location.location_name}
+                </h3>
+
+                {location.status !== 'not_submitted' && location.total_amount !== undefined && (
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '12px',
+                    marginTop: '12px'
+                  }}>
+                    <div style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      textAlign: 'center'
+                    }}>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
+                        {formatCurrency(location.total_amount || 0)}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>Total</div>
+                    </div>
+                    <div style={{
+                      background: 'white',
+                      borderRadius: '8px',
+                      padding: '10px',
+                      textAlign: 'center'
+                    }}>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.primary }}>
+                        {location.employee_count !== undefined ? location.employee_count : 0}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#64748b' }}>Employees</div>
+                    </div>
+                  </div>
+                )}
+
+                {location.submitted_at && (
+                  <div style={{
+                    marginTop: '12px',
+                    fontSize: '11px',
+                    color: '#94a3b8',
+                    textAlign: 'center'
+                  }}>
+                    Submitted {new Date(location.submitted_at).toLocaleString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit'
+                    })}
+                  </div>
+                )}
+
+                {location.status === 'not_submitted' && (
+                  <div style={{
+                    marginTop: '12px',
+                    fontSize: '13px',
+                    color: '#64748b',
+                    textAlign: 'center',
+                    fontStyle: 'italic'
+                  }}>
+                    Waiting for submission from location manager
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  </div>
+)}
+
+      {/* Summary/Ranking View */}
+      {view === "summary" && rankingMetric && (
+        <div>
+          <button
+            onClick={back}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'white',
+              border: `1px solid ${BRAND_COLORS.gray[200]}`,
+              borderRadius: '8px',
+              padding: '12px 16px',
+              marginBottom: '16px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: BRAND_COLORS.accent
+            }}
+          >
+            <ChevronLeft size={20} />
+            Back to Overview
+          </button>
+
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            border: `1px solid ${BRAND_COLORS.gray[200]}`,
+            boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
+          }}>
+            <h3 style={{ 
+              fontSize: '20px', 
+              fontWeight: 'bold', 
+              marginBottom: '20px',
+              color: BRAND_COLORS.accent 
+            }}>
+              {rankingMetric === 'payrollDept' ? 'Departments Ranked' : 'Employees Ranked'}
+            </h3>
+
+            {rankedProperties.map((p, i) => (
+              <div
+                key={i}
+                onClick={() => rankingMetric === 'payrollDept' ? handlePropertySelect(p.name) : null}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '16px',
+                  borderBottom: i < rankedProperties.length - 1 ? `1px solid ${BRAND_COLORS.gray[100]}` : 'none',
+                  cursor: rankingMetric === 'payrollDept' ? 'pointer' : 'default',
+                  transition: 'background 0.2s'
+                }}
+              >
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: i === 0 ? BRAND_COLORS.danger : i === 1 ? BRAND_COLORS.warning : BRAND_COLORS.gray[200],
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 'bold',
+                  color: i < 2 ? 'white' : '#64748b',
+                  marginRight: '12px',
+                  fontSize: '14px'
+                }}>
+                  {i + 1}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: '600', color: '#1e293b', fontSize: '14px' }}>
+                    {p.name}
+                  </div>
+                </div>
+                <div style={{ 
+                  fontWeight: 'bold', 
+                  color: BRAND_COLORS.accent,
+                  fontSize: '16px'
+                }}>
+                  {formatRankingValue(p)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Department Report */}
+      {view === "report" && (
+        <div>
+          <button
+            onClick={back}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'white',
+              border: `1px solid ${BRAND_COLORS.gray[200]}`,
+              borderRadius: '8px',
+              padding: '12px 16px',
+              marginBottom: '16px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: BRAND_COLORS.accent
+            }}
+          >
+            <ChevronLeft size={20} />
+            Back to Overview
+          </button>
+
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            marginBottom: '16px',
+            border: `1px solid ${BRAND_COLORS.gray[200]}`,
+            boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
+          }}>
+            <h2 style={{ 
+              fontSize: '20px', 
+              fontWeight: 'bold', 
+              marginBottom: '16px',
+              color: BRAND_COLORS.accent 
+            }}>
+              {selectedProperty}
+            </h2>
+            <div style={{
+              background: BRAND_COLORS.gray[50],
+              borderRadius: '12px',
+              padding: '16px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ fontSize: '14px', color: '#64748b', marginBottom: '4px' }}>
+                Total Payroll
+              </div>
+              <div style={{ fontSize: '28px', fontWeight: 'bold', color: BRAND_COLORS.accent }}>
+                {formatCurrency(payrollTotals)}
+              </div>
+            </div>
+
+            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', color: '#1e293b' }}>
+              Employees ({Object.keys(employeeBreakdown).length})
+            </h3>
+
+            {Object.entries(employeeBreakdown)
+              .sort(([, a], [, b]) => b.total - a.total)
+              .map(([name, data]) => (
+                <div
+                  key={name}
+                  onClick={() => showEmployeeTransactions(name)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '14px',
+                    borderRadius: '8px',
+                    marginBottom: '8px',
+                    background: BRAND_COLORS.gray[50],
+                    cursor: 'pointer',
+                    border: `1px solid ${BRAND_COLORS.gray[100]}`,
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <User size={18} style={{ color: BRAND_COLORS.accent }} />
+                    <div>
+                      <div style={{ fontWeight: '600', fontSize: '14px', color: '#1e293b' }}>
+                        {name}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>
+                        {data.payments.length} payment{data.payments.length !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ 
+                      fontWeight: 'bold', 
+                      color: BRAND_COLORS.accent,
+                      fontSize: '16px'
+                    }}>
+                      {formatCompactCurrency(data.total)}
+                    </div>
+                    <ChevronRight size={18} style={{ color: '#94a3b8' }} />
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Transaction Detail */}
+      {view === "detail" && (
+        <div>
+          <button
+            onClick={back}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'white',
+              border: `1px solid ${BRAND_COLORS.gray[200]}`,
+              borderRadius: '8px',
+              padding: '12px 16px',
+              marginBottom: '16px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: BRAND_COLORS.accent
+            }}
+          >
+            <ChevronLeft size={20} />
+            Back
+          </button>
+
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            border: `1px solid ${BRAND_COLORS.gray[200]}`,
+            boxShadow: '0 4px 20px rgba(46, 134, 193, 0.1)'
+          }}>
+            <h3 style={{ 
+              fontSize: '18px', 
+              fontWeight: 'bold', 
+              marginBottom: '12px',
+              color: BRAND_COLORS.accent 
+            }}>
+              {selectedCategory}
+            </h3>
+            <div style={{
+              background: BRAND_COLORS.gray[50],
+              borderRadius: '8px',
+              padding: '12px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>
+                Total Amount
+              </div>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: BRAND_COLORS.accent }}>
+                {formatCurrency(transactionTotal)}
+              </div>
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+                {transactions.length} transaction{transactions.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+
+            <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px', color: '#1e293b' }}>
+              Payment History
+            </h4>
+
+            <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              {transactions.map((t, i) => (
+                <div
+                  key={i}
+                  style={{
+                    padding: '12px',
+                    borderBottom: i < transactions.length - 1 ? `1px solid ${BRAND_COLORS.gray[100]}` : 'none',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '14px', fontWeight: '500', color: '#1e293b', marginBottom: '4px' }}>
+                      {formatDate(t.date)}
+                    </div>
+                    {t.customer && (
+                      <div style={{ fontSize: '12px', color: '#64748b' }}>
+                        {t.customer}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ 
+                    fontSize: '16px', 
+                    fontWeight: 'bold',
+                    color: BRAND_COLORS.accent
+                  }}>
+                    {formatCurrency(t.amount)}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
         </div>
-      </div>
-    )
-  }
+      )}
 
-  if (showEditEmployee && editingEmployee) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
-        <div className="max-w-lg mx-auto pt-6">
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={() => {
-                setShowEditEmployee(false)
-                setEditingEmployee(null)
-              }}
-              className="text-blue-100 text-sm font-medium"
-            >
-              ← Back
-            </button>
-            <h2 className="text-white text-lg font-semibold">Edit Employee</h2>
-            <div className="w-12" />
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20 space-y-4">
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">First Name</label>
-              <input
-                type="text"
-                value={editingEmployee.first_name}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, first_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Last Name</label>
-              <input
-                type="text"
-                value={editingEmployee.last_name}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, last_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Email</label>
-              <input
-                type="email"
-                value={editingEmployee.email || ''}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, email: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="employee@example.com"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group</label>
-              <select
-                value={editingEmployee.payroll_group}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, payroll_group: e.target.value as PayrollGroup })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+      {/* Approval Modal */}
+      {showApprovalModal && selectedSubmission && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: '16px'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '24px',
+            maxWidth: '500px',
+            width: '100%',
+            maxHeight: '80vh',
+            overflow: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '20px' }}>
+              <div>
+                <h2 style={{ fontSize: '20px', fontWeight: 'bold', color: BRAND_COLORS.accent, marginBottom: '4px' }}>
+                  Review Payroll
+                </h2>
+                <p style={{ fontSize: '14px', color: '#64748b' }}>
+                  {selectedSubmission.location_name}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowApprovalModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: '#64748b'
+                }}
               >
-                <option value="A" className="bg-slate-900">Group A</option>
-                <option value="B" className="bg-slate-900">Group B</option>
-              </select>
+                <X size={24} />
+              </button>
             </div>
 
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Compensation Type</label>
-              <select
-                value={editingEmployee.compensation_type}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, compensation_type: e.target.value as CompensationType })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="hourly" className="bg-slate-900">Hourly</option>
-                <option value="production" className="bg-slate-900">Production</option>
-                <option value="fixed" className="bg-slate-900">Fixed Pay</option>
-              </select>
-            </div>
-
-            {editingEmployee.compensation_type === 'hourly' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Hourly Rate ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editingEmployee.hourly_rate || ''}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, hourly_rate: parseFloat(e.target.value) || null })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                />
-              </div>
-            ) : editingEmployee.compensation_type === 'production' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editingEmployee.piece_rate || ''}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, piece_rate: parseFloat(e.target.value) || null })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Fixed Pay Amount ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editingEmployee.fixed_pay || ''}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, fixed_pay: parseFloat(e.target.value) || null })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                />
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={handleEditEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
-          >
-            Save Changes
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (showAddEmployee) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
-        <div className="max-w-lg mx-auto pt-6">
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={() => setShowAddEmployee(false)}
-              className="text-blue-100 text-sm font-medium"
-            >
-              ← Back
-            </button>
-            <h2 className="text-white text-lg font-semibold">Add Employee</h2>
-            <div className="w-12" />
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20 space-y-4">
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">First Name *</label>
-              <input
-                type="text"
-                value={newEmployee.first_name}
-                onChange={(e) => setNewEmployee({ ...newEmployee, first_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="John"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Last Name *</label>
-              <input
-                type="text"
-                value={newEmployee.last_name}
-                onChange={(e) => setNewEmployee({ ...newEmployee, last_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="Doe"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Email (for Connecteam sync)</label>
-              <input
-                type="email"
-                value={newEmployee.email}
-                onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="john.doe@example.com"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group *</label>
-              <select
-                value={newEmployee.payroll_group}
-                onChange={(e) => setNewEmployee({ ...newEmployee, payroll_group: e.target.value as PayrollGroup })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="A" className="bg-slate-900">Group A</option>
-                <option value="B" className="bg-slate-900">Group B</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Compensation Type *</label>
-              <select
-                value={newEmployee.compensation_type}
-                onChange={(e) => setNewEmployee({ ...newEmployee, compensation_type: e.target.value as CompensationType })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="hourly" className="bg-slate-900">Hourly</option>
-                <option value="production" className="bg-slate-900">Production</option>
-                <option value="fixed" className="bg-slate-900">Fixed Pay</option>
-              </select>
-            </div>
-
-            {newEmployee.compensation_type === 'hourly' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Hourly Rate * ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newEmployee.hourly_rate}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, hourly_rate: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                  placeholder="25.00"
-                />
-              </div>
-            ) : newEmployee.compensation_type === 'production' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate * ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newEmployee.piece_rate}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, piece_rate: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                  placeholder="5.00"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Fixed Pay Amount * ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newEmployee.fixed_pay}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, fixed_pay: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                  placeholder="750.00"
-                />
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={handleAddEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
-          >
-            Add Employee
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (selectedEmployee) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
-        <div className="max-w-lg mx-auto pt-6">
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={() => setSelectedEmployee(null)}
-              className="text-blue-100 text-sm font-medium"
-            >
-              ← Back
-            </button>
-            <h2 className="text-white text-lg font-semibold">Enter Payroll</h2>
-            <div className="w-12" />
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-white text-xl font-bold">
-                  {selectedEmployee.first_name} {selectedEmployee.last_name}
-                </h3>
-                {selectedEmployee.email && (
-                  <p className="text-blue-300 text-sm mt-1">{selectedEmployee.email}</p>
-                )}
-              </div>
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  selectedEmployee.compensation_type === 'hourly'
-                    ? 'bg-blue-500/20 text-blue-200'
-                    : selectedEmployee.compensation_type === 'production'
-                    ? 'bg-purple-500/20 text-purple-200'
-                    : 'bg-green-500/20 text-green-200'
-                }`}
-              >
-                {selectedEmployee.compensation_type === 'hourly' ? 'Hourly' : selectedEmployee.compensation_type === 'production' ? 'Production' : 'Fixed Pay'}
-              </span>
-            </div>
-
-            <div className="bg-white/5 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">
-                {selectedEmployee.compensation_type === 'fixed' ? 'Fixed Amount' : 'Rate'}
-              </p>
-              <p className="text-white text-2xl font-bold">
-                {formatCurrency(
-                  selectedEmployee.compensation_type === 'fixed'
-                    ? selectedEmployee.fixed_pay
-                    : selectedEmployee.compensation_type === 'hourly'
-                    ? selectedEmployee.hourly_rate
-                    : selectedEmployee.piece_rate,
-                )}
-                {selectedEmployee.compensation_type !== 'fixed' && (
-                  <span className="text-blue-200 text-sm font-normal ml-2">
-                    {selectedEmployee.compensation_type === 'hourly' ? '/ hour' : '/ unit'}
-                  </span>
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
-            {selectedEmployee.compensation_type === 'hourly' && (
-              <>
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    Hours Worked
-                  </span>
-                  <input
-                    type="number"
-                    step="0.25"
-                    value={selectedEmployee.hours}
-                    onChange={(e) => handleInputChange('hours', e.target.value)}
-                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="0"
-                    autoFocus
-                  />
-                </label>
-
-                <label className="block mb-6">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
-                  <textarea
-                    value={selectedEmployee.notes}
-                    onChange={(e) => handleInputChange('notes', e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
-                    placeholder="Add any notes..."
-                  />
-                </label>
-              </>
-            )}
-
-            {selectedEmployee.compensation_type === 'production' && (
-              <>
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <Hash className="w-4 h-4" />
-                    Units Produced
-                  </span>
-                  <input
-                    type="number"
-                    step="1"
-                    value={selectedEmployee.units}
-                    onChange={(e) => handleInputChange('units', e.target.value)}
-                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="0"
-                    autoFocus
-                  />
-                </label>
-
-                <label className="block mb-6">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
-                  <textarea
-                    value={selectedEmployee.notes}
-                    onChange={(e) => handleInputChange('notes', e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
-                    placeholder="Add any notes..."
-                  />
-                </label>
-              </>
-            )}
-
-            {selectedEmployee.compensation_type === 'fixed' && (
-              <>
-                <div className="text-center mb-6">
-                  <div className="bg-gradient-to-br from-green-500/10 to-blue-500/10 rounded-xl p-6 border border-green-400/20">
-                    <p className="text-green-200 text-sm mb-2">Base Fixed Pay</p>
-                    <p className="text-white text-4xl font-bold mb-1">
-                      {formatCurrency(selectedEmployee.fixed_pay)}
-                    </p>
-                    <p className="text-blue-300 text-xs">per pay period</p>
-                  </div>
+            <div style={{
+              background: BRAND_COLORS.gray[50],
+              borderRadius: '12px',
+              padding: '16px',
+              marginBottom: '20px'
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>Pay Date</div>
+                  <div style={{ fontSize: '14px', fontWeight: '600' }}>{formatDate(selectedSubmission.pay_date)}</div>
                 </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>Group</div>
+                  <div style={{ fontSize: '14px', fontWeight: '600' }}>Group {selectedSubmission.payroll_group}</div>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>Pay Period</div>
+                <div style={{ fontSize: '14px', fontWeight: '600' }}>
+                  {formatDate(selectedSubmission.period_start)} - {formatDate(selectedSubmission.period_end)}
+                </div>
+              </div>
+            </div>
 
+            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>
+              Employee Details ({submissionDetails.length})
+            </h3>
 
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <DollarSign className="w-4 h-4" />
-                    Adjustment (+ bonus / - deduction)
-                  </span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={selectedEmployee.adjustment}
-                    onChange={(e) => handleInputChange('adjustment', e.target.value)}
-                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="0.00"
-                  />
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '-100')}
-                      className="flex-1 px-3 py-2 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-sm hover:bg-red-500/30 transition"
-                    >
-                      -$100 (Missed Day)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '-200')}
-                      className="flex-1 px-3 py-2 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-sm hover:bg-red-500/30 transition"
-                    >
-                      -$200 (2 Days)
-                    </button>
+            <div style={{ marginBottom: '20px', maxHeight: '300px', overflow: 'auto' }}>
+              {submissionDetails.map((detail, i) => (
+                <div
+                  key={i}
+                  style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    marginBottom: '8px',
+                    background: BRAND_COLORS.gray[50],
+                    border: `1px solid ${BRAND_COLORS.gray[200]}`
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#1e293b' }}>
+                      {detail.employee_name}
+                    </div>
+                    <div style={{ fontSize: '16px', fontWeight: 'bold', color: BRAND_COLORS.accent }}>
+                      {formatCurrency(detail.amount)}
+                    </div>
                   </div>
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '100')}
-                      className="flex-1 px-3 py-2 bg-green-500/20 border border-green-400/30 rounded-lg text-green-200 text-sm hover:bg-green-500/30 transition"
-                    >
-                      +$100 (Bonus)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '0')}
-                      className="flex-1 px-3 py-2 bg-blue-500/20 border border-blue-400/30 rounded-lg text-blue-200 text-sm hover:bg-blue-500/30 transition"
-                    >
-                      Clear
-                    </button>
+                  <div style={{ fontSize: '12px', color: '#64748b' }}>
+                    {detail.hours ? `${detail.hours} hours` : `${detail.units} units`}
                   </div>
-                </label>
-
-                <label className="block mb-6">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
-                  <textarea
-                    value={selectedEmployee.notes}
-                    onChange={(e) => handleInputChange('notes', e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
-                    placeholder="e.g., Missed Monday due to illness"
-                  />
-                </label>
-              </>
-            )}
-
-            <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">Total Amount</p>
-              <p className="text-white text-3xl font-bold">
-                {formatCurrency(selectedEmployee.amount)}
-              </p>
-              {selectedEmployee.compensation_type === 'fixed' && (
-                <div className="text-blue-300 text-xs mt-2 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Base Pay:</span>
-                    <span>{formatCurrency(selectedEmployee.fixed_pay)}</span>
-                  </div>
-                  {parseFloat(selectedEmployee.adjustment || '0') !== 0 && (
-                    <div className="flex justify-between">
-                      <span>Adjustment:</span>
-                      <span className={parseFloat(selectedEmployee.adjustment) > 0 ? 'text-green-300' : 'text-red-300'}>
-                        {`${selectedEmployeeAdjustment > 0 ? '+' : ''}${formatCurrency(
-                          selectedEmployeeAdjustment,
-                        )}`}
-                      </span>
+                  {detail.notes && (
+                    <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px', fontStyle: 'italic' }}>
+                      {detail.notes}
                     </div>
                   )}
                 </div>
-              )}
+              ))}
             </div>
-          </div>
 
-          <button
-            onClick={handleSaveEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
-          >
-            Save & Continue
-          </button>
-        </div>
-      </div>
-    )
-  }
+            <div style={{
+              background: `${BRAND_COLORS.success}15`,
+              borderRadius: '8px',
+              padding: '16px',
+              marginBottom: '20px',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '4px' }}>
+                Total Payroll Amount
+              </div>
+              <div style={{ fontSize: '28px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
+                {formatCurrency(selectedSubmission.total_amount)}
+              </div>
+            </div>
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-      <div className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
-        <div className="max-w-lg mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <img 
-                src="/apple-touch-icon.png" 
-                alt="I AM CFO Logo" 
-                className="w-10 h-10 object-contain"
+            {/* ✅ NEW: Rejection Note Input */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{
+                display: 'block',
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#334155',
+                marginBottom: '8px'
+              }}>
+                Rejection Reason (optional)
+              </label>
+              <textarea
+                value={rejectionNote}
+                onChange={(e) => setRejectionNote(e.target.value)}
+                placeholder="E.g., 'Please verify John Smith's hours' or 'Missing overtime for Jane Doe'"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  color: '#1e293b',
+                  resize: 'vertical',
+                  minHeight: '80px',
+                  fontFamily: 'inherit'
+                }}
               />
-              <div className="flex-1">
-                <h1 className="text-white text-xl font-bold">Payroll Submit</h1>
-              {availableLocations.length > 1 ? (
-                <button
-                  onClick={() => {
-                    setShowLocationPicker(true)
-                    setSelectedLocationId(null)
-                    setEmployees([])
-                  }}
-                  className="flex items-center gap-2 text-blue-200 text-sm hover:text-blue-100 transition"
-                >
-                  <MapPin className="w-4 h-4" />
-                  <span>{selectedLocationName}</span>
-                  <ChevronDown className="w-4 h-4" />
-                </button>
-              ) : (
-                <p className="text-blue-200 text-sm">{selectedLocationName}</p>
-              )}
-              </div>
-            </div>
-            <button
-              onClick={handleSignOut}
-              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
-            >
-              <LogOut className="w-5 h-5 text-blue-200" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-lg mx-auto p-4 pb-32">
-        {alert && (
-          <div
-            className={`mb-4 p-4 rounded-xl flex items-start gap-3 ${
-              alert.type === 'success'
-                ? 'bg-green-500/20 border border-green-400/30'
-                : 'bg-red-500/20 border border-red-400/30'
-            }`}
-          >
-            {alert.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-green-300 flex-shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
-            )}
-            <p className={`flex-1 text-sm ${alert.type === 'success' ? 'text-green-100' : 'text-red-100'}`}>
-              {alert.message}
-            </p>
-            <button
-              onClick={() => setAlert(null)}
-              className="text-white/50 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {selectedLocationId && (
-          <>
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
-              <div className="space-y-4 mb-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <Calendar className="w-4 h-4 text-blue-300" />
-                  <span className="text-blue-200 text-sm font-medium">Select Pay Date (Friday)</span>
-                </div>
-                <select
-                  value={payDate}
-                  onChange={(e) => handlePayDateChange(e.target.value)}
-                  className="w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                >
-                  {fridayOptions.map((option) => (
-                    <option key={option.value} value={option.value} className="bg-slate-900 text-white">
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-3 mb-4">
-                <div>
-                  <span className="text-blue-200 text-xs font-medium uppercase tracking-wide block text-center">
-                    Payroll Type
-                  </span>
-                  <div className="mt-1 w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white text-center">
-                    Payroll Group {payrollGroup}
-                  </div>
-                  <p className="text-blue-200 text-xs mt-1 text-center">Auto-calculated from pay date</p>
-                </div>
-                <div>
-                  <span className="text-blue-200 text-xs font-medium uppercase tracking-wide block text-center">
-                    Payroll Period
-                  </span>
-                  <div className="mt-1 w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white text-center">
-                    {periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-white/5 rounded-lg p-3 text-center">
-                  <Users className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-                  <p className="text-white text-lg font-bold">{totals.employees}</p>
-                  <p className="text-blue-200 text-xs">Employees</p>
-                </div>
-                <div className="bg-white/5 rounded-lg p-3 text-center">
-                  <Clock className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-                  <p className="text-white text-lg font-bold">{totals.totalHours.toFixed(1)}</p>
-                  <p className="text-blue-200 text-xs">Hours</p>
-                </div>
-                <div className="bg-white/5 rounded-lg p-3 text-center">
-                  <DollarSign className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-                  <p className="text-white text-lg font-bold">{formatCurrency(totals.totalAmount, 0)}</p>
-                  <p className="text-blue-200 text-xs">Total</p>
-                </div>
-              </div>
+              <p style={{
+                fontSize: '12px',
+                color: '#64748b',
+                marginTop: '4px'
+              }}>
+                This note will be shown to the location manager so they can fix the issues.
+              </p>
             </div>
 
-            {filteredEmployees.length > 0 && (
+            <div style={{ display: 'flex', gap: '12px' }}>
               <button
-                onClick={handleSyncConnecteam}
-                disabled={isSyncingConnecteam}
-                className="w-full mb-3 bg-gradient-to-r from-purple-500 to-purple-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                onClick={handleReject}
+                disabled={isApproving}
+                style={{
+                  flex: 1,
+                  padding: '14px',
+                  background: BRAND_COLORS.danger,
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  cursor: isApproving ? 'not-allowed' : 'pointer',
+                  opacity: isApproving ? 0.6 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
               >
-                {isSyncingConnecteam ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    Syncing from Connecteam...
-                  </>
+                <XCircle size={18} />
+                Reject
+              </button>
+              <button
+                onClick={handleApprove}
+                disabled={isApproving}
+                style={{
+                  flex: 1,
+                  padding: '14px',
+                  background: `linear-gradient(135deg, ${BRAND_COLORS.success}, #229954)`,
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  fontWeight: '600',
+                  cursor: isApproving ? 'not-allowed' : 'pointer',
+                  opacity: isApproving ? 0.6 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                {isApproving ? (
+                  'Approving...'
                 ) : (
                   <>
-                    <RefreshCw className="w-5 h-5" />
-                    Sync Hours from Connecteam
+                    <CheckCircle size={18} />
+                    Approve & Post
                   </>
                 )}
               </button>
-            )}
-
-            <div className="space-y-3">
-              {filteredEmployees.length === 0 ? (
-                <div className="text-center py-12">
-                  <Users className="w-12 h-12 text-blue-300/50 mx-auto mb-4" />
-                  <p className="text-blue-200">No employees in Group {payrollGroup}</p>
-                </div>
-              ) : (
-                filteredEmployees.map((emp) => {
-                  const isSwiped = swipedEmployeeId === emp.id
-                  const offset = isSwiped ? touchOffset : 0
-                  
-                  return (
-                    <div key={emp.id} className="relative overflow-hidden rounded-xl">
-                      <div className="absolute inset-y-0 right-0 flex">
-                        <button
-                          onClick={() => {
-                            setEditingEmployee(emp)
-                            setShowEditEmployee(true)
-                            setSwipedEmployeeId(null)
-                            setTouchOffset(0)
-                          }}
-                          className="w-[75px] bg-blue-500 flex items-center justify-center text-white font-medium"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => handleArchiveEmployee(emp.id)}
-                          className="w-[75px] bg-red-500 flex items-center justify-center text-white font-medium"
-                        >
-                          Archive
-                        </button>
-                      </div>
-
-                      <button
-                        onTouchStart={(e) => handleTouchStart(e, emp.id)}
-                        onTouchMove={handleTouchMove}
-                        onTouchEnd={handleTouchEnd}
-                        onClick={() => {
-                          if (Math.abs(offset) < 10) {
-                            handleEmployeeSelect(emp)
-                          }
-                        }}
-                        style={{
-                          transform: `translateX(${offset}px)`,
-                          transition: touchStart ? 'none' : 'transform 0.3s ease',
-                        }}
-                        className="w-full bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20 hover:bg-white/15 transition text-left relative"
-                      >
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex-1">
-                            <h3 className="text-white font-semibold">
-                              {emp.first_name} {emp.last_name}
-                            </h3>
-                            {emp.email && (
-                              <p className="text-blue-300 text-xs mt-1">{emp.email}</p>
-                            )}
-                          </div>
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                              emp.compensation_type === 'hourly'
-                                ? 'bg-blue-500/20 text-blue-200'
-                                : emp.compensation_type === 'production'
-                                ? 'bg-purple-500/20 text-purple-200'
-                                : 'bg-green-500/20 text-green-200'
-                            }`}
-                          >
-                            {emp.compensation_type === 'hourly' ? 'Hourly' : emp.compensation_type === 'production' ? 'Production' : 'Fixed'}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm">
-                            <span className="text-blue-200">
-                              {emp.compensation_type === 'hourly' 
-                                ? 'Hours: ' 
-                                : emp.compensation_type === 'production' 
-                                ? 'Units: ' 
-                                : 'Fixed: '}
-                            </span>
-                            <span className="text-white font-semibold">
-                              {emp.compensation_type === 'hourly'
-                                ? emp.hours || '0'
-                                : emp.compensation_type === 'production'
-                                ? emp.units || '0'
-                                : '1'}
-                            </span>
-                          </div>
-                          <div className="text-white font-bold text-lg">
-                            {formatCurrency(emp.amount)}
-                          </div>
-                        </div>
-                      </button>
-                    </div>
-                  )
-                })
-              )}
-              
-              <button
-                onClick={() => setShowAddEmployee(true)}
-                className="w-full bg-white/5 border-2 border-dashed border-white/20 hover:border-blue-400 hover:bg-white/10 rounded-xl p-4 text-center transition-all group"
-              >
-                <div className="flex items-center justify-center gap-2 text-blue-200 group-hover:text-blue-100">
-                  <Users className="w-5 h-5" />
-                  <span className="font-medium">Add New Employee</span>
-                </div>
-              </button>
             </div>
-          </>
-        )}
-      </div>
-
-      {selectedLocationId && (
-        <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent p-4 border-t border-white/10">
-          <div className="max-w-lg mx-auto space-y-2">
-            {/* ✅ NEW: Save Draft Button */}
-            <button
-              onClick={handleSaveDraft}
-              disabled={isSavingDraft || totals.employees === 0}
-              className="w-full bg-gradient-to-r from-amber-500 to-amber-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-3 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSavingDraft ? (
-                <span className="flex items-center justify-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  Saving Draft...
-                </span>
-              ) : (
-                <span className="flex items-center justify-center gap-2">
-                  <Clock className="w-4 h-4" />
-                  {draftSubmissionId ? 'Update Draft' : 'Save as Draft'}
-                </span>
-              )}
-            </button>
-            
-            {/* Submit Button */}
-            <button
-              onClick={handleSubmit}
-              disabled={isSubmitting || totals.employees === 0}
-              className="w-full bg-gradient-to-r from-blue-500 to-blue-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? (
-                <span className="flex items-center justify-center gap-2">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  {rejectedSubmissionId ? 'Resubmitting...' : 'Submitting...'}
-                </span>
-              ) : (
-                <span>
-                  {rejectedSubmissionId ? '🔄 Resubmit' : draftSubmissionId ? '📋 Submit Draft' : '✅ Submit Payroll'} ({totals.employees} employees)
-                </span>
-              )}
-            </button>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }
