@@ -29,44 +29,57 @@ export async function POST(request: NextRequest) {
 
     console.log(`🔑 Using time clock ID ${timeClockId}`)
 
-    // STEP 1: Get all users to map userId → email
+    // STEP 1: Get ALL users (with pagination) to map userId → email
     console.log('\n📋 STEP 1: Getting user list...')
-    const usersUrl = 'https://api.connecteam.com/users/v1/users'
-    const usersResponse = await fetch(usersUrl, {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': connecteamApiKey,
-        'Accept': 'application/json',
-      },
-    })
-
-    if (!usersResponse.ok) {
-      return NextResponse.json({
-        error: 'Failed to get users from Connecteam',
-        status: usersResponse.status
-      }, { status: 502 })
-    }
-
-    const usersData = JSON.parse(await usersResponse.text())
-    console.log('📦 Users response structure:', JSON.stringify(usersData, null, 2).substring(0, 1000))
     
-    const users = usersData.data?.users || usersData.users || usersData.data || []
-    
-    // Create userId → email mapping (case-insensitive)
     const userIdToEmail: Record<number, string> = {}
     const emailToUserId: Record<string, number> = {}
     
-    users.forEach((user: any) => {
-      if (user.userId && user.email) {
-        userIdToEmail[user.userId] = user.email.toLowerCase()
-        emailToUserId[user.email.toLowerCase()] = user.userId
-        console.log(`  📧 User: ${user.email.toLowerCase()} → ID ${user.userId}`)
-      } else {
-        console.log(`  ⚠️  User missing data: userId=${user.userId}, email=${user.email}`)
-      }
-    })
+    let page = 1
+    let hasMore = true
+    let totalUsers = 0
+    
+    while (hasMore && page <= 10) { // Safety limit of 10 pages
+      const usersUrl = `https://api.connecteam.com/users/v1/users?page=${page}&limit=100`
+      console.log(`📄 Fetching page ${page}...`)
+      
+      const usersResponse = await fetch(usersUrl, {
+        method: 'GET',
+        headers: {
+          'X-API-KEY': connecteamApiKey,
+          'Accept': 'application/json',
+        },
+      })
 
-    console.log(`✅ Found ${users.length} users, mapped ${Object.keys(emailToUserId).length} emails`)
+      if (!usersResponse.ok) {
+        return NextResponse.json({
+          error: 'Failed to get users from Connecteam',
+          status: usersResponse.status
+        }, { status: 502 })
+      }
+
+      const usersData = JSON.parse(await usersResponse.text())
+      const users = usersData.data?.users || []
+      
+      if (users.length === 0) {
+        hasMore = false
+        break
+      }
+      
+      users.forEach((user: any) => {
+        if (user.userId && user.email) {
+          userIdToEmail[user.userId] = user.email.toLowerCase()
+          emailToUserId[user.email.toLowerCase()] = user.userId
+          totalUsers++
+        }
+      })
+      
+      // Check if there are more pages
+      hasMore = users.length === 100 // If we got 100, there might be more
+      page++
+    }
+
+    console.log(`✅ Found ${totalUsers} users across ${page - 1} page(s)`)
     console.log(`📧 Looking for userIds for:`, employeeEmails)
     
     const relevantUserIds: number[] = []
