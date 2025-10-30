@@ -4,55 +4,41 @@ import { createClient } from '@supabase/supabase-js'
 
 export async function POST(request: NextRequest) {
   try {
-    // ✅ Get auth token from cookies or Authorization header
+    console.log('🔵 Connecteam API route called')
+    
+    // ✅ Get auth token from Authorization header
     const authHeader = request.headers.get('authorization')
-    const cookieHeader = request.headers.get('cookie')
     
-    // Extract token from Authorization header or cookies
-    let accessToken: string | null = null
-    
-    if (authHeader?.startsWith('Bearer ')) {
-      accessToken = authHeader.replace('Bearer ', '')
-    } else if (cookieHeader) {
-      // Try to extract access token from cookies
-      const cookies = cookieHeader.split(';').map(c => c.trim())
-      const authCookie = cookies.find(c => c.startsWith('sb-') && c.includes('auth-token'))
-      if (authCookie) {
-        try {
-          const [, value] = authCookie.split('=')
-          const decoded = JSON.parse(decodeURIComponent(value))
-          accessToken = decoded.access_token || decoded[0]?.access_token
-        } catch (e) {
-          console.log('Could not parse auth cookie')
-        }
-      }
+    if (!authHeader?.startsWith('Bearer ')) {
+      console.error('❌ Missing or invalid Authorization header')
+      return NextResponse.json(
+        { error: 'Missing or invalid authorization header' },
+        { status: 401 }
+      )
     }
 
-    // Create Supabase client to verify auth
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    const accessToken = authHeader.replace('Bearer ', '')
+    console.log('🔑 Received access token (length:', accessToken.length, ')')
 
-    if (!supabaseUrl || !supabaseAnonKey) {
-      console.error('❌ Missing Supabase credentials')
+    // ✅ Create Platform Supabase client (for auth validation)
+    const platformSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const platformSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+    if (!platformSupabaseUrl || !platformSupabaseKey) {
+      console.error('❌ Missing Platform Supabase credentials')
       return NextResponse.json(
         { error: 'Server configuration error' },
         { status: 500 }
       )
     }
 
-    const supabase = createClient(supabaseUrl, supabaseAnonKey)
+    const platformSupabase = createClient(platformSupabaseUrl, platformSupabaseKey)
 
-    // Verify the user is authenticated
-    let user = null
-    if (accessToken) {
-      const { data: { user: authUser }, error: authError } = await supabase.auth.getUser(accessToken)
-      if (!authError && authUser) {
-        user = authUser
-      }
-    }
+    // ✅ Verify the token
+    const { data: { user }, error: authError } = await platformSupabase.auth.getUser(accessToken)
 
-    if (!user) {
-      console.error('❌ No authenticated user found')
+    if (authError || !user) {
+      console.error('❌ Auth verification failed:', authError?.message || 'No user')
       return NextResponse.json(
         { error: 'Unauthorized - please log in' },
         { status: 401 }
@@ -66,6 +52,7 @@ export async function POST(request: NextRequest) {
     const { periodStart, periodEnd, employeeEmails, payrollGroup } = body
 
     if (!periodStart || !periodEnd || !employeeEmails || !payrollGroup) {
+      console.error('❌ Missing required fields')
       return NextResponse.json(
         { error: 'Missing required fields: periodStart, periodEnd, employeeEmails, payrollGroup' },
         { status: 400 }
@@ -115,6 +102,8 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    console.log('📡 Connecteam response status:', connecteamResponse.status)
+
     if (!connecteamResponse.ok) {
       const errorText = await connecteamResponse.text()
       console.error('❌ Connecteam API error:', connecteamResponse.status, errorText)
@@ -125,7 +114,8 @@ export async function POST(request: NextRequest) {
     }
 
     const connecteamData = await connecteamResponse.json()
-    console.log('✅ Connecteam raw response:', JSON.stringify(connecteamData, null, 2))
+    console.log('✅ Connecteam response received, processing...')
+    console.log('📊 Raw data structure:', JSON.stringify(connecteamData, null, 2).substring(0, 500))
 
     // ✅ Process the data and calculate total hours per employee
     const hoursMap: Record<string, number> = {}
@@ -135,59 +125,50 @@ export async function POST(request: NextRequest) {
       hoursMap[email.toLowerCase()] = 0
     })
 
-    // Process Connecteam entries
-    if (connecteamData && Array.isArray(connecteamData)) {
-      connecteamData.forEach((entry: any) => {
-        const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
-        
-        if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
-          // Calculate hours from the entry
-          let hours = 0
-          
-          if (entry.duration) {
-            // If duration is in minutes
-            hours = entry.duration / 60
-          } else if (entry.clockIn && entry.clockOut) {
-            // Calculate from timestamps
-            const clockIn = new Date(entry.clockIn).getTime()
-            const clockOut = new Date(entry.clockOut).getTime()
-            hours = (clockOut - clockIn) / (1000 * 60 * 60) // Convert ms to hours
-          } else if (entry.totalTime) {
-            // Some APIs return totalTime in seconds
-            hours = entry.totalTime / 3600
-          }
+    let entriesProcessed = 0
 
-          if (hours > 0) {
-            hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
-            console.log(`✅ Added ${hours.toFixed(2)} hours for ${userEmail}`)
-          }
-        }
-      })
-    } else if (connecteamData && connecteamData.data && Array.isArray(connecteamData.data)) {
-      // Handle if response is wrapped in a data property
-      connecteamData.data.forEach((entry: any) => {
-        const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
-        
-        if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
-          let hours = 0
-          
-          if (entry.duration) {
-            hours = entry.duration / 60
-          } else if (entry.clockIn && entry.clockOut) {
-            const clockIn = new Date(entry.clockIn).getTime()
-            const clockOut = new Date(entry.clockOut).getTime()
-            hours = (clockOut - clockIn) / (1000 * 60 * 60)
-          } else if (entry.totalTime) {
-            hours = entry.totalTime / 3600
-          }
+    // Process Connecteam entries - handle different possible response formats
+    const entries = Array.isArray(connecteamData) 
+      ? connecteamData 
+      : connecteamData.data && Array.isArray(connecteamData.data)
+      ? connecteamData.data
+      : connecteamData.entries && Array.isArray(connecteamData.entries)
+      ? connecteamData.entries
+      : []
 
-          if (hours > 0) {
-            hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
-            console.log(`✅ Added ${hours.toFixed(2)} hours for ${userEmail}`)
-          }
+    console.log(`📝 Processing ${entries.length} entries`)
+
+    entries.forEach((entry: any) => {
+      const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
+      
+      if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
+        // Calculate hours from the entry
+        let hours = 0
+        
+        if (entry.duration) {
+          // If duration is in minutes
+          hours = entry.duration / 60
+          console.log(`  ⏱️  ${userEmail}: ${entry.duration} minutes = ${hours.toFixed(2)} hours`)
+        } else if (entry.clockIn && entry.clockOut) {
+          // Calculate from timestamps
+          const clockIn = new Date(entry.clockIn).getTime()
+          const clockOut = new Date(entry.clockOut).getTime()
+          hours = (clockOut - clockIn) / (1000 * 60 * 60) // Convert ms to hours
+          console.log(`  🕐 ${userEmail}: ${new Date(entry.clockIn).toLocaleString()} to ${new Date(entry.clockOut).toLocaleString()} = ${hours.toFixed(2)} hours`)
+        } else if (entry.totalTime) {
+          // Some APIs return totalTime in seconds
+          hours = entry.totalTime / 3600
+          console.log(`  ⌚ ${userEmail}: ${entry.totalTime} seconds = ${hours.toFixed(2)} hours`)
         }
-      })
-    }
+
+        if (hours > 0) {
+          hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
+          entriesProcessed++
+        }
+      }
+    })
+
+    console.log(`✅ Processed ${entriesProcessed} valid entries`)
 
     // Round hours to 2 decimal places
     Object.keys(hoursMap).forEach(email => {
@@ -201,10 +182,12 @@ export async function POST(request: NextRequest) {
       hours: hoursMap,
       payrollGroup,
       period: { start: periodStart, end: periodEnd },
+      entriesProcessed,
     })
 
   } catch (error: any) {
     console.error('❌ API route error:', error)
+    console.error('❌ Error stack:', error.stack)
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }
