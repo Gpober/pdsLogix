@@ -145,6 +145,11 @@ export async function POST(request: NextRequest) {
 
       console.log(`\n  👤 Processing ${userEmail} (userId ${userId}): ${shifts.length} shifts, ${manualBreaks.length} breaks`)
       
+      // Log first shift structure to see all fields
+      if (shifts.length > 0) {
+        console.log(`  🔍 First shift structure:`, JSON.stringify(shifts[0], null, 2))
+      }
+      
       let totalHours = 0
       let totalBreakHours = 0
       
