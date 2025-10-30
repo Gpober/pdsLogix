@@ -628,9 +628,21 @@ export default function MobilePayrollSubmit() {
     console.log('📅 Period:', periodStart, 'to', periodEnd)
     console.log('👥 Payroll Group:', payrollGroup)
 
+    // ✅ FIX: Get the current session token from authClient
+    const { data: { session } } = await authClient.getSession()
+    
+    if (!session?.access_token) {
+      throw new Error('No valid session found. Please log in again.')
+    }
+
+    console.log('🔑 Sending request with auth token')
+
     const response = await fetch('/api/connecteam/hours', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}` // ✅ ADD AUTH HEADER
+      },
       body: JSON.stringify({
         periodStart: periodStart,
         periodEnd: periodEnd,
@@ -639,8 +651,11 @@ export default function MobilePayrollSubmit() {
       }),
     })
 
+    console.log('📥 Response status:', response.status)
+
     if (!response.ok) {
       const error = await response.json()
+      console.error('❌ API Error:', error)
       throw new Error(error.error || 'Failed to sync from Connecteam')
     }
 
