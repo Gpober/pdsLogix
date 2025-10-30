@@ -105,7 +105,7 @@ function calculatePayrollInfo(payDateStr: string): {
   )
   const weeksDifference = Math.round((payDateUTC - referenceDateUTC) / MS_PER_WEEK)
   const parity = ((weeksDifference % 2) + 2) % 2
-  const payrollGroup: PayrollGroup = parity === 0 ? 'B' : 'A'
+  const payrollGroup: PayrollGroup = parity === 0 ? 'A' : 'B'
 
   return {
     payrollGroup,
