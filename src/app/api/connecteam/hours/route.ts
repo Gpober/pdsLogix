@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
 
     const connecteamData = JSON.parse(responseText)
     console.log('✅ Got valid JSON!')
+    console.log('📊 Full Connecteam response:', JSON.stringify(connecteamData, null, 2))
 
     const hoursMap: Record<string, number> = {}
     employeeEmails.forEach((email: string) => {
@@ -63,23 +64,34 @@ export async function POST(request: NextRequest) {
     })
 
     const timeActivities = connecteamData.data?.timeActivities || []
-    console.log(`📝 Processing ${timeActivities.length} time activities`)
+    console.log(`📝 Found ${timeActivities.length} time activities`)
+    
+    if (timeActivities.length > 0) {
+      console.log('📋 Sample activity:', JSON.stringify(timeActivities[0], null, 2))
+    }
 
-    timeActivities.forEach((activity: any) => {
+    timeActivities.forEach((activity: any, index: number) => {
       const userEmail = activity.user?.email?.toLowerCase()
+      console.log(`  Activity ${index + 1}: email=${userEmail}, duration=${activity.duration}, startTime=${activity.startTime}, endTime=${activity.endTime}`)
       
       if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
+        console.log(`    ✅ Email matches! Processing...`)
         let hours = 0
         
         if (activity.duration) {
           hours = activity.duration / 60
+          console.log(`    ⏱️  Duration: ${activity.duration} minutes = ${hours.toFixed(2)} hours`)
         } else if (activity.startTime && activity.endTime) {
           hours = (new Date(activity.endTime).getTime() - new Date(activity.startTime).getTime()) / (1000 * 60 * 60)
+          console.log(`    🕐 Calculated: ${hours.toFixed(2)} hours`)
         }
 
         if (hours > 0) {
           hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
+          console.log(`    ➕ Total for ${userEmail}: ${hoursMap[userEmail].toFixed(2)} hours`)
         }
+      } else {
+        console.log(`    ❌ Email doesn't match or is missing`)
       }
     })
 
