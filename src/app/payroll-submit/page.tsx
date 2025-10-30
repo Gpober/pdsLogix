@@ -6,16 +6,12 @@ import { getAuthClient } from "@/lib/supabase/auth-client";
 import { getDataClient, syncDataClientSession } from "@/lib/supabase/client";
 import {
   LogOut,
-  DollarSign,
-  Clock,
-  Users,
   CheckCircle2,
   AlertCircle,
+  Info,
   X,
-  Save,
   Send,
   Plus,
-  Trash2,
   MapPin,
   ChevronDown,
   RefreshCw,
@@ -56,6 +52,7 @@ type Employee = {
   id: string;
   first_name: string;
   last_name: string;
+  email: string | null;
   payroll_group: PayrollGroup;
   compensation_type: CompensationType;
   hourly_rate: number | null;
@@ -72,8 +69,10 @@ type EmployeeRow = Employee & {
   amount: number;
 };
 
+type AlertType = "success" | "error" | "warning" | "info";
+
 type Alert = {
-  type: "success" | "error" | "warning";
+  type: AlertType;
   message: string;
 };
 
@@ -132,7 +131,7 @@ export default function DesktopPayrollSubmit() {
   const [draftSubmissionId, setDraftSubmissionId] = useState<string | null>(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Connecteam sync state
   const [isSyncingConnecteam, setIsSyncingConnecteam] = useState(false);
@@ -577,7 +576,7 @@ export default function DesktopPayrollSubmit() {
   };
 
   // [OK] UPDATED: Auto-save function (debounced, silent background saves)
-  const autoSaveDraft = useCallback(async (employeesData: Employee[]) => {
+  const autoSaveDraft = useCallback(async (employeesData: EmployeeRow[]) => {
     if (!selectedLocationId || !userId) return;
 
     const employeesWithData = employeesData.filter(
@@ -961,7 +960,7 @@ export default function DesktopPayrollSubmit() {
     }
   };
 
-  const showAlert = (message: string, type: "success" | "error" | "warning") => {
+  const showAlert = (message: string, type: AlertType) => {
     setAlert({ message, type });
     setTimeout(() => setAlert(null), 5000);
   };
@@ -1094,16 +1093,20 @@ export default function DesktopPayrollSubmit() {
           className="fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg text-white font-medium animate-slide-in max-w-md"
           style={{
             backgroundColor:
-              alert.type === "success" 
-                ? BRAND_COLORS.success 
+              alert.type === "success"
+                ? BRAND_COLORS.success
                 : alert.type === "warning"
                 ? BRAND_COLORS.warning
+                : alert.type === "info"
+                ? BRAND_COLORS.primary
                 : BRAND_COLORS.danger,
           }}
         >
           <div className="flex items-start gap-3">
             {alert.type === "success" ? (
               <CheckCircle2 size={20} className="flex-shrink-0 mt-0.5" />
+            ) : alert.type === "info" ? (
+              <Info size={20} className="flex-shrink-0 mt-0.5" />
             ) : (
               <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
             )}
