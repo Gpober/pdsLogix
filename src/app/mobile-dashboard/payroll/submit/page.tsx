@@ -1804,24 +1804,26 @@ export default function MobilePayrollSubmit() {
                       </button>
                     )}
                     
-                    {/* Sync Production button - ALWAYS SHOWING FOR TESTING */}
-                    <button
-                      onClick={handleSyncProduction}
-                      disabled={isSyncingProduction}
-                      className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 rounded-lg text-indigo-200 text-sm font-medium transition disabled:opacity-50"
-                    >
-                      {isSyncingProduction ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          Syncing...
-                        </>
-                      ) : (
-                        <>
-                          <Hash className="w-4 h-4" />
-                          Sync Production TEST
-                        </>
-                      )}
-                    </button>
+                    {/* Sync Production button - only show if there are production employees */}
+                    {filteredEmployees.some(emp => emp.compensation_type === 'production' && emp.email) && (
+                      <button
+                        onClick={handleSyncProduction}
+                        disabled={isSyncingProduction}
+                        className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 rounded-lg text-indigo-200 text-sm font-medium transition disabled:opacity-50"
+                      >
+                        {isSyncingProduction ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <Hash className="w-4 h-4" />
+                            Sync Production
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
 
