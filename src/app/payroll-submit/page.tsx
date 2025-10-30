@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getAuthClient } from "@/lib/supabase/auth-client";
 import { getDataClient, syncDataClientSession } from "@/lib/supabase/client";
@@ -18,7 +18,6 @@ import {
   Trash2,
   MapPin,
   ChevronDown,
-  RefreshCw,
 } from "lucide-react";
 
 // I AM CFO Brand Colors
@@ -43,52 +42,6 @@ const BRAND_COLORS = {
     900: "#0F172A",
   },
 };
-
-// Date helper functions
-function parseLocalDate(dateStr: string): Date | null {
-  const parts = dateStr.split('-').map(Number);
-  if (parts.length !== 3 || parts.some((part) => Number.isNaN(part))) return null;
-  const [year, month, day] = parts;
-  return new Date(year, month - 1, day);
-}
-
-function formatInputDate(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
-function calculatePayrollInfo(payDateStr: string): {
-  payrollGroup: PayrollGroup;
-  periodStart: string;
-  periodEnd: string;
-} {
-  const payDate = parseLocalDate(payDateStr);
-  if (!payDate) {
-    return { payrollGroup: 'A', periodStart: payDateStr, periodEnd: payDateStr };
-  }
-  
-  // Period ends 9 days before pay date
-  const periodEnd = new Date(payDate);
-  periodEnd.setDate(payDate.getDate() - 9);
-  
-  // Period starts 14 days before period end (2 weeks total)
-  const periodStart = new Date(periodEnd);
-  periodStart.setDate(periodEnd.getDate() - 13);
-  
-  // Calculate payroll group based on reference date (Jan 3, 2025)
-  const referenceDate = new Date(2025, 0, 3);
-  const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24));
-  const weeksDifference = Math.floor(daysDifference / 7);
-  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'B' : 'A';
-  
-  return {
-    payrollGroup,
-    periodStart: formatInputDate(periodStart),
-    periodEnd: formatInputDate(periodEnd),
-  };
-}
 
 type PayrollGroup = "A" | "B";
 type CompensationType = "hourly" | "production" | "fixed";
@@ -156,8 +109,6 @@ export default function DesktopPayrollSubmit() {
     new Date().toISOString().split("T")[0]
   );
   const [payrollGroup, setPayrollGroup] = useState<PayrollGroup>("A");
-  const [periodStart, setPeriodStart] = useState<string>('');
-  const [periodEnd, setPeriodEnd] = useState<string>('');
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [alert, setAlert] = useState<Alert | null>(null);
   const [showAddEmployee, setShowAddEmployee] = useState(false);
@@ -176,14 +127,9 @@ export default function DesktopPayrollSubmit() {
   const [rejectedSubmissionId, setRejectedSubmissionId] = useState<string | null>(null);
   const [rejectionNote, setRejectionNote] = useState<string | null>(null);
   
-  // ✅ UPDATED: Auto-save states (replacing manual draft button)
+  // ✅ NEW: Draft handling state
   const [draftSubmissionId, setDraftSubmissionId] = useState<string | null>(null);
-  const [isAutoSaving, setIsAutoSaving] = useState(false);
-  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Connecteam sync state
-  const [isSyncingConnecteam, setIsSyncingConnecteam] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
 
   // Get selected location name
   const selectedLocationName = useMemo(() => {
@@ -311,19 +257,6 @@ export default function DesktopPayrollSubmit() {
       loadDraftOrRejected();
     }
   }, [selectedLocationId, payrollGroup]);
-
-  // ✅ Update period dates when payDate changes
-  useEffect(() => {
-    if (payDate) {
-      const info = calculatePayrollInfo(payDate);
-      setPeriodStart(info.periodStart);
-      setPeriodEnd(info.periodEnd);
-      // Only update payroll group if it's different (to avoid unnecessary re-renders)
-      if (info.payrollGroup !== payrollGroup) {
-        setPayrollGroup(info.payrollGroup);
-      }
-    }
-  }, [payDate]);
 
   const loadDraftOrRejected = async () => {
     if (!selectedLocationId) return;
@@ -546,9 +479,6 @@ export default function DesktopPayrollSubmit() {
       updated[index] = emp;
       return updated;
     });
-    
-    // ✅ Trigger auto-save after input change
-    triggerAutoSave();
   };
 
   const totalAmount = useMemo(() => {
@@ -637,11 +567,14 @@ export default function DesktopPayrollSubmit() {
     }
   };
 
-  // ✅ UPDATED: Auto-save function (debounced, silent background saves)
-  const autoSaveDraft = useCallback(async (employeesData: Employee[]) => {
-    if (!selectedLocationId || !userId) return;
+  // ✅ NEW: Save Draft Function
+  const handleSaveDraft = async () => {
+    if (!selectedLocationId || !userId) {
+      showAlert("Missing location or user information", "error");
+      return;
+    }
 
-    const employeesWithData = employeesData.filter(
+    const employeesWithData = employees.filter(
       (emp) =>
         (emp.compensation_type === "hourly" && parseFloat(emp.hours) > 0) ||
         (emp.compensation_type === "production" && parseFloat(emp.units) > 0) ||
@@ -649,26 +582,27 @@ export default function DesktopPayrollSubmit() {
     );
 
     if (employeesWithData.length === 0) {
-      // No data to save, clear any existing draft
+      showAlert("Please enter hours or units for at least one employee before saving draft", "error");
       return;
     }
 
-    setIsAutoSaving(true);
+    setIsSavingDraft(true);
+
     try {
-      // Use period state variables if available, otherwise calculate from payDate
-      let startDate = periodStart;
-      let endDate = periodEnd;
-      
-      if (!startDate || !endDate) {
-        const info = calculatePayrollInfo(payDate);
-        startDate = info.periodStart;
-        endDate = info.periodEnd;
-      }
+      const payDateObj = new Date(payDate);
+      const dayOfWeek = payDateObj.getDay();
+      const daysToFriday = dayOfWeek === 5 ? 0 : dayOfWeek < 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+      const periodEnd = new Date(payDateObj);
+      periodEnd.setDate(payDateObj.getDate() + daysToFriday - 1);
+      const periodStart = new Date(periodEnd);
+      periodStart.setDate(periodEnd.getDate() - 6);
 
       const existingSubmissionId = draftSubmissionId || rejectedSubmissionId;
 
       if (existingSubmissionId) {
         // UPDATE existing submission as draft
+        console.log('🔄 Updating existing submission as draft:', existingSubmissionId);
+        
         const { error: updateError } = await dataSupabase
           .from('payroll_submissions')
           .update({
@@ -679,17 +613,18 @@ export default function DesktopPayrollSubmit() {
             rejected_by: null,
             rejected_at: null,
             rejection_note: null,
-            updated_at: new Date().toISOString(),
           })
           .eq('id', existingSubmissionId);
 
         if (updateError) throw updateError;
 
         // Delete old details
-        await dataSupabase
+        const { error: deleteError } = await dataSupabase
           .from('payroll_entries')
           .delete()
           .eq('submission_id', existingSubmissionId);
+
+        if (deleteError) throw deleteError;
 
         // Insert new details
         const details = employeesWithData.map((emp) => ({
@@ -716,14 +651,16 @@ export default function DesktopPayrollSubmit() {
 
       } else {
         // CREATE new draft submission
+        console.log('✨ Creating new draft submission');
+        
         const { data: submission, error: submissionError } = await dataSupabase
           .from("payroll_submissions")
           .insert({
             location_id: selectedLocationId,
             pay_date: payDate,
             payroll_group: payrollGroup,
-            period_start: startDate,
-            period_end: endDate,
+            period_start: periodStart.toISOString().split("T")[0],
+            period_end: periodEnd.toISOString().split("T")[0],
             total_amount: totalAmount,
             employee_count: employeesWithData.length,
             submitted_by: userId,
@@ -755,125 +692,13 @@ export default function DesktopPayrollSubmit() {
         setDraftSubmissionId(submission.id);
       }
 
-      setLastSavedAt(new Date());
+      showAlert("✅ Draft saved! You can return later to complete.", "success");
 
     } catch (error: any) {
-      console.error('Auto-save error:', error);
-      // Silent fail - don't show alert to user since auto-save is background
+      console.error("Save draft error:", error);
+      showAlert(error.message || "Failed to save draft", "error");
     } finally {
-      setIsAutoSaving(false);
-    }
-  }, [selectedLocationId, userId, payDate, payrollGroup, totalAmount, draftSubmissionId, rejectedSubmissionId, periodStart, periodEnd, dataSupabase]);
-
-  // ✅ NEW: Trigger auto-save with debounce (2 seconds after last change)
-  const triggerAutoSave = useCallback(() => {
-    // Clear existing timeout
-    if (autoSaveTimeoutRef.current) {
-      clearTimeout(autoSaveTimeoutRef.current);
-    }
-
-    // Set new timeout (2 seconds after last change)
-    autoSaveTimeoutRef.current = setTimeout(() => {
-      autoSaveDraft(employees);
-    }, 2000);
-  }, [employees, autoSaveDraft]);
-
-  // ✅ Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // ✅ NEW: Connecteam sync function
-  const handleSyncConnecteam = async () => {
-    if (!selectedLocationId) return;
-
-    setIsSyncingConnecteam(true);
-    try {
-      const employeeEmails = employees
-        .filter(emp => emp.email && emp.compensation_type === 'hourly')
-        .map(emp => emp.email?.toLowerCase())
-        .filter(Boolean) as string[];
-
-      if (employeeEmails.length === 0) {
-        showAlert('No hourly employees with emails found for Connecteam sync', 'error');
-        return;
-      }
-
-      // Use period state variables if available, otherwise calculate from payDate
-      let startDate = periodStart;
-      let endDate = periodEnd;
-      
-      if (!startDate || !endDate) {
-        const info = calculatePayrollInfo(payDate);
-        startDate = info.periodStart;
-        endDate = info.periodEnd;
-      }
-
-      console.log('🔄 Syncing hours for employees:', employeeEmails);
-      console.log('📅 Period:', startDate, 'to', endDate);
-      console.log('👥 Payroll Group:', payrollGroup);
-
-      const response = await fetch('/api/connecteam/hours', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          periodStart: startDate,
-          periodEnd: endDate,
-          employeeEmails: employeeEmails,
-          payrollGroup: payrollGroup,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to sync from Connecteam');
-      }
-
-      const result = await response.json();
-      console.log('✅ Connecteam sync result:', result);
-
-      if (result.hours && Object.keys(result.hours).length > 0) {
-        let syncedCount = 0;
-
-        const updatedEmployees = employees.map(emp => {
-          if (emp.compensation_type !== 'hourly' || !emp.email) return emp;
-
-          const email = emp.email.toLowerCase();
-          const syncedHours = result.hours[email];
-
-          if (syncedHours !== undefined && syncedHours > 0) {
-            syncedCount++;
-            const hoursStr = syncedHours.toString();
-            return {
-              ...emp,
-              hours: hoursStr,
-              amount: syncedHours * (emp.hourly_rate || 0)
-            };
-          }
-          return emp;
-        });
-
-        setEmployees(updatedEmployees);
-
-        if (syncedCount > 0) {
-          showAlert(`✓ Synced hours for ${syncedCount} employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`, 'success');
-          // ✅ Trigger auto-save after syncing
-          triggerAutoSave();
-        } else {
-          showAlert('No hours found in Connecteam for this period', 'error');
-        }
-      } else {
-        showAlert('No hours returned from Connecteam', 'error');
-      }
-    } catch (error: any) {
-      console.error('❌ Connecteam sync error:', error);
-      showAlert(error.message || 'Failed to sync from Connecteam', 'error');
-    } finally {
-      setIsSyncingConnecteam(false);
+      setIsSavingDraft(false);
     }
   };
 
@@ -898,15 +723,14 @@ export default function DesktopPayrollSubmit() {
     setIsSubmitting(true);
 
     try {
-      // Use period state variables if available, otherwise calculate from payDate
-      let startDate = periodStart;
-      let endDate = periodEnd;
-      
-      if (!startDate || !endDate) {
-        const info = calculatePayrollInfo(payDate);
-        startDate = info.periodStart;
-        endDate = info.periodEnd;
-      }
+      // Calculate period dates
+      const payDateObj = new Date(payDate);
+      const dayOfWeek = payDateObj.getDay();
+      const daysToFriday = dayOfWeek === 5 ? 0 : dayOfWeek < 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+      const periodEnd = new Date(payDateObj);
+      periodEnd.setDate(payDateObj.getDate() + daysToFriday - 1);
+      const periodStart = new Date(periodEnd);
+      periodStart.setDate(periodEnd.getDate() - 6);
 
       // ✅ Check if updating existing draft or rejected submission
       const existingSubmissionId = draftSubmissionId || rejectedSubmissionId;
@@ -980,8 +804,8 @@ export default function DesktopPayrollSubmit() {
               location_id: selectedLocationId,
               pay_date: payDate,
               payroll_group: payrollGroup,
-              period_start: startDate,
-              period_end: endDate,
+              period_start: periodStart.toISOString().split("T")[0],
+              period_end: periodEnd.toISOString().split("T")[0],
               total_amount: totalAmount,
               employee_count: employeesWithData.length,
               submitted_by: userId,
@@ -1043,18 +867,6 @@ export default function DesktopPayrollSubmit() {
       style: "currency",
       currency: "USD",
     }).format(amount);
-  };
-
-  const formatTimeAgo = (date: Date): string => {
-    const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
-    if (seconds < 10) return 'just now';
-    if (seconds < 60) return `${seconds} seconds ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
-    const days = Math.floor(hours / 24);
-    return `${days} day${days !== 1 ? 's' : ''} ago`;
   };
 
   if (isInitializing) {
@@ -1442,53 +1254,35 @@ export default function DesktopPayrollSubmit() {
                     <Plus size={18} />
                     Add Employee
                   </button>
-                  {/* ✅ NEW: Connecteam Sync Button */}
-                  <button
-                    onClick={handleSyncConnecteam}
-                    disabled={isSyncingConnecteam}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ backgroundColor: '#9333EA' }}
-                  >
-                    {isSyncingConnecteam ? (
-                      <>
-                        <RefreshCw size={18} className="animate-spin" />
-                        Syncing...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw size={18} />
-                        Sync Hours
-                      </>
-                    )}
-                  </button>
                 </div>
-                
-                {/* ✅ AUTO-SAVE STATUS INDICATOR (replaces Save Draft button) */}
-                <div className="flex items-center gap-4">
-                  {(isAutoSaving || lastSavedAt) && (
-                    <div className="flex items-center gap-2 text-sm" style={{ color: BRAND_COLORS.gray[600] }}>
-                      {isAutoSaving ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-current border-t-transparent"></div>
-                          <span>Saving draft...</span>
-                        </>
-                      ) : lastSavedAt ? (
-                        <>
-                          <CheckCircle2 size={16} style={{ color: BRAND_COLORS.success }} />
-                          <span style={{ color: BRAND_COLORS.success }}>
-                            Draft saved {formatTimeAgo(lastSavedAt)}
-                          </span>
-                        </>
-                      ) : null}
-                    </div>
+                {/* ✅ NEW: Save Draft Button */}
+                <button
+                  onClick={handleSaveDraft}
+                  disabled={isSavingDraft || totalAmount === 0}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: BRAND_COLORS.warning }}
+                >
+                  {isSavingDraft ? (
+                    <>
+                      <div
+                        className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"
+                      ></div>
+                      Saving Draft...
+                    </>
+                  ) : (
+                    <>
+                      <Clock size={20} />
+                      {draftSubmissionId ? 'Update Draft' : 'Save as Draft'}
+                    </>
                   )}
-                  
-                  {/* Submit Button */}
-                  <button
-                    onClick={handleSubmit}
-                    disabled={isSubmitting || totalAmount === 0}
-                    className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ backgroundColor: BRAND_COLORS.success }}
+                </button>
+                
+                {/* Submit Button */}
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || totalAmount === 0}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: BRAND_COLORS.success }}
                 >
                   {isSubmitting ? (
                     <>
