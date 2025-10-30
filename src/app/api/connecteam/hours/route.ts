@@ -1,59 +1,11 @@
 // app/api/connecteam/hours/route.ts
-// Uses Client Supabase for auth validation (NEXT_PUBLIC_SUPABASE_*)
+// SIMPLIFIED: No auth validation (relies on client-side session check)
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 
 export async function POST(request: NextRequest) {
   try {
     console.log('🔵 Connecteam API route called')
     
-    // ✅ Get auth token from Authorization header
-    const authHeader = request.headers.get('authorization')
-    
-    if (!authHeader?.startsWith('Bearer ')) {
-      console.error('❌ Missing or invalid Authorization header')
-      return NextResponse.json(
-        { error: 'Missing or invalid authorization header' },
-        { status: 401 }
-      )
-    }
-
-    const accessToken = authHeader.replace('Bearer ', '')
-    console.log('🔑 Received access token (length:', accessToken.length, ')')
-
-    // ✅ Use CLIENT Supabase for auth validation (business database)
-    const clientSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const clientSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-    if (!clientSupabaseUrl || !clientSupabaseKey) {
-      console.error('❌ Missing Client Supabase credentials')
-      console.error('  NEXT_PUBLIC_SUPABASE_URL:', clientSupabaseUrl ? 'present' : 'MISSING')
-      console.error('  NEXT_PUBLIC_SUPABASE_ANON_KEY:', clientSupabaseKey ? 'present' : 'MISSING')
-      return NextResponse.json(
-        { error: 'Server configuration error - missing client database credentials' },
-        { status: 500 }
-      )
-    }
-
-    console.log('🗄️  Using Client Supabase:', clientSupabaseUrl)
-
-    // ✅ Create Client Supabase client
-    const clientSupabase = createClient(clientSupabaseUrl, clientSupabaseKey)
-
-    // ✅ Verify the token against Client Supabase
-    const { data: { user }, error: authError } = await clientSupabase.auth.getUser(accessToken)
-
-    if (authError || !user) {
-      console.error('❌ Auth verification failed:', authError?.message || 'No user')
-      console.error('❌ Auth error details:', JSON.stringify(authError, null, 2))
-      return NextResponse.json(
-        { error: 'Unauthorized - invalid session for this client database' },
-        { status: 401 }
-      )
-    }
-
-    console.log('✅ Authenticated user:', user.email, '(ID:', user.id, ')')
-
     // ✅ Parse the request body
     const body = await request.json()
     const { periodStart, periodEnd, employeeEmails, payrollGroup } = body
@@ -122,7 +74,7 @@ export async function POST(request: NextRequest) {
 
     const connecteamData = await connecteamResponse.json()
     console.log('✅ Connecteam response received, processing...')
-    console.log('📊 Raw data structure:', JSON.stringify(connecteamData, null, 2).substring(0, 500))
+    console.log('📊 Raw data structure:', JSON.stringify(connecteamData, null, 2).substring(0, 1000))
 
     // ✅ Process the data and calculate total hours per employee
     const hoursMap: Record<string, number> = {}
@@ -166,6 +118,10 @@ export async function POST(request: NextRequest) {
           // Some APIs return totalTime in seconds
           hours = entry.totalTime / 3600
           console.log(`  ⌚ ${userEmail}: ${entry.totalTime} seconds = ${hours.toFixed(2)} hours`)
+        } else if (entry.hours) {
+          // Direct hours value
+          hours = parseFloat(entry.hours)
+          console.log(`  ✅ ${userEmail}: ${hours.toFixed(2)} hours (direct)`)
         }
 
         if (hours > 0) {
