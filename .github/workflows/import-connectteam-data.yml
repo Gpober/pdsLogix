@@ -1,64 +1,231 @@
-# .github/workflows/import-connecteam-data.yml
-# Manual GitHub Action to import historic Connecteam submissions
-# Run this ONCE from GitHub Actions tab
+// scripts/import-historic-submissions.ts
+// One-time script to import all historic Connecteam form submissions into Supabase
+// Run with: npx tsx scripts/import-historic-submissions.ts
 
-name: Import Connecteam Historic Data
+import { createClient } from '@supabase/supabase-js'
 
-# Manual trigger only - prevents accidental runs
-on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: 'Type "IMPORT" to confirm you want to run this'
-        required: true
-        default: ''
+const CONNECTEAM_API_KEY = process.env.CONNECTEAM_API_KEY!
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
-jobs:
-  import:
-    runs-on: ubuntu-latest
+interface ConnecteamUser {
+  id: number
+  email: string
+}
+
+interface FormSubmission {
+  formSubmissionId: string
+  formId: number
+  submittingUserId: number
+  submissionTimestamp: number
+  entryNum: number
+  answers: any[]
+}
+
+async function main() {
+  console.log('🚀 Starting historic data import...\n')
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+  // STEP 1: Get all users and build email map
+  console.log('👥 STEP 1: Loading all Connecteam users...')
+  const userEmailMap = await loadAllUsers()
+  console.log(`✅ Loaded ${Object.keys(userEmailMap).length} users\n`)
+
+  // STEP 2: Get all production forms
+  console.log('📋 STEP 2: Loading all production forms...')
+  const forms = await loadAllForms()
+  const productionForms = forms.filter((f: any) => 
+    f.formName?.toLowerCase().includes('manheim') ||
+    f.formName?.toLowerCase().includes('enterprise') ||
+    f.formName?.toLowerCase().includes('auction')
+  )
+  console.log(`✅ Found ${productionForms.length} production forms\n`)
+
+  // STEP 3: Import submissions for each form
+  let totalImported = 0
+  
+  for (const form of productionForms) {
+    console.log(`\n📄 Processing: ${form.formName} (ID: ${form.formId})`)
     
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    const submissions = await loadAllSubmissions(form.formId)
+    console.log(`  📊 Found ${submissions.length} submissions`)
+    
+    if (submissions.length === 0) continue
+
+    // Batch insert to Supabase
+    const records = submissions.map((sub: FormSubmission) => {
+      const userEmail = userEmailMap[sub.submittingUserId] || null
       
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      // Extract location from answers
+      const locationAnswer = sub.answers?.find((a: any) => 
+        a.questionType === 'multipleChoice' && 
+        a.selectedAnswers?.[0]?.text
+      )
+      const locationName = locationAnswer?.selectedAnswers?.[0]?.text || form.formName
+
+      return {
+        form_submission_id: sub.formSubmissionId,
+        form_id: sub.formId,
+        submitting_user_id: sub.submittingUserId,
+        user_email: userEmail,
+        location_name: locationName,
+        submission_timestamp: sub.submissionTimestamp,
+        entry_num: sub.entryNum,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        deleted_at: null
+      }
+    })
+
+    // Insert in batches of 1000
+    const BATCH_SIZE = 1000
+    for (let i = 0; i < records.length; i += BATCH_SIZE) {
+      const batch = records.slice(i, i + BATCH_SIZE)
       
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: 10
-      
-      - name: Install dependencies
-        run: pnpm install
-      
-      - name: Verify confirmation
-        run: |
-          if [ "${{ github.event.inputs.confirm }}" != "IMPORT" ]; then
-            echo "❌ Confirmation failed. You must type 'IMPORT' to run this action."
-            exit 1
-          fi
-          echo "✅ Confirmation verified"
-      
-      - name: Run import script
-        env:
-          CONNECTEAM_API_KEY: ${{ secrets.CONNECTEAM_API_KEY }}
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          echo "🚀 Starting Connecteam data import..."
-          npx tsx scripts/import-historic-submissions.ts
-          echo "✅ Import completed!"
-      
-      - name: Summary
-        run: |
-          echo "## ✅ Import Complete! 🎉" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Historic Connecteam data has been imported to Supabase." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Next Steps:**" >> $GITHUB_STEP_SUMMARY
-          echo "1. Configure Connecteam webhook" >> $GITHUB_STEP_SUMMARY
-          echo "2. Update frontend to use /api/connecteam/production-v2" >> $GITHUB_STEP_SUMMARY
-          echo "3. Test the new fast sync!" >> $GITHUB_STEP_SUMMARY
+      const { error } = await supabase
+        .from('connecteam_form_submissions')
+        .upsert(batch, {
+          onConflict: 'form_submission_id'
+        })
+
+      if (error) {
+        console.error(`  ❌ Error inserting batch ${i / BATCH_SIZE + 1}:`, error)
+        continue
+      }
+
+      console.log(`  ✅ Inserted batch ${i / BATCH_SIZE + 1} (${batch.length} records)`)
+      totalImported += batch.length
+    }
+  }
+
+  console.log(`\n\n🎉 Import complete! Total records imported: ${totalImported}`)
+}
+
+async function loadAllUsers(): Promise<Record<number, string>> {
+  const userMap: Record<number, string> = {}
+  let page = 1
+  let hasMore = true
+
+  while (hasMore) {
+    const response = await fetch(
+      `https://api.connecteam.com/users/v1/users?page=${page}&limit=100`,
+      {
+        headers: {
+          'X-API-KEY': CONNECTEAM_API_KEY,
+          'Accept': 'application/json',
+        },
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch users: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const users = data.data?.users || []
+
+    users.forEach((user: any) => {
+      if (user.userId && user.email) {
+        userMap[user.userId] = user.email.toLowerCase()
+      }
+    })
+
+    hasMore = users.length === 100
+    page++
+  }
+
+  return userMap
+}
+
+async function loadAllForms(): Promise<any[]> {
+  const allForms: any[] = []
+  let offset = 0
+  let hasMore = true
+
+  while (hasMore) {
+    const response = await fetch(
+      `https://api.connecteam.com/forms/v1/forms?offset=${offset}`,
+      {
+        headers: {
+          'X-API-KEY': CONNECTEAM_API_KEY,
+          'Accept': 'application/json',
+        },
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch forms: ${response.status}`)
+    }
+
+    const data = await response.json()
+    const forms = data.data?.forms || []
+    allForms.push(...forms)
+
+    hasMore = forms.length > 0 && data.paging?.offset
+    offset = data.paging?.offset || offset + forms.length
+  }
+
+  return allForms
+}
+
+async function loadAllSubmissions(formId: number): Promise<FormSubmission[]> {
+  const allSubmissions: FormSubmission[] = []
+  let submissionsOffset = 0
+  let hasMore = true
+
+  // Only get submissions from 2025-01-01 onwards
+  const startDate = '2025-01-01'
+  const endDate = new Date().toISOString().split('T')[0] // Today
+  
+  console.log(`    📅 Fetching from ${startDate} to ${endDate}`)
+
+  while (hasMore) {
+    const response = await fetch(
+      `https://api.connecteam.com/forms/v1/forms/${formId}/form-submissions?startDate=${startDate}&endDate=${endDate}&offset=${submissionsOffset}&limit=100`,
+      {
+        headers: {
+          'X-API-KEY': CONNECTEAM_API_KEY,
+          'Accept': 'application/json',
+        },
+      }
+    )
+
+    if (!response.ok) {
+      console.error(`  ❌ Failed to fetch submissions for form ${formId}: ${response.status}`)
+      break
+    }
+
+    const data = await response.json()
+    const submissions = data.data?.formSubmissions || 
+                       data.data?.submissions || 
+                       data.formSubmissions ||
+                       data.submissions || 
+                       []
+
+    allSubmissions.push(...submissions)
+
+    // Show progress
+    if (submissionsOffset % 500 === 0 && submissionsOffset > 0) {
+      console.log(`    📊 Progress: ${allSubmissions.length} submissions loaded...`)
+    }
+
+    // Check if there are more
+    if (submissions.length < 100) {
+      hasMore = false
+    } else {
+      submissionsOffset += 100
+    }
+
+    // Add delay to avoid rate limiting (200ms between requests)
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+
+  return allSubmissions
+}
+
+// Run the import
+main().catch((error) => {
+  console.error('💥 Fatal error:', error)
+  process.exit(1)
+})
