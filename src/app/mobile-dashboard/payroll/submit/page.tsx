@@ -77,6 +77,10 @@ function formatCurrency(
   })
 }
 
+const MS_PER_DAY = 1000 * 60 * 60 * 24
+const MS_PER_WEEK = MS_PER_DAY * 7
+const PAYROLL_REFERENCE_DATE = new Date(2025, 0, 3)
+
 function calculatePayrollInfo(payDateStr: string): {
   payrollGroup: PayrollGroup
   periodStart: string
@@ -86,18 +90,23 @@ function calculatePayrollInfo(payDateStr: string): {
   if (!payDate) {
     return { payrollGroup: 'A', periodStart: payDateStr, periodEnd: payDateStr }
   }
-  
+
   const periodEnd = new Date(payDate)
   periodEnd.setDate(payDate.getDate() - 9)
-  
+
   const periodStart = new Date(periodEnd)
   periodStart.setDate(periodEnd.getDate() - 13)
-  
-  const referenceDate = new Date(2025, 0, 3)
-  const daysDifference = Math.floor((payDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24))
-  const weeksDifference = Math.floor(daysDifference / 7)
-  const payrollGroup: PayrollGroup = weeksDifference % 2 === 0 ? 'B' : 'A'
-  
+
+  const payDateUTC = Date.UTC(payDate.getFullYear(), payDate.getMonth(), payDate.getDate())
+  const referenceDateUTC = Date.UTC(
+    PAYROLL_REFERENCE_DATE.getFullYear(),
+    PAYROLL_REFERENCE_DATE.getMonth(),
+    PAYROLL_REFERENCE_DATE.getDate(),
+  )
+  const weeksDifference = Math.round((payDateUTC - referenceDateUTC) / MS_PER_WEEK)
+  const parity = ((weeksDifference % 2) + 2) % 2
+  const payrollGroup: PayrollGroup = parity === 0 ? 'B' : 'A'
+
   return {
     payrollGroup,
     periodStart: formatInputDate(periodStart),
