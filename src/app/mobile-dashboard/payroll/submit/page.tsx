@@ -1783,6 +1783,24 @@ export default function MobilePayrollSubmit() {
                     Employees ({filteredEmployees.length})
                   </h2>
                   <div className="flex items-center gap-2">
+                    {/* 🔍 DEBUG LOGGING */}
+                    {(() => {
+                      console.log('🔍 DEBUG: All filtered employees:', filteredEmployees)
+                      console.log('🔍 DEBUG: Hourly with emails:', 
+                        filteredEmployees.filter(emp => emp.compensation_type === 'hourly' && emp.email)
+                      )
+                      console.log('🔍 DEBUG: Production with emails:', 
+                        filteredEmployees.filter(emp => emp.compensation_type === 'production' && emp.email)
+                      )
+                      console.log('🔍 DEBUG: Show Sync Hours?', 
+                        filteredEmployees.some(emp => emp.compensation_type === 'hourly' && emp.email)
+                      )
+                      console.log('🔍 DEBUG: Show Sync Production?', 
+                        filteredEmployees.some(emp => emp.compensation_type === 'production' && emp.email)
+                      )
+                      return null
+                    })()}
+                    
                     {/* Sync Hours button - only show if there are hourly employees */}
                     {filteredEmployees.some(emp => emp.compensation_type === 'hourly' && emp.email) && (
                       <button
