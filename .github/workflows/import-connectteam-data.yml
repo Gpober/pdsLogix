@@ -46,7 +46,7 @@ jobs:
         env:
           CONNECTEAM_API_KEY: ${{ secrets.CONNECTEAM_API_KEY }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE}}
         run: |
           echo "🚀 Starting Connecteam data import from 1/1/2025 to now..."
           npx tsx scripts/import-historic-submissions.ts
