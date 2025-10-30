@@ -72,7 +72,7 @@ type EmployeeRow = Employee & {
 };
 
 type Alert = {
-  type: "success" | "error";
+  type: "success" | "error" | "warning";
   message: string;
 };
 
@@ -123,11 +123,25 @@ export default function DesktopPayrollSubmit() {
     fixed_pay: '',
   });
 
+  // Rejection handling state
+  const [rejectedSubmissionId, setRejectedSubmissionId] = useState<string | null>(null);
+  const [rejectionNote, setRejectionNote] = useState<string | null>(null);
+
   // Get selected location name
   const selectedLocationName = useMemo(() => {
     const location = availableLocations.find(loc => loc.id === selectedLocationId);
     return location?.name || 'Select Location';
   }, [availableLocations, selectedLocationId]);
+
+  // Helper function to get next Friday
+  const getNextFriday = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+    const nextFriday = new Date(today);
+    nextFriday.setDate(today.getDate() + daysUntilFriday);
+    return `${nextFriday.getFullYear()}-${String(nextFriday.getMonth() + 1).padStart(2, '0')}-${String(nextFriday.getDate()).padStart(2, '0')}`;
+  };
 
   useEffect(() => {
     initializeUser();
@@ -236,14 +250,137 @@ export default function DesktopPayrollSubmit() {
 
   useEffect(() => {
     if (selectedLocationId && payrollGroup) {
-      loadEmployees();
+      loadRejectedSubmission();
     }
   }, [selectedLocationId, payrollGroup]);
+
+  const loadRejectedSubmission = async () => {
+    if (!selectedLocationId) return;
+
+    setIsLoading(true);
+    try {
+      // Check for rejected submission for next Friday
+      const nextFriday = getNextFriday();
+      
+      const { data: rejected, error: rejectedError } = await dataSupabase
+        .from('payroll_submissions')
+        .select('*')
+        .eq('location_id', selectedLocationId)
+        .eq('pay_date', nextFriday)
+        .eq('payroll_group', payrollGroup)
+        .eq('status', 'rejected')
+        .single();
+
+      if (rejectedError && rejectedError.code !== 'PGRST116') {
+        console.error('Error checking for rejected submission:', rejectedError);
+      }
+
+      if (rejected) {
+        console.log('🔄 Found rejected submission:', rejected.id);
+        setRejectedSubmissionId(rejected.id);
+        setRejectionNote(rejected.rejection_note);
+        
+        // Show alert with rejection note
+        if (rejected.rejection_note) {
+          showAlert(
+            `Previous submission was rejected: ${rejected.rejection_note}. Please review and correct the data below.`,
+            'warning'
+          );
+        } else {
+          showAlert(
+            'Your previous submission was rejected. Please review and correct the data below.',
+            'warning'
+          );
+        }
+
+        // Load the rejected submission details
+        const { data: details, error: detailsError } = await dataSupabase
+          .from('payroll_entries')
+          .select('*')
+          .eq('submission_id', rejected.id);
+
+        if (detailsError) {
+          console.error('Error loading rejected details:', detailsError);
+          await loadEmployees();
+          return;
+        }
+
+        // Load all employees for this location/group
+        const { data: allEmployees, error: empError } = await dataSupabase
+          .from("employees")
+          .select("*")
+          .eq("location_id", selectedLocationId)
+          .eq("payroll_group", payrollGroup)
+          .eq("is_active", true)
+          .order("last_name");
+
+        if (empError) {
+          console.error('Error loading employees:', empError);
+          await loadEmployees();
+          return;
+        }
+
+        // Create a map of previous submissions
+        const previousData = new Map(
+          details?.map(d => [
+            d.employee_id,
+            {
+              hours: d.hours?.toString() || '',
+              units: d.units?.toString() || '',
+              count: d.count?.toString() || '1',
+              adjustment: d.adjustment?.toString() || '0',
+              amount: d.amount || 0,
+              notes: d.notes || ''
+            }
+          ]) || []
+        );
+
+        // Pre-fill employee data with rejected submission values
+        const rows: EmployeeRow[] = (allEmployees || []).map((emp) => {
+          const prevData = previousData.get(emp.id);
+          
+          if (prevData) {
+            // Employee had data in rejected submission - restore it
+            return {
+              ...emp,
+              hours: prevData.hours,
+              units: prevData.units,
+              count: prevData.count,
+              adjustment: prevData.adjustment,
+              notes: prevData.notes,
+              amount: prevData.amount,
+            };
+          } else {
+            // Employee wasn't in rejected submission - use defaults
+            return {
+              ...emp,
+              hours: "",
+              units: "",
+              count: "1",
+              adjustment: "0",
+              notes: "",
+              amount: 0,
+            };
+          }
+        });
+
+        setEmployees(rows);
+        console.log('✅ Loaded', rows.length, 'employees with rejected data pre-filled');
+      } else {
+        // No rejected submission, load normally
+        await loadEmployees();
+      }
+    } catch (error) {
+      console.error("Error loading rejected submission:", error);
+      await loadEmployees();
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const loadEmployees = async () => {
     if (!selectedLocationId) return;
 
-    setIsLoading(true);
     try {
       const { data, error } = await dataSupabase
         .from("employees")
@@ -270,8 +407,6 @@ export default function DesktopPayrollSubmit() {
     } catch (error) {
       console.error("Error loading employees:", error);
       showAlert("Failed to load employees", "error");
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -312,7 +447,6 @@ export default function DesktopPayrollSubmit() {
   const totalAmount = useMemo(() => {
     return employees.reduce((sum, emp) => sum + emp.amount, 0);
   }, [employees]);
-
 
   const handleAddEmployee = async () => {
     if (!selectedLocationId) {
@@ -387,7 +521,7 @@ export default function DesktopPayrollSubmit() {
       
       // Close modal and reload employees
       setShowAddEmployee(false);
-      await loadEmployees();
+      await loadRejectedSubmission();
     } catch (error: any) {
       console.error('Add employee error:', error);
       showAlert(error.message || 'Failed to add employee', "error");
@@ -426,53 +560,113 @@ export default function DesktopPayrollSubmit() {
       const periodStart = new Date(periodEnd);
       periodStart.setDate(periodEnd.getDate() - 6);
 
-      // Create submission
-      const { data: submission, error: submissionError } = await dataSupabase
-        .from("payroll_submissions")
-        .insert([
-          {
-            location_id: selectedLocationId,
-            pay_date: payDate,
-            payroll_group: payrollGroup,
-            period_start: periodStart.toISOString().split("T")[0],
-            period_end: periodEnd.toISOString().split("T")[0],
+      if (rejectedSubmissionId) {
+        // UPDATE existing rejected submission
+        console.log('🔄 Updating rejected submission:', rejectedSubmissionId);
+        
+        const { error: updateError } = await dataSupabase
+          .from('payroll_submissions')
+          .update({
+            status: 'pending',
             total_amount: totalAmount,
             employee_count: employeesWithData.length,
+            submitted_at: new Date().toISOString(),
             submitted_by: userId,
-            status: "pending",
-          },
-        ])
-        .select()
-        .single();
+            rejected_by: null,
+            rejected_at: null,
+            rejection_note: null,
+          })
+          .eq('id', rejectedSubmissionId);
 
-      if (submissionError) throw submissionError;
+        if (updateError) throw updateError;
 
-      // ✅ FIXED: Use "payroll_entries" instead of "payroll_submission_details"
-      const details = employeesWithData.map((emp) => ({
-        submission_id: submission.id,
-        employee_id: emp.id,
-        hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === "fixed" ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === "fixed" ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-        status: 'pending'
-      }));
+        // Delete old details
+        const { error: deleteError } = await dataSupabase
+          .from('payroll_entries')
+          .delete()
+          .eq('submission_id', rejectedSubmissionId);
 
-      const { error: detailsError } = await dataSupabase
-        .from("payroll_entries")  // ✅ CORRECT TABLE NAME
-        .insert(details);
+        if (deleteError) throw deleteError;
 
-      if (detailsError) throw detailsError;
+        // Insert new details
+        const details = employeesWithData.map((emp) => ({
+          submission_id: rejectedSubmissionId,
+          employee_id: emp.id,
+          hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === "fixed" ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === "fixed" ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'pending'
+        }));
 
-      showAlert("✅ Payroll submitted successfully!", "success");
-      
-      // Reset form
-      setTimeout(() => {
-        loadEmployees();
-        setPayDate(new Date().toISOString().split("T")[0]);
-      }, 2000);
+        const { error: detailsError } = await dataSupabase
+          .from("payroll_entries")
+          .insert(details);
+
+        if (detailsError) throw detailsError;
+
+        showAlert("✅ Payroll resubmitted for approval!", "success");
+        
+        // Clear rejection state and reset form
+        setRejectedSubmissionId(null);
+        setRejectionNote(null);
+        setTimeout(() => {
+          loadRejectedSubmission();
+          setPayDate(new Date().toISOString().split("T")[0]);
+        }, 2000);
+
+      } else {
+        // CREATE new submission (normal flow)
+        console.log('📝 Creating new submission');
+        
+        const { data: submission, error: submissionError } = await dataSupabase
+          .from("payroll_submissions")
+          .insert([
+            {
+              location_id: selectedLocationId,
+              pay_date: payDate,
+              payroll_group: payrollGroup,
+              period_start: periodStart.toISOString().split("T")[0],
+              period_end: periodEnd.toISOString().split("T")[0],
+              total_amount: totalAmount,
+              employee_count: employeesWithData.length,
+              submitted_by: userId,
+              status: "pending",
+            },
+          ])
+          .select()
+          .single();
+
+        if (submissionError) throw submissionError;
+
+        const details = employeesWithData.map((emp) => ({
+          submission_id: submission.id,
+          employee_id: emp.id,
+          hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === "fixed" ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === "fixed" ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'pending'
+        }));
+
+        const { error: detailsError } = await dataSupabase
+          .from("payroll_entries")
+          .insert(details);
+
+        if (detailsError) throw detailsError;
+
+        showAlert("✅ Payroll submitted successfully!", "success");
+        
+        // Reset form
+        setTimeout(() => {
+          loadRejectedSubmission();
+          setPayDate(new Date().toISOString().split("T")[0]);
+        }, 2000);
+      }
     } catch (error: any) {
       console.error("Submission error:", error);
       showAlert(error.message || "Failed to submit payroll", "error");
@@ -481,7 +675,7 @@ export default function DesktopPayrollSubmit() {
     }
   };
 
-  const showAlert = (message: string, type: "success" | "error") => {
+  const showAlert = (message: string, type: "success" | "error" | "warning") => {
     setAlert({ message, type });
     setTimeout(() => setAlert(null), 5000);
   };
@@ -556,6 +750,8 @@ export default function DesktopPayrollSubmit() {
                               setSelectedLocationId(location.id);
                               setShowLocationDropdown(false);
                               setEmployees([]);
+                              setRejectedSubmissionId(null);
+                              setRejectionNote(null);
                             }}
                             className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 ${
                               location.id === selectedLocationId ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'
@@ -597,20 +793,24 @@ export default function DesktopPayrollSubmit() {
       {/* Alert */}
       {alert && (
         <div
-          className="fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg text-white font-medium animate-slide-in"
+          className="fixed top-4 right-4 z-50 px-6 py-4 rounded-lg shadow-lg text-white font-medium animate-slide-in max-w-md"
           style={{
             backgroundColor:
-              alert.type === "success" ? BRAND_COLORS.success : BRAND_COLORS.danger,
+              alert.type === "success" 
+                ? BRAND_COLORS.success 
+                : alert.type === "warning"
+                ? BRAND_COLORS.warning
+                : BRAND_COLORS.danger,
           }}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3">
             {alert.type === "success" ? (
-              <CheckCircle2 size={20} />
+              <CheckCircle2 size={20} className="flex-shrink-0 mt-0.5" />
             ) : (
-              <AlertCircle size={20} />
+              <AlertCircle size={20} className="flex-shrink-0 mt-0.5" />
             )}
-            <span>{alert.message}</span>
-            <button onClick={() => setAlert(null)}>
+            <span className="flex-1">{alert.message}</span>
+            <button onClick={() => setAlert(null)} className="flex-shrink-0">
               <X size={16} />
             </button>
           </div>
@@ -627,6 +827,29 @@ export default function DesktopPayrollSubmit() {
           </div>
         ) : (
           <>
+            {/* Rejection Warning Banner */}
+            {rejectedSubmissionId && (
+              <div className="mb-6 p-4 rounded-lg border-2" style={{ 
+                backgroundColor: `${BRAND_COLORS.warning}10`, 
+                borderColor: BRAND_COLORS.warning 
+              }}>
+                <div className="flex items-center gap-3 mb-2">
+                  <AlertCircle size={24} style={{ color: BRAND_COLORS.warning }} />
+                  <h3 className="font-bold text-lg" style={{ color: BRAND_COLORS.warning }}>
+                    Editing Rejected Submission
+                  </h3>
+                </div>
+                {rejectionNote && (
+                  <p className="text-sm text-gray-700 ml-9">
+                    <strong>Reason:</strong> {rejectionNote}
+                  </p>
+                )}
+                <p className="text-sm text-gray-600 ml-9 mt-1">
+                  Please review and correct the data below, then resubmit.
+                </p>
+              </div>
+            )}
+
             {/* Controls */}
             <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -649,7 +872,11 @@ export default function DesktopPayrollSubmit() {
                   </label>
                   <select
                     value={payrollGroup}
-                    onChange={(e) => setPayrollGroup(e.target.value as PayrollGroup)}
+                    onChange={(e) => {
+                      setPayrollGroup(e.target.value as PayrollGroup);
+                      setRejectedSubmissionId(null);
+                      setRejectionNote(null);
+                    }}
                     className="w-full px-4 py-2 border-2 rounded-lg"
                     style={{ borderColor: BRAND_COLORS.gray[300] }}
                   >
@@ -863,12 +1090,12 @@ export default function DesktopPayrollSubmit() {
                       <div
                         className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"
                       ></div>
-                      Submitting...
+                      {rejectedSubmissionId ? 'Resubmitting...' : 'Submitting...'}
                     </>
                   ) : (
                     <>
                       <Send size={20} />
-                      Submit Payroll
+                      {rejectedSubmissionId ? 'Resubmit Payroll' : 'Submit Payroll'}
                     </>
                   )}
                 </button>
@@ -877,7 +1104,8 @@ export default function DesktopPayrollSubmit() {
           </>
         )}
       </div>
-      {/* Add Employee Modal */}
+      
+      {/* Add Employee Modal - keeping your existing modal code */}
       {showAddEmployee && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
