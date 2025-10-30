@@ -131,6 +131,7 @@ export async function POST(request: NextRequest) {
       const userId = userActivity.userId
       const userEmail = userIdToEmail[userId]
       const shifts = userActivity.shifts || []
+      const manualBreaks = userActivity.manualBreaks || []
       
       if (!userEmail) {
         console.log(`  ⚠️  Unknown user ${userId} (${shifts.length} shifts) - no email mapping`)
@@ -142,9 +143,12 @@ export async function POST(request: NextRequest) {
         return
       }
 
-      console.log(`\n  👤 Processing ${userEmail} (userId ${userId}): ${shifts.length} shifts`)
+      console.log(`\n  👤 Processing ${userEmail} (userId ${userId}): ${shifts.length} shifts, ${manualBreaks.length} breaks`)
       
       let totalHours = 0
+      let totalBreakHours = 0
+      
+      // Calculate shift hours
       shifts.forEach((shift: any, index: number) => {
         const startTimestamp = shift.start?.timestamp
         const endTimestamp = shift.end?.timestamp
@@ -157,9 +161,23 @@ export async function POST(request: NextRequest) {
           console.log(`    Shift ${index + 1}: Missing timestamps`)
         }
       })
+      
+      // Calculate break hours
+      manualBreaks.forEach((breakItem: any, index: number) => {
+        const startTimestamp = breakItem.start?.timestamp || breakItem.startTime
+        const endTimestamp = breakItem.end?.timestamp || breakItem.endTime
+        
+        if (startTimestamp && endTimestamp) {
+          const breakHours = (endTimestamp - startTimestamp) / 3600
+          totalBreakHours += breakHours
+          console.log(`    Break ${index + 1}: ${breakHours.toFixed(2)} hours`)
+        }
+      })
 
-      hoursMap[userEmail] = Math.round(totalHours * 100) / 100
-      console.log(`  ✅ Total for ${userEmail}: ${hoursMap[userEmail]} hours`)
+      const paidHours = totalHours - totalBreakHours
+      hoursMap[userEmail] = Math.round(paidHours * 100) / 100
+      
+      console.log(`  📊 Total: ${totalHours.toFixed(2)}h - Breaks: ${totalBreakHours.toFixed(2)}h = Paid: ${hoursMap[userEmail]}h`)
     })
 
     console.log('\n✅ Final hours:', hoursMap)
