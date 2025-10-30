@@ -1,5 +1,5 @@
 // app/api/connecteam/hours/route.ts
-// Using timeclock (one word, no hyphen or dash)
+// FINAL VERSION - Using correct endpoint with correct IDs
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
@@ -11,10 +11,11 @@ export async function POST(request: NextRequest) {
 
     console.log('📅 Period:', periodStart, 'to', periodEnd)
     console.log('👥 Payroll Group:', payrollGroup)
+    console.log('📧 Employees:', employeeEmails)
 
     const connecteamApiKey = process.env.CONNECTEAM_API_KEY
-    const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A
-    const timeClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B
+    const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A // Should be 2805712
+    const timeClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B // Should be 2805369
 
     if (!connecteamApiKey) {
       return NextResponse.json({ error: 'API key not configured' }, { status: 500 })
@@ -28,111 +29,52 @@ export async function POST(request: NextRequest) {
 
     console.log(`🔑 Using time clock ID ${timeClockId} for payroll group ${payrollGroup}`)
 
-    // Try multiple timeclock endpoint variations
-    const urls = [
-      `https://api.connecteam.com/timeclock/v1/timeclocks/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
-      `https://api.connecteam.com/timeclock/v1/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
-      `https://api.connecteam.com/v1/timeclock/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
-      `https://api.connecteam.com/timeclock/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`,
-    ]
+    // ✅ CORRECT ENDPOINT
+    const connecteamUrl = `https://api.connecteam.com/time-clock/v1/time-clocks/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`
+    
+    console.log('🔗 Calling Connecteam API:', connecteamUrl)
 
-    let successResponse = null
+    const connecteamResponse = await fetch(connecteamUrl, {
+      method: 'GET',
+      headers: {
+        'X-API-KEY': connecteamApiKey,
+        'Accept': 'application/json',
+      },
+    })
 
-    for (const connecteamUrl of urls) {
-      console.log(`\n🔗 Trying: ${connecteamUrl}`)
+    console.log('📡 Status:', connecteamResponse.status)
 
-      const connecteamResponse = await fetch(connecteamUrl, {
-        method: 'GET',
-        headers: {
-          'X-API-KEY': connecteamApiKey,
-          'Accept': 'application/json',
-        },
-      })
+    const responseText = await connecteamResponse.text()
+    console.log('📄 Response preview:', responseText.substring(0, 500))
 
-      console.log('📡 Status:', connecteamResponse.status)
-      const contentType = connecteamResponse.headers.get('content-type') || ''
-      console.log('📡 Content-Type:', contentType)
-
-      const responseText = await connecteamResponse.text()
-      console.log('📄 Response preview:', responseText.substring(0, 300))
-
-      // Check if it's JSON (not HTML)
-      const isJson = contentType.includes('application/json') || 
-                     (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))
-
-      if (connecteamResponse.ok && isJson) {
-        console.log('✅ SUCCESS! Got valid JSON')
-        
-        try {
-          const data = JSON.parse(responseText)
-          successResponse = { data, url: connecteamUrl }
-          break
-        } catch (e) {
-          console.log('❌ JSON parse failed')
-        }
-      } else if (connecteamResponse.status === 400 || connecteamResponse.status === 404) {
-        // Log specific error messages
-        try {
-          const errorData = JSON.parse(responseText)
-          console.log(`❌ Error ${connecteamResponse.status}:`, errorData)
-        } catch (e) {
-          console.log(`❌ Failed with status ${connecteamResponse.status}`)
-        }
-      } else {
-        console.log(`❌ Failed: Status ${connecteamResponse.status}, isJson: ${isJson}`)
-      }
-    }
-
-    if (!successResponse) {
+    if (!connecteamResponse.ok) {
       return NextResponse.json({
-        error: 'Could not find working timeclock endpoint',
-        details: 'All timeclock endpoint variations failed. The time clock ID may be incorrect. Check Connecteam account for the correct ID.',
-        triedUrls: urls
+        error: `Connecteam returned ${connecteamResponse.status}`,
+        details: responseText
       }, { status: 502 })
     }
 
-    console.log('✅ Using URL:', successResponse.url)
-    const connecteamData = successResponse.data
+    const connecteamData = JSON.parse(responseText)
+    console.log('✅ Got valid JSON!')
 
-    console.log('📊 Data structure:', JSON.stringify(connecteamData).substring(0, 500))
-
-    // Process the data
     const hoursMap: Record<string, number> = {}
-    
     employeeEmails.forEach((email: string) => {
       hoursMap[email.toLowerCase()] = 0
     })
 
-    const entries = Array.isArray(connecteamData) 
-      ? connecteamData 
-      : connecteamData.data || 
-        connecteamData.timeActivities || 
-        connecteamData.activities || 
-        connecteamData.entries || 
-        []
+    const timeActivities = connecteamData.data?.timeActivities || []
+    console.log(`📝 Processing ${timeActivities.length} time activities`)
 
-    console.log(`📝 Processing ${entries.length} entries`)
-
-    entries.forEach((entry: any) => {
-      const userEmail = entry.user?.email?.toLowerCase() || 
-                       entry.email?.toLowerCase() ||
-                       entry.userEmail?.toLowerCase()
+    timeActivities.forEach((activity: any) => {
+      const userEmail = activity.user?.email?.toLowerCase()
       
       if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
         let hours = 0
         
-        if (entry.duration) {
-          hours = entry.duration / 60
-          console.log(`  ⏱️  ${userEmail}: ${entry.duration} minutes = ${hours.toFixed(2)} hours`)
-        } else if (entry.clockIn && entry.clockOut) {
-          hours = (new Date(entry.clockOut).getTime() - new Date(entry.clockIn).getTime()) / (1000 * 60 * 60)
-          console.log(`  🕐 ${userEmail}: ${hours.toFixed(2)} hours`)
-        } else if (entry.totalTime) {
-          hours = entry.totalTime / 3600
-          console.log(`  ⌚ ${userEmail}: ${hours.toFixed(2)} hours`)
-        } else if (entry.hours || entry.totalHours) {
-          hours = parseFloat(entry.hours || entry.totalHours)
-          console.log(`  ✅ ${userEmail}: ${hours.toFixed(2)} hours`)
+        if (activity.duration) {
+          hours = activity.duration / 60
+        } else if (activity.startTime && activity.endTime) {
+          hours = (new Date(activity.endTime).getTime() - new Date(activity.startTime).getTime()) / (1000 * 60 * 60)
         }
 
         if (hours > 0) {
@@ -152,13 +94,11 @@ export async function POST(request: NextRequest) {
       hours: hoursMap,
       payrollGroup,
       period: { start: periodStart, end: periodEnd },
-      workingUrl: successResponse.url,
-      entriesProcessed: entries.length
+      entriesProcessed: timeActivities.length
     })
 
   } catch (error: any) {
     console.error('❌ Error:', error.message)
-    console.error('❌ Stack:', error.stack)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
