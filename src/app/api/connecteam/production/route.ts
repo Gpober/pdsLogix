@@ -25,9 +25,9 @@ export async function POST(request: NextRequest) {
     // Paginate through ALL forms
     let allForms: any[] = []
     let offset = 0
-    let hasMore = true
+    let hasMoreForms = true
 
-    while (hasMore) {
+    while (hasMoreForms) {
       const formsUrl = `https://api.connecteam.com/forms/v1/forms?offset=${offset}`
       console.log(`  📄 Fetching forms at offset ${offset}...`)
       
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
       if (nextOffset && forms.length > 0) {
         offset = nextOffset
       } else {
-        hasMore = false
+        hasMoreForms = false
       }
     }
     
