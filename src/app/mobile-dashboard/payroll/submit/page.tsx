@@ -177,6 +177,7 @@ export default function MobilePayrollSubmit() {
   const [alert, setAlert] = useState<Alert | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSyncingConnecteam, setIsSyncingConnecteam] = useState(false)
+  const [isSyncingProduction, setIsSyncingProduction] = useState(false)
   const [showAddEmployee, setShowAddEmployee] = useState(false)
   
   // ✅ NEW: Auto-save states (replacing manual draft button)
@@ -702,6 +703,113 @@ export default function MobilePayrollSubmit() {
     setIsSyncingConnecteam(false)
   }
 }
+
+  async function handleSyncProduction() {
+    if (!selectedLocationId) return
+
+    setIsSyncingProduction(true)
+    try {
+      // Get the location name
+      const { data: locationData, error: locationError } = await dataSupabase
+        .from('locations')
+        .select('name')
+        .eq('id', selectedLocationId)
+        .single()
+
+      if (locationError || !locationData?.name) {
+        throw new Error('Failed to get location name')
+      }
+
+      const locationName = locationData.name
+
+      // Get production employees with emails
+      const productionEmployees = filteredEmployees
+        .filter(emp => emp.email && emp.compensation_type === 'production')
+        .map(emp => emp.email?.toLowerCase())
+        .filter(Boolean) as string[]
+
+      if (productionEmployees.length === 0) {
+        showAlert('error', 'No production employees with emails found for sync')
+        return
+      }
+
+      console.log('🔄 Syncing production for employees:', productionEmployees)
+      console.log('📅 Period:', periodStart, 'to', periodEnd)
+      console.log('📍 Location:', locationName)
+
+      // Get auth token
+      const { data: { session } } = await authClient.auth.getSession()
+      
+      if (!session?.access_token) {
+        throw new Error('No valid session found. Please log in again.')
+      }
+
+      const response = await fetch('/api/connecteam/production', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({
+          locationName: locationName,
+          periodStart: periodStart,
+          periodEnd: periodEnd,
+          employeeEmails: productionEmployees,
+        }),
+      })
+
+      console.log('📥 Response status:', response.status)
+
+      if (!response.ok) {
+        const error = await response.json()
+        console.error('❌ API Error:', error)
+        throw new Error(error.error || 'Failed to sync production from Connecteam')
+      }
+
+      const result = await response.json()
+      console.log('✅ Production sync result:', result)
+      
+      if (result.units && Object.keys(result.units).length > 0) {
+        let syncedCount = 0
+        
+        const updatedEmployees = employees.map(emp => {
+          if (emp.compensation_type !== 'production' || !emp.email) return emp
+          
+          const email = emp.email.toLowerCase()
+          const syncedUnits = result.units[email]
+          
+          if (syncedUnits !== undefined && syncedUnits > 0) {
+            syncedCount++
+            const unitsStr = syncedUnits.toString()
+            return {
+              ...emp,
+              units: unitsStr,
+              amount: syncedUnits * (emp.piece_rate || 0)
+            }
+          }
+          return emp
+        })
+        
+        setEmployees(updatedEmployees)
+        
+        if (syncedCount > 0) {
+          showAlert('success', `✓ Synced units for ${syncedCount} production employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`)
+          // Trigger auto-save after syncing
+          triggerAutoSave()
+        } else {
+          showAlert('error', 'No production units found in Connecteam for this period')
+        }
+      } else {
+        showAlert('error', 'No production units returned from Connecteam')
+      }
+    } catch (error: any) {
+      console.error('❌ Production sync error:', error)
+      showAlert('error', error.message || 'Failed to sync production from Connecteam')
+    } finally {
+      setIsSyncingProduction(false)
+    }
+  }
+
 
  async function handleSubmit() {
   if (!selectedLocationId || !userId) {
@@ -1674,23 +1782,49 @@ export default function MobilePayrollSubmit() {
                   <h2 className="text-white text-lg font-semibold">
                     Employees ({filteredEmployees.length})
                   </h2>
-                  <button
-                    onClick={handleSyncConnecteam}
-                    disabled={isSyncingConnecteam}
-                    className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 rounded-lg text-purple-200 text-sm font-medium transition disabled:opacity-50"
-                  >
-                    {isSyncingConnecteam ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        Syncing...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="w-4 h-4" />
-                        Sync Hours
-                      </>
+                  <div className="flex items-center gap-2">
+                    {/* Sync Hours button - only show if there are hourly employees */}
+                    {filteredEmployees.some(emp => emp.compensation_type === 'hourly' && emp.email) && (
+                      <button
+                        onClick={handleSyncConnecteam}
+                        disabled={isSyncingConnecteam}
+                        className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 rounded-lg text-purple-200 text-sm font-medium transition disabled:opacity-50"
+                      >
+                        {isSyncingConnecteam ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <Clock className="w-4 h-4" />
+                            Sync Hours
+                          </>
+                        )}
+                      </button>
                     )}
-                  </button>
+                    
+                    {/* Sync Production button - only show if there are production employees */}
+                    {filteredEmployees.some(emp => emp.compensation_type === 'production' && emp.email) && (
+                      <button
+                        onClick={handleSyncProduction}
+                        disabled={isSyncingProduction}
+                        className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 rounded-lg text-indigo-200 text-sm font-medium transition disabled:opacity-50"
+                      >
+                        {isSyncingProduction ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <Hash className="w-4 h-4" />
+                            Sync Production
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {filteredEmployees.map((emp) => {
