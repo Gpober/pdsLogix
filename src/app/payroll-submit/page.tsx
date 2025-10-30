@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAuthClient } from '@/lib/supabase/auth-client'
 import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
@@ -26,7 +26,7 @@ type EmployeeRow = Employee & {
   hours: string
   units: string
   count: string
-  adjustment: string  // NEW: For deductions/bonuses on fixed-pay employees
+  adjustment: string
   notes: string
   amount: number
 }
@@ -179,11 +179,14 @@ export default function MobilePayrollSubmit() {
   const [isSyncingConnecteam, setIsSyncingConnecteam] = useState(false)
   const [showAddEmployee, setShowAddEmployee] = useState(false)
   
-  // ✅ NEW: Draft and Rejected Submission States
+  // ✅ NEW: Auto-save states (replacing manual draft button)
   const [draftSubmissionId, setDraftSubmissionId] = useState<string | null>(null)
   const [rejectedSubmissionId, setRejectedSubmissionId] = useState<string | null>(null)
   const [rejectionNote, setRejectionNote] = useState<string | null>(null)
-  const [isSavingDraft, setIsSavingDraft] = useState(false)
+  const [isAutoSaving, setIsAutoSaving] = useState(false)
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
   const [showEditEmployee, setShowEditEmployee] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
   const [swipedEmployeeId, setSwipedEmployeeId] = useState<string | null>(null)
@@ -220,7 +223,6 @@ export default function MobilePayrollSubmit() {
       try {
         const { data: { session }, error } = await authClient.auth.getSession()
         
-        // Only redirect if there's truly no session
         if (!session) {
           console.log('No session found, redirecting to login')
           router.push('/login')
@@ -230,7 +232,6 @@ export default function MobilePayrollSubmit() {
         setUserId(session.user.id)
         setUserName(session.user.email || 'User')
 
-        // FIX: Use location_managers table (not user_locations)
         const { data: locationManagers, error: locError } = await dataSupabase
           .from('location_managers')
           .select('location_id, locations(id, name)')
@@ -238,7 +239,6 @@ export default function MobilePayrollSubmit() {
 
         if (locError) {
           console.error('Error loading locations:', locError)
-          // Don't throw - just log and continue
         }
 
         const locations = locationManagers
@@ -259,7 +259,6 @@ export default function MobilePayrollSubmit() {
         }
       } catch (error) {
         console.error('Auth error:', error)
-        // Don't redirect on error - just finish loading
       } finally {
         setLoading(false)
       }
@@ -268,7 +267,7 @@ export default function MobilePayrollSubmit() {
     checkSession()
   }, [authClient, dataSupabase, router])
 
-  // ✅ NEW: Check for draft or rejected submissions when location/payDate/payrollGroup changes
+  // Check for draft or rejected submissions when location/payDate/payrollGroup changes
   useEffect(() => {
     if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
       loadDraftOrRejected(selectedLocationId)
@@ -303,103 +302,220 @@ export default function MobilePayrollSubmit() {
     }
   }
 
-  // ✅ NEW: Check for draft or rejected submissions and pre-fill data
   async function loadDraftOrRejected(locationId: string) {
     try {
-      console.log('🔍 Checking for draft or rejected submissions...')
-      
-      // Check for rejected submission first (higher priority)
-      const { data: rejected, error: rejectedError } = await dataSupabase
+      const { data: submissions, error } = await dataSupabase
         .from('payroll_submissions')
-        .select('*')
+        .select('*, payroll_entries(*)')
         .eq('location_id', locationId)
         .eq('pay_date', payDate)
-        .eq('payroll_group', payrollGroup)
-        .eq('status', 'rejected')
-        .maybeSingle()
-
-      if (rejected) {
-        console.log('❌ Found rejected submission:', rejected.id)
-        setRejectedSubmissionId(rejected.id)
-        setRejectionNote(rejected.rejection_note)
-        
-        // Show rejection alert
-        if (rejected.rejection_note) {
-          showAlert('error', `⚠️ Previous submission was rejected: ${rejected.rejection_note}`)
-        } else {
-          showAlert('error', '⚠️ Previous submission was rejected. Please review and correct the data below.')
-        }
-
-        await loadSubmissionData(rejected.id)
-        return
-      }
-
-      // Check for draft submission
-      const { data: draft, error: draftError } = await dataSupabase
-        .from('payroll_submissions')
-        .select('*')
-        .eq('location_id', locationId)
-        .eq('pay_date', payDate)
-        .eq('payroll_group', payrollGroup)
-        .eq('status', 'draft')
-        .maybeSingle()
-
-      if (draft) {
-        console.log('📝 Found draft submission:', draft.id)
-        setDraftSubmissionId(draft.id)
-        showAlert('success', '📝 Draft loaded! Continue where you left off.')
-        await loadSubmissionData(draft.id)
-        return
-      }
-
-      console.log('✅ No draft or rejected submissions found')
-    } catch (error) {
-      console.error('Error checking for draft/rejected:', error)
-    }
-  }
-
-  // ✅ NEW: Load submission data and pre-fill employee fields
-  async function loadSubmissionData(submissionId: string) {
-    try {
-      const { data: entries, error } = await dataSupabase
-        .from('payroll_entries')
-        .select('*')
-        .eq('submission_id', submissionId)
+        .in('status', ['draft', 'rejected'])
+        .order('created_at', { ascending: false })
+        .limit(1)
 
       if (error) throw error
 
-      if (!entries || entries.length === 0) return
+      if (submissions && submissions.length > 0) {
+        const submission = submissions[0]
+        
+        if (submission.status === 'rejected') {
+          setRejectedSubmissionId(submission.id)
+          setRejectionNote(submission.rejection_note)
+          setDraftSubmissionId(null)
+          
+          showAlert('error', `⚠️ Payroll was rejected: "${submission.rejection_note}"\nPlease make corrections and resubmit.`)
+        } else if (submission.status === 'draft') {
+          setDraftSubmissionId(submission.id)
+          setRejectedSubmissionId(null)
+          setRejectionNote(null)
+          setLastSavedAt(new Date(submission.updated_at || submission.created_at))
+        }
 
-      // Create map of previous data
-      const entriesMap = new Map(
-        entries.map(e => [
-          e.employee_id,
-          {
-            hours: e.hours?.toString() || '',
-            units: e.units?.toString() || '',
-            count: e.count?.toString() || '1',
-            adjustment: e.adjustment?.toString() || '0',
-            notes: e.notes || '',
-            amount: e.amount || 0
-          }
-        ])
-      )
-
-      // Update employees with previous data
-      setEmployees(prevEmployees => 
-        prevEmployees.map(emp => {
-          const prevData = entriesMap.get(emp.id)
-          if (prevData) {
-            return { ...emp, ...prevData }
+        // Load employee data from entries
+        const entries = submission.payroll_entries || []
+        const updatedEmployees = employees.map(emp => {
+          const entry = entries.find((e: any) => e.employee_id === emp.id)
+          if (entry) {
+            return {
+              ...emp,
+              hours: entry.hours?.toString() || '',
+              units: entry.units?.toString() || '',
+              count: entry.count?.toString() || '1',
+              adjustment: entry.adjustment?.toString() || '0',
+              notes: entry.notes || '',
+              amount: entry.amount || 0,
+            }
           }
           return emp
         })
-      )
-
-      console.log(`✅ Pre-filled data for ${entries.length} employees`)
+        
+        setEmployees(updatedEmployees)
+      }
     } catch (error) {
-      console.error('Error loading submission data:', error)
+      console.error('Error loading draft/rejected:', error)
     }
+  }
+
+  // ✅ NEW: Auto-save function (debounced)
+  const autoSaveDraft = useCallback(async (employeesData: EmployeeRow[]) => {
+    if (!selectedLocationId || !userId) return
+
+    const employeesWithData = employeesData.filter(emp => {
+      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
+      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
+      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
+      return false
+    })
+
+    if (employeesWithData.length === 0) {
+      // No data to save, clear any existing draft
+      return
+    }
+
+    setIsAutoSaving(true)
+    try {
+      // Get organization_id
+      const { data: locationData, error: locationError } = await dataSupabase
+        .from('locations')
+        .select('organization_id')
+        .eq('id', selectedLocationId)
+        .single()
+
+      if (locationError || !locationData?.organization_id) {
+        throw new Error('Failed to get organization ID')
+      }
+
+      const organizationId = locationData.organization_id
+      const totalAmount = employeesWithData.reduce((sum, emp) => sum + emp.amount, 0)
+
+      const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
+
+      if (existingSubmissionId) {
+        // UPDATE existing submission as draft
+        const { error: updateError } = await dataSupabase
+          .from('payroll_submissions')
+          .update({
+            status: 'draft',
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            rejected_by: null,
+            rejected_at: null,
+            rejection_note: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingSubmissionId)
+
+        if (updateError) throw updateError
+
+        // Delete old entries
+        await dataSupabase
+          .from('payroll_entries')
+          .delete()
+          .eq('submission_id', existingSubmissionId)
+
+        // Insert updated entries
+        const details = employeesWithData.map(emp => ({
+          organization_id: organizationId,
+          submission_id: existingSubmissionId,
+          employee_id: emp.id,
+          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'draft',
+        }))
+
+        const { error: detailsError } = await dataSupabase
+          .from('payroll_entries')
+          .insert(details)
+
+        if (detailsError) throw detailsError
+
+        setDraftSubmissionId(existingSubmissionId)
+        setRejectedSubmissionId(null)
+        setRejectionNote(null)
+
+      } else {
+        // CREATE new draft submission
+        const { data: submission, error: submissionError } = await dataSupabase
+          .from('payroll_submissions')
+          .insert({
+            organization_id: organizationId,
+            location_id: selectedLocationId,
+            pay_date: payDate,
+            payroll_group: payrollGroup,
+            period_start: periodStart,
+            period_end: periodEnd,
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            status: 'draft',
+          })
+          .select()
+          .single()
+
+        if (submissionError) throw submissionError
+
+        const details = employeesWithData.map(emp => ({
+          organization_id: organizationId,
+          submission_id: submission.id,
+          employee_id: emp.id,
+          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'draft',
+        }))
+
+        const { error: detailsError } = await dataSupabase
+          .from('payroll_entries')
+          .insert(details)
+
+        if (detailsError) throw detailsError
+
+        setDraftSubmissionId(submission.id)
+      }
+
+      setLastSavedAt(new Date())
+      
+    } catch (error: any) {
+      console.error('Auto-save error:', error)
+      // Silent fail - don't show alert to user since auto-save is background
+    } finally {
+      setIsAutoSaving(false)
+    }
+  }, [selectedLocationId, userId, payDate, payrollGroup, periodStart, periodEnd, draftSubmissionId, rejectedSubmissionId, dataSupabase])
+
+  // ✅ NEW: Trigger auto-save with debounce
+  const triggerAutoSave = useCallback(() => {
+    // Clear existing timeout
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current)
+    }
+
+    // Set new timeout (2 seconds after last change)
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      autoSaveDraft(employees)
+    }, 2000)
+  }, [employees, autoSaveDraft])
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  function showAlert(type: Alert['type'], message: string) {
+    setAlert({ type, message })
+    setTimeout(() => setAlert(null), 5000)
   }
 
   const filteredEmployees = useMemo(() => {
@@ -414,11 +530,11 @@ export default function MobilePayrollSubmit() {
       return false
     })
 
-    const totalHours = filteredEmployees
+    const totalHours = employeesWithData
       .filter(emp => emp.compensation_type === 'hourly')
       .reduce((sum, emp) => sum + parseFloat(emp.hours || '0'), 0)
 
-    const totalAmount = filteredEmployees.reduce((sum, emp) => sum + emp.amount, 0)
+    const totalAmount = employeesWithData.reduce((sum, emp) => sum + emp.amount, 0)
 
     return {
       employees: employeesWithData.length,
@@ -427,27 +543,20 @@ export default function MobilePayrollSubmit() {
     }
   }, [filteredEmployees])
 
-  const selectedEmployeeAdjustment =
-    selectedEmployee ? Number.parseFloat(selectedEmployee.adjustment || '0') || 0 : 0
+  const selectedEmployeeAdjustment = useMemo(() => {
+    return parseFloat(selectedEmployee?.adjustment || '0')
+  }, [selectedEmployee])
 
-  const selectedEmployeeCount =
-    selectedEmployee ? Number.parseInt(selectedEmployee.count || '1', 10) || 0 : 0
-
-  function showAlert(type: 'success' | 'error', message: string) {
-    setAlert({ type, message })
-    setTimeout(() => setAlert(null), 4000)
-  }
-
-  function handlePayDateChange(newDate: string) {
-    setPayDate(newDate)
-    const info = calculatePayrollInfo(newDate)
+  function handlePayDateChange(newPayDate: string) {
+    setPayDate(newPayDate)
+    const info = calculatePayrollInfo(newPayDate)
     setPayrollGroup(info.payrollGroup)
     setPeriodStart(info.periodStart)
     setPeriodEnd(info.periodEnd)
   }
 
-  function handleEmployeeSelect(emp: EmployeeRow) {
-    setSelectedEmployee({ ...emp })
+  function handleEmployeeSelect(employee: EmployeeRow) {
+    setSelectedEmployee(employee)
   }
 
   function handleInputChange(field: 'hours' | 'units' | 'count' | 'adjustment' | 'notes', value: string) {
@@ -472,6 +581,7 @@ export default function MobilePayrollSubmit() {
     setSelectedEmployee(updated)
   }
 
+  // ✅ MODIFIED: handleSaveEmployee now triggers auto-save
   function handleSaveEmployee() {
     if (!selectedEmployee) return
 
@@ -495,7 +605,8 @@ export default function MobilePayrollSubmit() {
     setEmployees(updatedEmployees)
     setSelectedEmployee(null)
     
-    showAlert('success', `✓ ${selectedEmployee.first_name} ${selectedEmployee.last_name} updated!`)
+    // ✅ Trigger auto-save after updating employee
+    triggerAutoSave()
   }
 
   async function handleSyncConnecteam() {
@@ -503,9 +614,8 @@ export default function MobilePayrollSubmit() {
 
   setIsSyncingConnecteam(true)
   try {
-    // Get all employee emails for this location and payroll group
     const employeeEmails = filteredEmployees
-      .filter(emp => emp.email && emp.compensation_type === 'hourly') // Only sync hourly employees with emails
+      .filter(emp => emp.email && emp.compensation_type === 'hourly')
       .map(emp => emp.email?.toLowerCase())
       .filter(Boolean) as string[]
 
@@ -518,14 +628,14 @@ export default function MobilePayrollSubmit() {
     console.log('📅 Period:', periodStart, 'to', periodEnd)
     console.log('👥 Payroll Group:', payrollGroup)
 
-    const response = await fetch('/api/connecteam/hours', { // FIXED: Changed from sync-hours to hours
+    const response = await fetch('/api/connecteam/hours', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        periodStart: periodStart,    // FIXED: Changed from period_start
-        periodEnd: periodEnd,          // FIXED: Changed from period_end
-        employeeEmails: employeeEmails, // FIXED: Added employee emails array
-        payrollGroup: payrollGroup,    // FIXED: Added payroll group
+        periodStart: periodStart,
+        periodEnd: periodEnd,
+        employeeEmails: employeeEmails,
+        payrollGroup: payrollGroup,
       }),
     })
 
@@ -540,7 +650,6 @@ export default function MobilePayrollSubmit() {
     if (result.hours && Object.keys(result.hours).length > 0) {
       let syncedCount = 0
       
-      // Update employees with synced hours
       const updatedEmployees = employees.map(emp => {
         if (emp.compensation_type !== 'hourly' || !emp.email) return emp
         
@@ -563,6 +672,8 @@ export default function MobilePayrollSubmit() {
       
       if (syncedCount > 0) {
         showAlert('success', `✓ Synced hours for ${syncedCount} employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`)
+        // ✅ Trigger auto-save after syncing
+        triggerAutoSave()
       } else {
         showAlert('error', 'No hours found in Connecteam for this period')
       }
@@ -574,144 +685,6 @@ export default function MobilePayrollSubmit() {
     showAlert('error', error.message || 'Failed to sync from Connecteam')
   } finally {
     setIsSyncingConnecteam(false)
-  }
-}
-
-// ✅ NEW: Save Draft Function
-async function handleSaveDraft() {
-  if (!selectedLocationId || !userId) {
-    showAlert('error', 'Missing required data')
-    return
-  }
-
-  const employeesWithData = filteredEmployees.filter(emp => {
-    if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-    if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-    if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-    return false
-  })
-
-  if (employeesWithData.length === 0) {
-    showAlert('error', 'Please enter payroll data for at least one employee before saving draft')
-    return
-  }
-
-  setIsSavingDraft(true)
-  try {
-    // Get organization_id
-    const { data: locationData, error: locationError } = await dataSupabase
-      .from('locations')
-      .select('organization_id')
-      .eq('id', selectedLocationId)
-      .single()
-
-    if (locationError || !locationData?.organization_id) {
-      throw new Error('Failed to get organization ID')
-    }
-
-    const organizationId = locationData.organization_id
-    const totalAmount = employeesWithData.reduce((sum, emp) => sum + emp.amount, 0)
-
-    // Check if we're updating existing draft or rejected
-    const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
-
-    if (existingSubmissionId) {
-      // UPDATE existing submission as draft
-      const { error: updateError } = await dataSupabase
-        .from('payroll_submissions')
-        .update({
-          status: 'draft',
-          total_amount: totalAmount,
-          employee_count: employeesWithData.length,
-          submitted_by: userId,
-          rejected_by: null,
-          rejected_at: null,
-          rejection_note: null,
-        })
-        .eq('id', existingSubmissionId)
-
-      if (updateError) throw updateError
-
-      // Delete old entries
-      await dataSupabase
-        .from('payroll_entries')
-        .delete()
-        .eq('submission_id', existingSubmissionId)
-
-      // Insert updated entries
-      const details = employeesWithData.map(emp => ({
-        organization_id: organizationId,
-        submission_id: existingSubmissionId,
-        employee_id: emp.id,
-        hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-        status: 'draft',
-      }))
-
-      const { error: detailsError } = await dataSupabase
-        .from('payroll_entries')
-        .insert(details)
-
-      if (detailsError) throw detailsError
-
-      setDraftSubmissionId(existingSubmissionId)
-      setRejectedSubmissionId(null)
-      setRejectionNote(null)
-
-    } else {
-      // CREATE new draft submission
-      const { data: submission, error: submissionError } = await dataSupabase
-        .from('payroll_submissions')
-        .insert({
-          organization_id: organizationId,
-          location_id: selectedLocationId,
-          pay_date: payDate,
-          payroll_group: payrollGroup,
-          period_start: periodStart,
-          period_end: periodEnd,
-          total_amount: totalAmount,
-          employee_count: employeesWithData.length,
-          submitted_by: userId,
-          status: 'draft',
-        })
-        .select()
-        .single()
-
-      if (submissionError) throw submissionError
-
-      const details = employeesWithData.map(emp => ({
-        organization_id: organizationId,
-        submission_id: submission.id,
-        employee_id: emp.id,
-        hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-        status: 'draft',
-      }))
-
-      const { error: detailsError } = await dataSupabase
-        .from('payroll_entries')
-        .insert(details)
-
-      if (detailsError) throw detailsError
-
-      setDraftSubmissionId(submission.id)
-    }
-
-    showAlert('success', '✅ Draft saved! You can return later to complete.')
-    
-  } catch (error: any) {
-    console.error('Save draft error:', error)
-    showAlert('error', error.message || 'Failed to save draft')
-  } finally {
-    setIsSavingDraft(false)
   }
 }
 
@@ -735,7 +708,6 @@ async function handleSaveDraft() {
 
   setIsSubmitting(true)
   try {
-    // ✅ STEP 1: Get organization_id FIRST before creating submission
     const { data: locationData, error: locationError } = await dataSupabase
       .from('locations')
       .select('organization_id')
@@ -751,13 +723,11 @@ async function handleSaveDraft() {
 
     const totalAmount = employeesToSubmit.reduce((sum, emp) => sum + emp.amount, 0)
 
-    // ✅ NEW: Check if updating existing draft or rejected submission
     const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
 
     if (existingSubmissionId) {
       console.log(`🔄 Updating existing submission (${rejectedSubmissionId ? 'REJECTED' : 'DRAFT'}):`, existingSubmissionId)
       
-      // UPDATE existing submission to pending
       const { error: updateError } = await dataSupabase
         .from('payroll_submissions')
         .update({
@@ -774,7 +744,6 @@ async function handleSaveDraft() {
 
       if (updateError) throw updateError
 
-      // Delete old entries
       const { error: deleteError } = await dataSupabase
         .from('payroll_entries')
         .delete()
@@ -782,7 +751,6 @@ async function handleSaveDraft() {
 
       if (deleteError) throw deleteError
 
-      // Insert new entries
       const details = employeesToSubmit.map(emp => ({
         organization_id: organizationId,
         submission_id: existingSubmissionId,
@@ -804,7 +772,6 @@ async function handleSaveDraft() {
 
       showAlert('success', rejectedSubmissionId ? '✅ Payroll resubmitted for approval!' : '✅ Draft submitted for approval!')
       
-      // Clear states
       setDraftSubmissionId(null)
       setRejectedSubmissionId(null)
       setRejectionNote(null)
@@ -812,7 +779,6 @@ async function handleSaveDraft() {
     } else {
       console.log('✨ Creating NEW submission')
       
-      // ✅ STEP 2: Create NEW submission
       const { data: submission, error: submissionError } = await dataSupabase
         .from('payroll_submissions')
         .insert({
@@ -832,7 +798,6 @@ async function handleSaveDraft() {
 
       if (submissionError) throw submissionError
 
-      // ✅ STEP 3: Create payroll entries with the same organization_id
       const details = employeesToSubmit.map(emp => ({
         organization_id: organizationId,
         submission_id: submission.id,
@@ -910,31 +875,28 @@ async function handleSaveDraft() {
 
     const organizationId = locationData.organization_id
 
-    // ✅ NOW USE THE DYNAMIC organizationId
     const { data, error } = await dataSupabase
       .from('employees')
-      .insert([
-        {
-          organization_id: organizationId, // ✅ DYNAMIC!
-          location_id: selectedLocationId,
-          first_name: newEmployee.first_name,
-          last_name: newEmployee.last_name,
-          email: newEmployee.email || null,
-          payroll_group: newEmployee.payroll_group,
-          compensation_type: newEmployee.compensation_type,
-          hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
-          piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
-          fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
-          is_active: true,
-          hire_date: new Date().toISOString().split('T')[0],
-        },
-      ])
+      .insert({
+        organization_id: organizationId,  // ✅ NOW CORRECT
+        location_id: selectedLocationId,
+        first_name: newEmployee.first_name,
+        last_name: newEmployee.last_name,
+        email: newEmployee.email || null,
+        payroll_group: newEmployee.payroll_group,
+        compensation_type: newEmployee.compensation_type,
+        hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
+        piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
+        fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
+        is_active: true,
+      })
       .select()
+      .single()
 
     if (error) throw error
 
-    showAlert('success', `✓ Employee ${newEmployee.first_name} ${newEmployee.last_name} added!`)
-    
+    showAlert('success', '✓ Employee added!')
+    setShowAddEmployee(false)
     setNewEmployee({
       first_name: '',
       last_name: '',
@@ -946,18 +908,14 @@ async function handleSaveDraft() {
       fixed_pay: '',
     })
     
-    setShowAddEmployee(false)
-    
-    if (selectedLocationId) {
-      await loadEmployees(selectedLocationId)
-    }
+    await loadEmployees(selectedLocationId)
   } catch (error: any) {
     console.error('Error adding employee:', error)
     showAlert('error', error.message || 'Failed to add employee')
   }
 }
 
-  async function handleEditEmployee() {
+  async function handleUpdateEmployee() {
     if (!editingEmployee) return
 
     try {
@@ -966,7 +924,7 @@ async function handleSaveDraft() {
         .update({
           first_name: editingEmployee.first_name,
           last_name: editingEmployee.last_name,
-          email: editingEmployee.email,
+          email: editingEmployee.email || null,
           payroll_group: editingEmployee.payroll_group,
           compensation_type: editingEmployee.compensation_type,
           hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
@@ -990,12 +948,12 @@ async function handleSaveDraft() {
     }
   }
 
-  async function handleArchiveEmployee(employeeId: string) {
+  async function handleArchiveEmployee(empId: string) {
     try {
       const { error } = await dataSupabase
         .from('employees')
         .update({ is_active: false })
-        .eq('id', employeeId)
+        .eq('id', empId)
 
       if (error) throw error
 
@@ -1204,7 +1162,7 @@ async function handleSaveDraft() {
           </div>
 
           <button
-            onClick={handleEditEmployee}
+            onClick={handleUpdateEmployee}
             className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
           >
             Save Changes
@@ -1225,7 +1183,7 @@ async function handleSaveDraft() {
             >
               ← Back
             </button>
-            <h2 className="text-white text-lg font-semibold">Add Employee</h2>
+            <h2 className="text-white text-lg font-semibold">Add New Employee</h2>
             <div className="w-12" />
           </div>
 
@@ -1462,29 +1420,27 @@ async function handleSaveDraft() {
 
             {selectedEmployee.compensation_type === 'fixed' && (
               <>
-                <div className="text-center mb-6">
-                  <div className="bg-gradient-to-br from-green-500/10 to-blue-500/10 rounded-xl p-6 border border-green-400/20">
-                    <p className="text-green-200 text-sm mb-2">Base Fixed Pay</p>
-                    <p className="text-white text-4xl font-bold mb-1">
-                      {formatCurrency(selectedEmployee.fixed_pay)}
-                    </p>
-                    <p className="text-blue-300 text-xs">per pay period</p>
-                  </div>
-                </div>
-
-
                 <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <DollarSign className="w-4 h-4" />
-                    Adjustment (+ bonus / - deduction)
-                  </span>
+                  <span className="text-blue-200 text-sm font-medium mb-2 block">Count (usually 1)</span>
                   <input
                     type="number"
-                    step="0.01"
+                    step="1"
+                    value={selectedEmployee.count}
+                    onChange={(e) => handleInputChange('count', e.target.value)}
+                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+                    placeholder="1"
+                  />
+                </label>
+
+                <label className="block mb-4">
+                  <span className="text-blue-200 text-sm font-medium mb-2 block">Adjustment (+/-)</span>
+                  <input
+                    type="number"
+                    step="50"
                     value={selectedEmployee.adjustment}
                     onChange={(e) => handleInputChange('adjustment', e.target.value)}
                     className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="0.00"
+                    placeholder="0"
                   />
                   <div className="mt-2 flex gap-2">
                     <button
@@ -1492,7 +1448,7 @@ async function handleSaveDraft() {
                       onClick={() => handleInputChange('adjustment', '-100')}
                       className="flex-1 px-3 py-2 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-sm hover:bg-red-500/30 transition"
                     >
-                      -$100 (Missed Day)
+                      -$100 (1 Day)
                     </button>
                     <button
                       type="button"
@@ -1698,53 +1654,49 @@ async function handleSaveDraft() {
             </div>
 
             {filteredEmployees.length > 0 && (
-              <button
-                onClick={handleSyncConnecteam}
-                disabled={isSyncingConnecteam}
-                className="w-full mb-3 bg-gradient-to-r from-purple-500 to-purple-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {isSyncingConnecteam ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                    Syncing from Connecteam...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-5 h-5" />
-                    Sync Hours from Connecteam
-                  </>
-                )}
-              </button>
-            )}
-
-            <div className="space-y-3">
-              {filteredEmployees.length === 0 ? (
-                <div className="text-center py-12">
-                  <Users className="w-12 h-12 text-blue-300/50 mx-auto mb-4" />
-                  <p className="text-blue-200">No employees in Group {payrollGroup}</p>
+              <div className="space-y-3 mb-6">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-white text-lg font-semibold">
+                    Employees ({filteredEmployees.length})
+                  </h2>
+                  <button
+                    onClick={handleSyncConnecteam}
+                    disabled={isSyncingConnecteam}
+                    className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 rounded-lg text-purple-200 text-sm font-medium transition disabled:opacity-50"
+                  >
+                    {isSyncingConnecteam ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Syncing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4" />
+                        Sync Hours
+                      </>
+                    )}
+                  </button>
                 </div>
-              ) : (
-                filteredEmployees.map((emp) => {
+
+                {filteredEmployees.map((emp) => {
                   const isSwiped = swipedEmployeeId === emp.id
                   const offset = isSwiped ? touchOffset : 0
-                  
+
                   return (
-                    <div key={emp.id} className="relative overflow-hidden rounded-xl">
-                      <div className="absolute inset-y-0 right-0 flex">
+                    <div key={emp.id} className="relative overflow-hidden">
+                      <div className="absolute right-0 top-0 bottom-0 w-[150px] flex items-center justify-end gap-2 pr-4 bg-red-500/20 border-r border-white/20 rounded-r-xl">
                         <button
                           onClick={() => {
                             setEditingEmployee(emp)
                             setShowEditEmployee(true)
-                            setSwipedEmployeeId(null)
-                            setTouchOffset(0)
                           }}
-                          className="w-[75px] bg-blue-500 flex items-center justify-center text-white font-medium"
+                          className="px-3 py-2 bg-blue-500/40 hover:bg-blue-500/60 rounded-lg text-white text-sm font-medium transition"
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => handleArchiveEmployee(emp.id)}
-                          className="w-[75px] bg-red-500 flex items-center justify-center text-white font-medium"
+                          className="px-3 py-2 bg-red-500/40 hover:bg-red-500/60 rounded-lg text-white text-sm font-medium transition"
                         >
                           Archive
                         </button>
@@ -1831,24 +1783,24 @@ async function handleSaveDraft() {
       {selectedLocationId && (
         <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent p-4 border-t border-white/10">
           <div className="max-w-lg mx-auto space-y-2">
-            {/* ✅ NEW: Save Draft Button */}
-            <button
-              onClick={handleSaveDraft}
-              disabled={isSavingDraft || totals.employees === 0}
-              className="w-full bg-gradient-to-r from-amber-500 to-amber-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-3 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSavingDraft ? (
-                <span className="flex items-center justify-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  Saving Draft...
-                </span>
-              ) : (
-                <span className="flex items-center justify-center gap-2">
-                  <Clock className="w-4 h-4" />
-                  {draftSubmissionId ? 'Update Draft' : 'Save as Draft'}
-                </span>
-              )}
-            </button>
+            {/* ✅ AUTO-SAVE STATUS INDICATOR (replaces Save Draft button) */}
+            {(isAutoSaving || lastSavedAt) && (
+              <div className="flex items-center justify-center gap-2 text-xs text-blue-200 mb-2">
+                {isAutoSaving ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    <span>Saving draft...</span>
+                  </>
+                ) : lastSavedAt ? (
+                  <>
+                    <CheckCircle2 className="h-3 w-3 text-green-300" />
+                    <span className="text-green-300">
+                      Draft saved {formatTimeAgo(lastSavedAt)}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            )}
             
             {/* Submit Button */}
             <button
@@ -1872,4 +1824,21 @@ async function handleSaveDraft() {
       )}
     </div>
   )
+}
+
+// ✅ Helper function for time ago formatting
+function formatTimeAgo(date: Date): string {
+  const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000)
+  
+  if (seconds < 10) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
 }
