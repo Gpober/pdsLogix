@@ -1,5 +1,5 @@
 // app/api/connecteam/hours/route.ts
-// FINAL VERSION - Using correct endpoint with correct IDs
+// WORKING VERSION - Gets users first, then matches time activities by userId
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
@@ -11,11 +11,11 @@ export async function POST(request: NextRequest) {
 
     console.log('📅 Period:', periodStart, 'to', periodEnd)
     console.log('👥 Payroll Group:', payrollGroup)
-    console.log('📧 Employees:', employeeEmails)
+    console.log('📧 Employee emails:', employeeEmails)
 
     const connecteamApiKey = process.env.CONNECTEAM_API_KEY
-    const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A // Should be 2805712
-    const timeClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B // Should be 2805369
+    const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A
+    const timeClockIdB = process.env.CONNECTEAM_TIME_CLOCK_ID_B
 
     if (!connecteamApiKey) {
       return NextResponse.json({ error: 'API key not configured' }, { status: 500 })
@@ -27,14 +27,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Time clock ID not configured' }, { status: 500 })
     }
 
-    console.log(`🔑 Using time clock ID ${timeClockId} for payroll group ${payrollGroup}`)
+    console.log(`🔑 Using time clock ID ${timeClockId}`)
 
-    // ✅ CORRECT ENDPOINT
-    const connecteamUrl = `https://api.connecteam.com/time-clock/v1/time-clocks/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`
-    
-    console.log('🔗 Calling Connecteam API:', connecteamUrl)
-
-    const connecteamResponse = await fetch(connecteamUrl, {
+    // STEP 1: Get all users to map userId → email
+    console.log('\n📋 STEP 1: Getting user list...')
+    const usersUrl = 'https://api.connecteam.com/users/v1/users'
+    const usersResponse = await fetch(usersUrl, {
       method: 'GET',
       headers: {
         'X-API-KEY': connecteamApiKey,
@@ -42,75 +40,123 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    console.log('📡 Status:', connecteamResponse.status)
-
-    const responseText = await connecteamResponse.text()
-    console.log('📄 Response preview:', responseText.substring(0, 500))
-
-    if (!connecteamResponse.ok) {
+    if (!usersResponse.ok) {
       return NextResponse.json({
-        error: `Connecteam returned ${connecteamResponse.status}`,
-        details: responseText
+        error: 'Failed to get users from Connecteam',
+        status: usersResponse.status
       }, { status: 502 })
     }
 
-    const connecteamData = JSON.parse(responseText)
-    console.log('✅ Got valid JSON!')
-    console.log('📊 Full Connecteam response:', JSON.stringify(connecteamData, null, 2))
+    const usersData = JSON.parse(await usersResponse.text())
+    const users = usersData.data?.users || []
+    
+    // Create userId → email mapping (case-insensitive)
+    const userIdToEmail: Record<number, string> = {}
+    const emailToUserId: Record<string, number> = {}
+    
+    users.forEach((user: any) => {
+      if (user.id && user.email) {
+        userIdToEmail[user.id] = user.email.toLowerCase()
+        emailToUserId[user.email.toLowerCase()] = user.id
+      }
+    })
 
+    console.log(`✅ Found ${users.length} users`)
+    console.log(`📧 Looking for userIds for:`, employeeEmails)
+    
+    const relevantUserIds: number[] = []
+    employeeEmails.forEach((email: string) => {
+      const userId = emailToUserId[email.toLowerCase()]
+      if (userId) {
+        relevantUserIds.push(userId)
+        console.log(`  ✅ ${email} → userId ${userId}`)
+      } else {
+        console.log(`  ❌ ${email} → NOT FOUND in Connecteam`)
+      }
+    })
+
+    // STEP 2: Get time activities
+    console.log(`\n⏰ STEP 2: Getting time activities...`)
+    const timeActivitiesUrl = `https://api.connecteam.com/time-clock/v1/time-clocks/${timeClockId}/time-activities?startDate=${periodStart}&endDate=${periodEnd}`
+    
+    console.log('🔗 Calling:', timeActivitiesUrl)
+
+    const timeActivitiesResponse = await fetch(timeActivitiesUrl, {
+      method: 'GET',
+      headers: {
+        'X-API-KEY': connecteamApiKey,
+        'Accept': 'application/json',
+      },
+    })
+
+    if (!timeActivitiesResponse.ok) {
+      return NextResponse.json({
+        error: `Connecteam returned ${timeActivitiesResponse.status}`,
+        details: await timeActivitiesResponse.text()
+      }, { status: 502 })
+    }
+
+    const timeActivitiesData = JSON.parse(await timeActivitiesResponse.text())
+    const timeActivitiesByUsers = timeActivitiesData.data?.timeActivitiesByUsers || []
+    
+    console.log(`📊 Found time activities for ${timeActivitiesByUsers.length} users`)
+
+    // STEP 3: Calculate hours for each employee
+    console.log('\n🧮 STEP 3: Calculating hours...')
     const hoursMap: Record<string, number> = {}
+    
     employeeEmails.forEach((email: string) => {
       hoursMap[email.toLowerCase()] = 0
     })
 
-    const timeActivities = connecteamData.data?.timeActivities || []
-    console.log(`📝 Found ${timeActivities.length} time activities`)
-    
-    if (timeActivities.length > 0) {
-      console.log('📋 Sample activity:', JSON.stringify(timeActivities[0], null, 2))
-    }
-
-    timeActivities.forEach((activity: any, index: number) => {
-      const userEmail = activity.user?.email?.toLowerCase()
-      console.log(`  Activity ${index + 1}: email=${userEmail}, duration=${activity.duration}, startTime=${activity.startTime}, endTime=${activity.endTime}`)
+    timeActivitiesByUsers.forEach((userActivity: any) => {
+      const userId = userActivity.userId
+      const userEmail = userIdToEmail[userId]
+      const shifts = userActivity.shifts || []
       
-      if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
-        console.log(`    ✅ Email matches! Processing...`)
-        let hours = 0
-        
-        if (activity.duration) {
-          hours = activity.duration / 60
-          console.log(`    ⏱️  Duration: ${activity.duration} minutes = ${hours.toFixed(2)} hours`)
-        } else if (activity.startTime && activity.endTime) {
-          hours = (new Date(activity.endTime).getTime() - new Date(activity.startTime).getTime()) / (1000 * 60 * 60)
-          console.log(`    🕐 Calculated: ${hours.toFixed(2)} hours`)
-        }
-
-        if (hours > 0) {
-          hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
-          console.log(`    ➕ Total for ${userEmail}: ${hoursMap[userEmail].toFixed(2)} hours`)
-        }
-      } else {
-        console.log(`    ❌ Email doesn't match or is missing`)
+      if (!userEmail) {
+        console.log(`  ⚠️  Unknown user ${userId} (${shifts.length} shifts) - no email mapping`)
+        return
       }
+
+      if (!employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
+        console.log(`  ⏭️  Skipping ${userEmail} (${shifts.length} shifts) - not in employee list`)
+        return
+      }
+
+      console.log(`\n  👤 Processing ${userEmail} (userId ${userId}): ${shifts.length} shifts`)
+      
+      let totalHours = 0
+      shifts.forEach((shift: any, index: number) => {
+        const startTimestamp = shift.start?.timestamp
+        const endTimestamp = shift.end?.timestamp
+        
+        if (startTimestamp && endTimestamp) {
+          const hours = (endTimestamp - startTimestamp) / 3600 // Convert seconds to hours
+          totalHours += hours
+          console.log(`    Shift ${index + 1}: ${hours.toFixed(2)} hours`)
+        } else {
+          console.log(`    Shift ${index + 1}: Missing timestamps`)
+        }
+      })
+
+      hoursMap[userEmail] = Math.round(totalHours * 100) / 100
+      console.log(`  ✅ Total for ${userEmail}: ${hoursMap[userEmail]} hours`)
     })
 
-    Object.keys(hoursMap).forEach(email => {
-      hoursMap[email] = Math.round(hoursMap[email] * 100) / 100
-    })
-
-    console.log('✅ Final hours:', hoursMap)
+    console.log('\n✅ Final hours:', hoursMap)
 
     return NextResponse.json({
       success: true,
       hours: hoursMap,
       payrollGroup,
       period: { start: periodStart, end: periodEnd },
-      entriesProcessed: timeActivities.length
+      usersProcessed: relevantUserIds.length
     })
 
   } catch (error: any) {
     console.error('❌ Error:', error.message)
+    console.error('❌ Stack:', error.stack)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
