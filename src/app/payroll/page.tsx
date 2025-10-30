@@ -426,32 +426,35 @@ export default function PayrollPage() {
     }
   };
 
-  const handleReject = async () => {
-    if (!selectedSubmission || !userId) return;
-    setIsApproving(true);
+ const handleReject = async () => {
+  if (!selectedSubmission || !userId) return;
+  setIsApproving(true);
+  
+  try {
+    // First delete the submission details
+    await supabase
+      .from('payroll_submission_details')
+      .delete()
+      .eq('submission_id', selectedSubmission.id);
     
-    try {
-      await supabase
-        .from('payroll_submissions')
-        .update({ 
-          status: 'rejected', 
-          approved_by: userId, 
-          approved_at: new Date().toISOString() 
-        })
-        .eq('id', selectedSubmission.id);
-      
-      showNotification('Payroll rejected - location can resubmit', 'warning');
-      setShowApprovalModal(false);
-      setSelectedSubmission(null);
-      loadPendingSubmissions();
-      loadAllLocations();
-    } catch (error) {
-      console.error('Rejection error:', error);
-      showNotification('Failed to reject payroll', 'error');
-    } finally {
-      setIsApproving(false);
-    }
-  };
+    // Then delete the submission itself
+    await supabase
+      .from('payroll_submissions')
+      .delete()
+      .eq('id', selectedSubmission.id);
+    
+    showNotification('Payroll rejected - location can resubmit', 'warning');
+    setShowApprovalModal(false);
+    setSelectedSubmission(null);
+    loadPendingSubmissions();
+    loadAllLocations();
+  } catch (error) {
+    console.error('Rejection error:', error);
+    showNotification('Failed to reject payroll', 'error');
+  } finally {
+    setIsApproving(false);
+  }
+};
 
   const fetchPayments = async () => {
     const { data } = await supabase
