@@ -143,6 +143,7 @@ export default function PayrollDashboard() {
   const [submissionDetails, setSubmissionDetails] = useState<SubmissionDetail[]>([]);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
+  const [rejectionNote, setRejectionNote] = useState(''); // ✅ NEW: For rejection notes
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
@@ -467,6 +468,7 @@ export default function PayrollDashboard() {
   // ✅ FIXED: Fetch organization_id early and include in submissionDetails
   const handleReviewSubmission = async (submission: PendingSubmission) => {
     setSelectedSubmission(submission);
+    setRejectionNote(''); // ✅ NEW: Reset rejection note
 
     // ✅ Step 1: Get organization_id from location FIRST
     const { data: locationData, error: locationError } = await supabase
@@ -704,13 +706,14 @@ export default function PayrollDashboard() {
         throw new Error('Organization ID not found');
       }
 
-      // Update submission status
+      // ✅ FIXED: Update submission with rejection fields
       const { error: submissionError } = await dataClient
         .from('payroll_submissions')
         .update({
           status: 'rejected',
-          approved_by: userId,
-          approved_at: new Date().toISOString()
+          rejected_by: userId,  // ✅ FIXED: Use rejected_by instead of approved_by
+          rejected_at: new Date().toISOString(),  // ✅ FIXED: Use rejected_at
+          rejection_note: rejectionNote || null  // ✅ NEW: Save rejection note
         })
         .eq('id', selectedSubmission.id);
 
@@ -735,7 +738,7 @@ export default function PayrollDashboard() {
           action: 'rejected',
           approved_by: userId,
           previous_status: 'pending',
-          notes: 'Rejected via mobile dashboard'
+          notes: rejectionNote || 'Rejected via mobile dashboard'  // ✅ FIXED: Use rejection note
         });
 
       if (approvalLogError) {
@@ -745,6 +748,7 @@ export default function PayrollDashboard() {
       alert('❌ Payroll rejected. Location manager can resubmit.');
       setShowApprovalModal(false);
       setSelectedSubmission(null);
+      setRejectionNote('');  // ✅ NEW: Reset rejection note
       const effectiveOrgId = userRole === 'super_admin' ? subdomainOrgId : organizationId;
       loadPendingSubmissions(effectiveOrgId || undefined);
       loadAllLocations(effectiveOrgId || undefined);
@@ -2058,6 +2062,42 @@ const getLocationStatusIcon = (status: LocationStatus['status']) => {
               <div style={{ fontSize: '28px', fontWeight: 'bold', color: BRAND_COLORS.success }}>
                 {formatCurrency(selectedSubmission.total_amount)}
               </div>
+            </div>
+
+            {/* ✅ NEW: Rejection Note Input */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{
+                display: 'block',
+                fontSize: '14px',
+                fontWeight: '600',
+                color: '#334155',
+                marginBottom: '8px'
+              }}>
+                Rejection Reason (optional)
+              </label>
+              <textarea
+                value={rejectionNote}
+                onChange={(e) => setRejectionNote(e.target.value)}
+                placeholder="E.g., 'Please verify John Smith's hours' or 'Missing overtime for Jane Doe'"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: `2px solid ${BRAND_COLORS.gray[200]}`,
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  color: '#1e293b',
+                  resize: 'vertical',
+                  minHeight: '80px',
+                  fontFamily: 'inherit'
+                }}
+              />
+              <p style={{
+                fontSize: '12px',
+                color: '#64748b',
+                marginTop: '4px'
+              }}>
+                This note will be shown to the location manager so they can fix the issues.
+              </p>
             </div>
 
             <div style={{ display: 'flex', gap: '12px' }}>
