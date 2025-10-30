@@ -57,12 +57,12 @@ export async function POST(request: NextRequest) {
     const emailToUserId: Record<string, number> = {}
     
     users.forEach((user: any) => {
-      if (user.id && user.email) {
-        userIdToEmail[user.id] = user.email.toLowerCase()
-        emailToUserId[user.email.toLowerCase()] = user.id
-        console.log(`  📧 User: ${user.email.toLowerCase()} → ID ${user.id}`)
+      if (user.userId && user.email) {
+        userIdToEmail[user.userId] = user.email.toLowerCase()
+        emailToUserId[user.email.toLowerCase()] = user.userId
+        console.log(`  📧 User: ${user.email.toLowerCase()} → ID ${user.userId}`)
       } else {
-        console.log(`  ⚠️  User missing data:`, user)
+        console.log(`  ⚠️  User missing data: userId=${user.userId}, email=${user.email}`)
       }
     })
 
