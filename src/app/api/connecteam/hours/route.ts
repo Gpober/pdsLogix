@@ -1,4 +1,5 @@
 // app/api/connecteam/hours/route.ts
+// Uses Client Supabase for auth validation (NEXT_PUBLIC_SUPABASE_*)
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
@@ -20,32 +21,38 @@ export async function POST(request: NextRequest) {
     const accessToken = authHeader.replace('Bearer ', '')
     console.log('🔑 Received access token (length:', accessToken.length, ')')
 
-    // ✅ Create Platform Supabase client (for auth validation)
-    const platformSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const platformSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    // ✅ Use CLIENT Supabase for auth validation (business database)
+    const clientSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const clientSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-    if (!platformSupabaseUrl || !platformSupabaseKey) {
-      console.error('❌ Missing Platform Supabase credentials')
+    if (!clientSupabaseUrl || !clientSupabaseKey) {
+      console.error('❌ Missing Client Supabase credentials')
+      console.error('  NEXT_PUBLIC_SUPABASE_URL:', clientSupabaseUrl ? 'present' : 'MISSING')
+      console.error('  NEXT_PUBLIC_SUPABASE_ANON_KEY:', clientSupabaseKey ? 'present' : 'MISSING')
       return NextResponse.json(
-        { error: 'Server configuration error' },
+        { error: 'Server configuration error - missing client database credentials' },
         { status: 500 }
       )
     }
 
-    const platformSupabase = createClient(platformSupabaseUrl, platformSupabaseKey)
+    console.log('🗄️  Using Client Supabase:', clientSupabaseUrl)
 
-    // ✅ Verify the token
-    const { data: { user }, error: authError } = await platformSupabase.auth.getUser(accessToken)
+    // ✅ Create Client Supabase client
+    const clientSupabase = createClient(clientSupabaseUrl, clientSupabaseKey)
+
+    // ✅ Verify the token against Client Supabase
+    const { data: { user }, error: authError } = await clientSupabase.auth.getUser(accessToken)
 
     if (authError || !user) {
       console.error('❌ Auth verification failed:', authError?.message || 'No user')
+      console.error('❌ Auth error details:', JSON.stringify(authError, null, 2))
       return NextResponse.json(
-        { error: 'Unauthorized - please log in' },
+        { error: 'Unauthorized - invalid session for this client database' },
         { status: 401 }
       )
     }
 
-    console.log('✅ Authenticated user:', user.email)
+    console.log('✅ Authenticated user:', user.email, '(ID:', user.id, ')')
 
     // ✅ Parse the request body
     const body = await request.json()
@@ -136,7 +143,7 @@ export async function POST(request: NextRequest) {
       ? connecteamData.entries
       : []
 
-    console.log(`📝 Processing ${entries.length} entries`)
+    console.log(`📝 Processing ${entries.length} entries from Connecteam`)
 
     entries.forEach((entry: any) => {
       const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
