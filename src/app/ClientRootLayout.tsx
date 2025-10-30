@@ -89,27 +89,15 @@ const navigation = [
 
 function SessionTransferHandler({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
-  const [debugLog, setDebugLog] = useState<string[]>([])
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
 
-  const log = (msg: string) => {
-    console.log(`🔍 ${msg}`)
-    setDebugLog(prev => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`])
-  }
-
   useEffect(() => {
     async function handleSessionTransfer() {
-      log(`=== SESSION TRANSFER START ===`)
-      log(`Pathname: ${pathname}`)
-      
-      // Check if we just transferred
       const justTransferred = sessionStorage.getItem('session_transferred')
-      log(`Just transferred flag: ${justTransferred || 'null'}`)
       
       if (justTransferred) {
-        log('✅ Previously transferred - clearing flag and proceeding')
         sessionStorage.removeItem('session_transferred')
         CAPTURED_HASH = ''
         setReady(true)
@@ -117,11 +105,7 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        log(`Captured hash length: ${CAPTURED_HASH.length}`)
-        log(`Hash preview: ${CAPTURED_HASH.substring(0, 150)}...`)
-        
         if (!CAPTURED_HASH) {
-          log('⚠️ No hash - proceeding normally')
           setReady(true)
           return
         }
@@ -131,56 +115,34 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         const refreshToken = params.get('refresh_token')
         const isSuperAdmin = params.get('super_admin') === 'true'
 
-        log(`Access token: ${accessToken ? `YES (${accessToken.length} chars)` : 'NO'}`)
-        log(`Refresh token: ${refreshToken ? `YES (${refreshToken.length} chars)` : 'NO'}`)
-        log(`Super admin: ${isSuperAdmin}`)
-
         if (accessToken && refreshToken) {
-          log('🚀 Setting session...')
-          
           const { data, error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           })
 
           if (error) {
-            log(`❌ setSession FAILED: ${error.message}`)
-            console.error('Full error:', error)
+            console.error('Session set error:', error)
             setReady(true)
             return
           }
 
-          log(`✅ Session set! User: ${data.user?.email}`)
-
-          // Verify
-          const { data: checkData } = await supabase.auth.getSession()
-          log(`Session verified: ${checkData.session ? 'YES' : 'NO'}`)
-
-          // Clean URL
           window.history.replaceState({}, document.title, window.location.pathname)
-          log('URL cleaned')
 
           const currentSubdomain = window.location.hostname.split('.')[0]
-          log(`Subdomain: ${currentSubdomain}`)
           
           if (isSuperAdmin) {
-            log('👑 SUPER ADMIN - GRANTED')
             sessionStorage.setItem('session_transferred', 'true')
             sessionStorage.setItem('super_admin_access', 'true')
             
-            // If on /login, redirect to dashboard
             if (pathname === '/login') {
-              log('Redirecting from /login to /')
               window.location.href = '/'
             } else {
-              log('Reloading page...')
               window.location.reload()
             }
             return
           }
 
-          log('Checking user org...')
-          
           const { data: userData, error: userError } = await supabase
             .from('users')
             .select('organization_id, organizations(subdomain)')
@@ -188,48 +150,38 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
             .single()
 
           if (userError) {
-            log(`❌ User data error: ${userError.message}`)
             setReady(true)
             return
           }
 
           const userSubdomain = (userData as any)?.organizations?.subdomain
-          log(`User subdomain: ${userSubdomain}`)
 
           if (userSubdomain === currentSubdomain) {
-            log('✅ User belongs here')
             sessionStorage.setItem('session_transferred', 'true')
             
             if (pathname === '/login') {
-              log('Redirecting from /login to /')
               window.location.href = '/'
             } else {
-              log('Reloading...')
               window.location.reload()
             }
             return
           }
 
-          log('❌ Wrong org')
           alert('You do not have access to this organization')
           await supabase.auth.signOut()
           window.location.href = 'https://iamcfo.com/login'
           return
         }
 
-        log('⚠️ No tokens in hash')
         setReady(true)
       } catch (error) {
-        log(`❌ Exception: ${error}`)
-        console.error('Exception:', error)
+        console.error('Session transfer error:', error)
         setReady(true)
       }
     }
 
     handleSessionTransfer()
   }, [pathname, router, supabase])
-
-  const showDebug = debugLog.length > 0
 
   if (!ready) {
     return (
@@ -238,22 +190,6 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
           <p className="mt-4 text-gray-600 font-semibold">Authenticating...</p>
         </div>
-        
-        {showDebug && (
-          <div className="fixed top-4 left-4 right-4 bg-black text-white p-4 rounded-lg max-h-[90vh] overflow-auto text-xs font-mono shadow-2xl z-50">
-            <div className="font-bold mb-2 text-yellow-300 text-lg">🔍 DEBUG LOG</div>
-            <div className="space-y-1">
-              {debugLog.map((log, i) => (
-                <div key={i} className={
-                  log.includes('❌') ? 'text-red-400 font-bold' :
-                  log.includes('✅') || log.includes('SUCCESS') ? 'text-green-400 font-bold' :
-                  log.includes('👑') ? 'text-purple-400 font-bold' :
-                  'text-gray-300'
-                }>{log}</div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     )
   }
@@ -321,9 +257,96 @@ export default function ClientRootLayout({ children }: { children: React.ReactNo
           <div className="min-h-screen bg-gray-50">
             <div className="hidden lg:block fixed inset-y-0 left-0 w-2 z-40" onMouseEnter={() => setSidebarVisible(true)} />
 
-            {/* Rest of your sidebar code... */}
-            
-            <main className="flex-1">{children}</main>
+            {/* Mobile sidebar */}
+            <div className={`fixed inset-0 z-50 lg:hidden ${sidebarOpen ? "block" : "hidden"}`}>
+              <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
+              <div className="relative flex w-full max-w-xs flex-1 flex-col bg-white">
+                <div className="absolute top-0 right-0 -mr-12 pt-2">
+                  <button type="button" className="ml-1 flex h-10 w-10 items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white" onClick={() => setSidebarOpen(false)}>
+                    <X className="h-6 w-6 text-white" />
+                  </button>
+                </div>
+                <div className="flex flex-shrink-0 items-center justify-center px-4 py-4">
+                  <IAMCFOLogo className="w-auto h-10" />
+                </div>
+                <div className="mt-5 h-0 flex-1 overflow-y-auto">
+                  <nav className="space-y-1 px-2">
+                    {filteredNavigation.map((item) => {
+                      const isActive = pathname === item.href
+                      return (
+                        <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-base font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }} onClick={() => setSidebarOpen(false)}>
+                          <item.icon className={`mr-4 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
+                          {item.name}
+                        </Link>
+                      )
+                    })}
+                    <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-base font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
+                      <LogOut className="mr-4 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
+                      Sign Out
+                    </button>
+                  </nav>
+                </div>
+                {user && (
+                  <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+                    <div className="flex-shrink-0 group block">
+                      <div className="flex items-center">
+                        <div className="ml-3">
+                          <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                          <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Desktop sidebar */}
+            <div className={`hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col transform transition-transform duration-300 ${sidebarVisible ? "translate-x-0" : "-translate-x-full"}`} onMouseEnter={() => setSidebarVisible(true)} onMouseLeave={() => setSidebarVisible(false)}>
+              <div className="flex min-h-0 flex-1 flex-col bg-white border-r border-gray-200">
+                <div className="flex flex-1 flex-col overflow-y-auto pt-5 pb-4">
+                  <div className="flex flex-shrink-0 items-center justify-center px-4">
+                    <IAMCFOLogo className="w-auto h-10" />
+                  </div>
+                  <nav className="mt-5 flex-1 space-y-1 px-2">
+                    {filteredNavigation.map((item) => {
+                      const isActive = pathname === item.href
+                      return (
+                        <Link key={item.name} href={item.href} className={`group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? "text-white" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`} style={{ backgroundColor: isActive ? BRAND_COLORS.primary : undefined }}>
+                          <item.icon className={`mr-3 h-6 w-6 flex-shrink-0 ${isActive ? "text-white" : "text-gray-400 group-hover:text-gray-500"}`} />
+                          {item.name}
+                        </Link>
+                      )
+                    })}
+                    <button onClick={signOut} className="w-full group flex items-center px-2 py-2 text-sm font-medium rounded-md text-gray-600 hover:bg-gray-50 hover:text-gray-900">
+                      <LogOut className="mr-3 h-6 w-6 flex-shrink-0 text-gray-400 group-hover:text-gray-500" />
+                      Sign Out
+                    </button>
+                  </nav>
+                </div>
+                {user && (
+                  <div className="flex-shrink-0 flex border-t border-gray-200 p-4">
+                    <div className="flex-shrink-0 group block w-full">
+                      <div className="flex items-center">
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">{user.name}</p>
+                          <p className="text-xs font-medium text-gray-500 capitalize">{user.role}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className={`flex flex-col flex-1 transition-all duration-300 ${sidebarVisible ? "lg:pl-64" : ""}`}>
+              <div className="sticky top-0 z-10 bg-white pl-1 pt-1 sm:pl-3 sm:pt-3 lg:hidden">
+                <button type="button" className="-ml-0.5 -mt-0.5 inline-flex h-12 w-12 items-center justify-center rounded-md text-gray-500 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-inset" onClick={() => setSidebarOpen(true)}>
+                  <Menu className="h-6 w-6" />
+                </button>
+              </div>
+              <main className="flex-1">{children}</main>
+            </div>
           </div>
         </SessionTransferHandler>
       </body>
