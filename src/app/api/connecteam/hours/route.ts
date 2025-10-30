@@ -48,7 +48,9 @@ export async function POST(request: NextRequest) {
     }
 
     const usersData = JSON.parse(await usersResponse.text())
-    const users = usersData.data?.users || []
+    console.log('📦 Users response structure:', JSON.stringify(usersData, null, 2).substring(0, 1000))
+    
+    const users = usersData.data?.users || usersData.users || usersData.data || []
     
     // Create userId → email mapping (case-insensitive)
     const userIdToEmail: Record<number, string> = {}
@@ -58,10 +60,13 @@ export async function POST(request: NextRequest) {
       if (user.id && user.email) {
         userIdToEmail[user.id] = user.email.toLowerCase()
         emailToUserId[user.email.toLowerCase()] = user.id
+        console.log(`  📧 User: ${user.email.toLowerCase()} → ID ${user.id}`)
+      } else {
+        console.log(`  ⚠️  User missing data:`, user)
       }
     })
 
-    console.log(`✅ Found ${users.length} users`)
+    console.log(`✅ Found ${users.length} users, mapped ${Object.keys(emailToUserId).length} emails`)
     console.log(`📧 Looking for userIds for:`, employeeEmails)
     
     const relevantUserIds: number[] = []
