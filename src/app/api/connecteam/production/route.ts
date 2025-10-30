@@ -39,13 +39,19 @@ export async function POST(request: NextRequest) {
     }
 
     const formsData = JSON.parse(await formsResponse.text())
+    console.log('📋 Raw forms response:', JSON.stringify(formsData, null, 2))
+    
     const forms = formsData.data?.forms || formsData.forms || []
     
     console.log(`📋 Found ${forms.length} total forms in Connecteam`)
+    
+    if (forms.length > 0) {
+      console.log('📋 First form structure:', JSON.stringify(forms[0], null, 2))
+    }
 
     // Find form that matches the location name
     const locationForm = forms.find((form: any) => 
-      form.name.toLowerCase() === locationName.toLowerCase()
+      form.name && form.name.toLowerCase() === locationName.toLowerCase()
     )
 
     if (!locationForm) {
