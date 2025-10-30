@@ -523,6 +523,16 @@ export default function MobilePayrollSubmit() {
     return employees.filter(emp => emp.payroll_group === payrollGroup)
   }, [employees, payrollGroup])
 
+  const hasProductionEmployees = useMemo(() => {
+    return filteredEmployees.some(emp => emp.compensation_type === 'production')
+  }, [filteredEmployees])
+
+  const hasProductionEmployeesWithEmails = useMemo(() => {
+    return filteredEmployees.some(
+      emp => emp.compensation_type === 'production' && Boolean(emp.email),
+    )
+  }, [filteredEmployees])
+
   const totals = useMemo(() => {
     const employeesWithData = filteredEmployees.filter(emp => {
       if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
@@ -1804,25 +1814,33 @@ export default function MobilePayrollSubmit() {
                       </button>
                     )}
                     
-                    {/* Sync Production button - only show if there are production employees */}
-                    {filteredEmployees.some(emp => emp.compensation_type === 'production' && emp.email) && (
-                      <button
-                        onClick={handleSyncProduction}
-                        disabled={isSyncingProduction}
-                        className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 rounded-lg text-indigo-200 text-sm font-medium transition disabled:opacity-50"
-                      >
-                        {isSyncingProduction ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            Syncing...
-                          </>
-                        ) : (
-                          <>
-                            <Hash className="w-4 h-4" />
-                            Sync Production
-                          </>
+                    {/* Sync Production button */}
+                    {hasProductionEmployees && (
+                      <div className="flex flex-col items-end">
+                        <button
+                          onClick={handleSyncProduction}
+                          disabled={isSyncingProduction || !hasProductionEmployeesWithEmails}
+                          title={!hasProductionEmployeesWithEmails ? 'Add emails to production employees to enable syncing' : undefined}
+                          className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 rounded-lg text-indigo-200 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isSyncingProduction ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              Syncing...
+                            </>
+                          ) : (
+                            <>
+                              <Hash className="w-4 h-4" />
+                              Sync Production
+                            </>
+                          )}
+                        </button>
+                        {!hasProductionEmployeesWithEmails && (
+                          <p className="mt-1 text-[10px] text-indigo-100/70 text-right">
+                            Add an email to each production employee to sync automatically.
+                          </p>
                         )}
-                      </button>
+                      </div>
                     )}
                   </div>
                 </div>
