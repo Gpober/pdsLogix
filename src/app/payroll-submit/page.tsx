@@ -126,6 +126,10 @@ export default function DesktopPayrollSubmit() {
   // Rejection handling state
   const [rejectedSubmissionId, setRejectedSubmissionId] = useState<string | null>(null);
   const [rejectionNote, setRejectionNote] = useState<string | null>(null);
+  
+  // ✅ NEW: Draft handling state
+  const [draftSubmissionId, setDraftSubmissionId] = useState<string | null>(null);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
 
   // Get selected location name
   const selectedLocationName = useMemo(() => {
@@ -250,16 +254,16 @@ export default function DesktopPayrollSubmit() {
 
   useEffect(() => {
     if (selectedLocationId && payrollGroup) {
-      loadRejectedSubmission();
+      loadDraftOrRejected();
     }
   }, [selectedLocationId, payrollGroup]);
 
-  const loadRejectedSubmission = async () => {
+  const loadDraftOrRejected = async () => {
     if (!selectedLocationId) return;
 
     setIsLoading(true);
     try {
-      // Check for rejected submission for next Friday
+      // Check for rejected submission first (higher priority)
       const nextFriday = getNextFriday();
       
       const { data: rejected, error: rejectedError } = await dataSupabase
@@ -269,7 +273,7 @@ export default function DesktopPayrollSubmit() {
         .eq('pay_date', nextFriday)
         .eq('payroll_group', payrollGroup)
         .eq('status', 'rejected')
-        .single();
+        .maybeSingle();
 
       if (rejectedError && rejectedError.code !== 'PGRST116') {
         console.error('Error checking for rejected submission:', rejectedError);
@@ -279,6 +283,7 @@ export default function DesktopPayrollSubmit() {
         console.log('🔄 Found rejected submission:', rejected.id);
         setRejectedSubmissionId(rejected.id);
         setRejectionNote(rejected.rejection_note);
+        setDraftSubmissionId(null); // Clear draft if rejected exists
         
         // Show alert with rejection note
         if (rejected.rejection_note) {
@@ -293,89 +298,121 @@ export default function DesktopPayrollSubmit() {
           );
         }
 
-        // Load the rejected submission details
-        const { data: details, error: detailsError } = await dataSupabase
-          .from('payroll_entries')
-          .select('*')
-          .eq('submission_id', rejected.id);
+        await loadSubmissionData(rejected.id);
+        setIsLoading(false);
+        return;
+      }
 
-        if (detailsError) {
-          console.error('Error loading rejected details:', detailsError);
-          await loadEmployees();
-          return;
-        }
+      // ✅ NEW: Check for draft submission if no rejected found
+      const { data: draft, error: draftError } = await dataSupabase
+        .from('payroll_submissions')
+        .select('*')
+        .eq('location_id', selectedLocationId)
+        .eq('pay_date', nextFriday)
+        .eq('payroll_group', payrollGroup)
+        .eq('status', 'draft')
+        .maybeSingle();
 
-        // Load all employees for this location/group
-        const { data: allEmployees, error: empError } = await dataSupabase
-          .from("employees")
-          .select("*")
-          .eq("location_id", selectedLocationId)
-          .eq("payroll_group", payrollGroup)
-          .eq("is_active", true)
-          .order("last_name");
-
-        if (empError) {
-          console.error('Error loading employees:', empError);
-          await loadEmployees();
-          return;
-        }
-
-        // Create a map of previous submissions
-        const previousData = new Map(
-          details?.map(d => [
-            d.employee_id,
-            {
-              hours: d.hours?.toString() || '',
-              units: d.units?.toString() || '',
-              count: d.count?.toString() || '1',
-              adjustment: d.adjustment?.toString() || '0',
-              amount: d.amount || 0,
-              notes: d.notes || ''
-            }
-          ]) || []
+      if (draft) {
+        console.log('📝 Found draft submission:', draft.id);
+        setDraftSubmissionId(draft.id);
+        setRejectedSubmissionId(null);
+        setRejectionNote(null);
+        
+        showAlert(
+          '📝 Draft loaded! Continue where you left off.',
+          'info'
         );
 
-        // Pre-fill employee data with rejected submission values
-        const rows: EmployeeRow[] = (allEmployees || []).map((emp) => {
-          const prevData = previousData.get(emp.id);
-          
-          if (prevData) {
-            // Employee had data in rejected submission - restore it
-            return {
-              ...emp,
-              hours: prevData.hours,
-              units: prevData.units,
-              count: prevData.count,
-              adjustment: prevData.adjustment,
-              notes: prevData.notes,
-              amount: prevData.amount,
-            };
-          } else {
-            // Employee wasn't in rejected submission - use defaults
-            return {
-              ...emp,
-              hours: "",
-              units: "",
-              count: "1",
-              adjustment: "0",
-              notes: "",
-              amount: 0,
-            };
-          }
-        });
-
-        setEmployees(rows);
-        console.log('✅ Loaded', rows.length, 'employees with rejected data pre-filled');
-      } else {
-        // No rejected submission, load normally
-        await loadEmployees();
+        await loadSubmissionData(draft.id);
+        setIsLoading(false);
+        return;
       }
+
+      // No rejected or draft submission, load normally
+      console.log('✅ No draft or rejected submissions found');
+      await loadEmployees();
     } catch (error) {
-      console.error("Error loading rejected submission:", error);
+      console.error("Error loading draft/rejected submission:", error);
       await loadEmployees();
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // ✅ NEW: Extracted common logic for loading submission data
+  const loadSubmissionData = async (submissionId: string) => {
+    // Load the submission details
+    const { data: details, error: detailsError } = await dataSupabase
+      .from('payroll_entries')
+      .select('*')
+      .eq('submission_id', submissionId);
+
+    if (detailsError) {
+      console.error('Error loading submission details:', detailsError);
+      await loadEmployees();
+      return;
+    }
+
+    // Load all employees for this location/group
+    const { data: allEmployees, error: empError } = await dataSupabase
+      .from("employees")
+      .select("*")
+      .eq("location_id", selectedLocationId)
+      .eq("payroll_group", payrollGroup)
+      .eq("is_active", true)
+      .order("last_name");
+
+    if (empError) {
+      console.error('Error loading employees:', empError);
+      await loadEmployees();
+      return;
+    }
+
+    // Create a map of previous submissions
+    const previousData = new Map(
+      details?.map(d => [
+        d.employee_id,
+        {
+          hours: d.hours?.toString() || '',
+          units: d.units?.toString() || '',
+          count: d.count?.toString() || '1',
+          adjustment: d.adjustment?.toString() || '0',
+          amount: d.amount || 0,
+          notes: d.notes || ''
+        }
+      ]) || []
+    );
+
+    // Pre-fill employee data with submission values
+    const rows: EmployeeRow[] = (allEmployees || []).map((emp) => {
+      const prevData = previousData.get(emp.id);
+      
+      if (prevData) {
+        return {
+          ...emp,
+          hours: prevData.hours,
+          units: prevData.units,
+          count: prevData.count,
+          adjustment: prevData.adjustment,
+          notes: prevData.notes,
+          amount: prevData.amount,
+        };
+      } else {
+        return {
+          ...emp,
+          hours: "",
+          units: "",
+          count: "1",
+          adjustment: "0",
+          notes: "",
+          amount: 0,
+        };
+      }
+    });
+
+    setEmployees(rows);
+    console.log('✅ Loaded', rows.length, 'employees with submission data pre-filled');
   };
 
   const loadEmployees = async () => {
@@ -521,12 +558,147 @@ export default function DesktopPayrollSubmit() {
       
       // Close modal and reload employees
       setShowAddEmployee(false);
-      await loadRejectedSubmission();
+      await loadDraftOrRejected();
     } catch (error: any) {
       console.error('Add employee error:', error);
       showAlert(error.message || 'Failed to add employee', "error");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // ✅ NEW: Save Draft Function
+  const handleSaveDraft = async () => {
+    if (!selectedLocationId || !userId) {
+      showAlert("Missing location or user information", "error");
+      return;
+    }
+
+    const employeesWithData = employees.filter(
+      (emp) =>
+        (emp.compensation_type === "hourly" && parseFloat(emp.hours) > 0) ||
+        (emp.compensation_type === "production" && parseFloat(emp.units) > 0) ||
+        (emp.compensation_type === "fixed" && parseFloat(emp.count) > 0)
+    );
+
+    if (employeesWithData.length === 0) {
+      showAlert("Please enter hours or units for at least one employee before saving draft", "error");
+      return;
+    }
+
+    setIsSavingDraft(true);
+
+    try {
+      const payDateObj = new Date(payDate);
+      const dayOfWeek = payDateObj.getDay();
+      const daysToFriday = dayOfWeek === 5 ? 0 : dayOfWeek < 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+      const periodEnd = new Date(payDateObj);
+      periodEnd.setDate(payDateObj.getDate() + daysToFriday - 1);
+      const periodStart = new Date(periodEnd);
+      periodStart.setDate(periodEnd.getDate() - 6);
+
+      const existingSubmissionId = draftSubmissionId || rejectedSubmissionId;
+
+      if (existingSubmissionId) {
+        // UPDATE existing submission as draft
+        console.log('🔄 Updating existing submission as draft:', existingSubmissionId);
+        
+        const { error: updateError } = await dataSupabase
+          .from('payroll_submissions')
+          .update({
+            status: 'draft',
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            rejected_by: null,
+            rejected_at: null,
+            rejection_note: null,
+          })
+          .eq('id', existingSubmissionId);
+
+        if (updateError) throw updateError;
+
+        // Delete old details
+        const { error: deleteError } = await dataSupabase
+          .from('payroll_entries')
+          .delete()
+          .eq('submission_id', existingSubmissionId);
+
+        if (deleteError) throw deleteError;
+
+        // Insert new details
+        const details = employeesWithData.map((emp) => ({
+          submission_id: existingSubmissionId,
+          employee_id: emp.id,
+          hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === "fixed" ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === "fixed" ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'draft'
+        }));
+
+        const { error: detailsError } = await dataSupabase
+          .from("payroll_entries")
+          .insert(details);
+
+        if (detailsError) throw detailsError;
+
+        setDraftSubmissionId(existingSubmissionId);
+        setRejectedSubmissionId(null);
+        setRejectionNote(null);
+
+      } else {
+        // CREATE new draft submission
+        console.log('✨ Creating new draft submission');
+        
+        const { data: submission, error: submissionError } = await dataSupabase
+          .from("payroll_submissions")
+          .insert({
+            location_id: selectedLocationId,
+            pay_date: payDate,
+            payroll_group: payrollGroup,
+            period_start: periodStart.toISOString().split("T")[0],
+            period_end: periodEnd.toISOString().split("T")[0],
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            status: "draft",
+          })
+          .select()
+          .single();
+
+        if (submissionError) throw submissionError;
+
+        const details = employeesWithData.map((emp) => ({
+          submission_id: submission.id,
+          employee_id: emp.id,
+          hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === "fixed" ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === "fixed" ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'draft'
+        }));
+
+        const { error: detailsError } = await dataSupabase
+          .from("payroll_entries")
+          .insert(details);
+
+        if (detailsError) throw detailsError;
+
+        setDraftSubmissionId(submission.id);
+      }
+
+      showAlert("✅ Draft saved! You can return later to complete.", "success");
+
+    } catch (error: any) {
+      console.error("Save draft error:", error);
+      showAlert(error.message || "Failed to save draft", "error");
+    } finally {
+      setIsSavingDraft(false);
     }
   };
 
@@ -560,9 +732,12 @@ export default function DesktopPayrollSubmit() {
       const periodStart = new Date(periodEnd);
       periodStart.setDate(periodEnd.getDate() - 6);
 
-      if (rejectedSubmissionId) {
-        // UPDATE existing rejected submission
-        console.log('🔄 Updating rejected submission:', rejectedSubmissionId);
+      // ✅ Check if updating existing draft or rejected submission
+      const existingSubmissionId = draftSubmissionId || rejectedSubmissionId;
+
+      if (existingSubmissionId) {
+        // UPDATE existing submission (draft or rejected) to pending
+        console.log(`🔄 Updating existing submission (${rejectedSubmissionId ? 'REJECTED' : 'DRAFT'}):`, existingSubmissionId);
         
         const { error: updateError } = await dataSupabase
           .from('payroll_submissions')
@@ -576,7 +751,7 @@ export default function DesktopPayrollSubmit() {
             rejected_at: null,
             rejection_note: null,
           })
-          .eq('id', rejectedSubmissionId);
+          .eq('id', existingSubmissionId);
 
         if (updateError) throw updateError;
 
@@ -584,13 +759,13 @@ export default function DesktopPayrollSubmit() {
         const { error: deleteError } = await dataSupabase
           .from('payroll_entries')
           .delete()
-          .eq('submission_id', rejectedSubmissionId);
+          .eq('submission_id', existingSubmissionId);
 
         if (deleteError) throw deleteError;
 
         // Insert new details
         const details = employeesWithData.map((emp) => ({
-          submission_id: rejectedSubmissionId,
+          submission_id: existingSubmissionId,
           employee_id: emp.id,
           hours: emp.compensation_type === "hourly" ? parseFloat(emp.hours) : null,
           units: emp.compensation_type === "production" ? parseFloat(emp.units) : null,
@@ -607,13 +782,14 @@ export default function DesktopPayrollSubmit() {
 
         if (detailsError) throw detailsError;
 
-        showAlert("✅ Payroll resubmitted for approval!", "success");
+        showAlert(rejectedSubmissionId ? "✅ Payroll resubmitted for approval!" : "✅ Draft submitted for approval!", "success");
         
-        // Clear rejection state and reset form
+        // Clear draft/rejection state and reset form
         setRejectedSubmissionId(null);
+        setDraftSubmissionId(null);
         setRejectionNote(null);
         setTimeout(() => {
-          loadRejectedSubmission();
+          loadDraftOrRejected();
           setPayDate(new Date().toISOString().split("T")[0]);
         }, 2000);
 
@@ -663,7 +839,7 @@ export default function DesktopPayrollSubmit() {
         
         // Reset form
         setTimeout(() => {
-          loadRejectedSubmission();
+          loadDraftOrRejected();
           setPayDate(new Date().toISOString().split("T")[0]);
         }, 2000);
       }
@@ -1079,6 +1255,29 @@ export default function DesktopPayrollSubmit() {
                     Add Employee
                   </button>
                 </div>
+                {/* ✅ NEW: Save Draft Button */}
+                <button
+                  onClick={handleSaveDraft}
+                  disabled={isSavingDraft || totalAmount === 0}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ backgroundColor: BRAND_COLORS.warning }}
+                >
+                  {isSavingDraft ? (
+                    <>
+                      <div
+                        className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"
+                      ></div>
+                      Saving Draft...
+                    </>
+                  ) : (
+                    <>
+                      <Clock size={20} />
+                      {draftSubmissionId ? 'Update Draft' : 'Save as Draft'}
+                    </>
+                  )}
+                </button>
+                
+                {/* Submit Button */}
                 <button
                   onClick={handleSubmit}
                   disabled={isSubmitting || totalAmount === 0}
@@ -1090,12 +1289,12 @@ export default function DesktopPayrollSubmit() {
                       <div
                         className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"
                       ></div>
-                      {rejectedSubmissionId ? 'Resubmitting...' : 'Submitting...'}
+                      {rejectedSubmissionId ? 'Resubmitting...' : draftSubmissionId ? 'Submitting Draft...' : 'Submitting...'}
                     </>
                   ) : (
                     <>
                       <Send size={20} />
-                      {rejectedSubmissionId ? 'Resubmit Payroll' : 'Submit Payroll'}
+                      {rejectedSubmissionId ? 'Resubmit Payroll' : draftSubmissionId ? 'Submit Draft' : 'Submit Payroll'}
                     </>
                   )}
                 </button>
