@@ -21,33 +21,57 @@ export async function POST(request: NextRequest) {
 
     // STEP 1: Get all forms to find the one matching this location
     console.log('\n📋 STEP 1: Finding form for location...')
-    const formsUrl = 'https://api.connecteam.com/forms/v1/forms'
     
-    const formsResponse = await fetch(formsUrl, {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': connecteamApiKey,
-        'Accept': 'application/json',
-      },
-    })
+    // Paginate through ALL forms
+    let allForms: any[] = []
+    let offset = 0
+    let hasMore = true
 
-    if (!formsResponse.ok) {
-      return NextResponse.json({
-        error: 'Failed to get forms from Connecteam',
-        status: formsResponse.status
-      }, { status: 502 })
-    }
+    while (hasMore) {
+      const formsUrl = `https://api.connecteam.com/forms/v1/forms?offset=${offset}`
+      console.log(`  📄 Fetching forms at offset ${offset}...`)
+      
+      const formsResponse = await fetch(formsUrl, {
+        method: 'GET',
+        headers: {
+          'X-API-KEY': connecteamApiKey,
+          'Accept': 'application/json',
+        },
+      })
 
-    const formsData = JSON.parse(await formsResponse.text())
-    console.log('📋 Raw forms response:', JSON.stringify(formsData, null, 2))
-    
-    const forms = formsData.data?.forms || formsData.forms || []
-    
-    console.log(`📋 Found ${forms.length} total forms in Connecteam`)
-    
-    if (forms.length > 0) {
-      console.log('📋 First form structure:', JSON.stringify(forms[0], null, 2))
+      if (!formsResponse.ok) {
+        return NextResponse.json({
+          error: 'Failed to get forms from Connecteam',
+          status: formsResponse.status
+        }, { status: 502 })
+      }
+
+      const formsData = JSON.parse(await formsResponse.text())
+      const forms = formsData.data?.forms || formsData.forms || []
+      
+      if (offset === 0) {
+        console.log('📋 Raw forms response:', JSON.stringify(formsData, null, 2))
+      }
+      
+      allForms = [...allForms, ...forms]
+      console.log(`  ✅ Loaded ${forms.length} forms (total: ${allForms.length})`)
+
+      // Check if there are more forms
+      const nextOffset = formsData.paging?.offset
+      if (nextOffset && forms.length > 0) {
+        offset = nextOffset
+      } else {
+        hasMore = false
+      }
     }
+    
+    console.log(`📋 Found ${allForms.length} total forms in Connecteam`)
+    
+    if (allForms.length > 0) {
+      console.log('📋 First form structure:', JSON.stringify(allForms[0], null, 2))
+    }
+    
+    const forms = allForms
 
     // Find form that matches the location name
     const locationForm = forms.find((form: any) => 
