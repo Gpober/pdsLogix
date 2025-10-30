@@ -188,6 +188,11 @@ export default function MobilePayrollSubmit() {
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
+  // Track submission status to prevent duplicates and lock UI
+  const [submissionStatus, setSubmissionStatus] = useState<'none' | 'draft' | 'pending' | 'approved' | 'rejected'>('none')
+  const [submittedAt, setSubmittedAt] = useState<string | null>(null)
+  const [submittedBy, setSubmittedBy] = useState<string | null>(null)
+  
   const [showEditEmployee, setShowEditEmployee] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
   const [swipedEmployeeId, setSwipedEmployeeId] = useState<string | null>(null)
@@ -271,7 +276,7 @@ export default function MobilePayrollSubmit() {
   // Check for draft or rejected submissions when location/payDate/payrollGroup changes
   useEffect(() => {
     if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
-      loadDraftOrRejected(selectedLocationId)
+      loadExistingSubmission(selectedLocationId)
     }
   }, [selectedLocationId, payDate, payrollGroup])
 
@@ -303,14 +308,14 @@ export default function MobilePayrollSubmit() {
     }
   }
 
-  async function loadDraftOrRejected(locationId: string) {
+  async function loadExistingSubmission(locationId: string) {
     try {
+      // Check for ANY existing submission (not just draft/rejected)
       const { data: submissions, error } = await dataSupabase
         .from('payroll_submissions')
         .select('*, payroll_entries(*)')
         .eq('location_id', locationId)
         .eq('pay_date', payDate)
-        .in('status', ['draft', 'rejected'])
         .order('created_at', { ascending: false })
         .limit(1)
 
@@ -318,6 +323,10 @@ export default function MobilePayrollSubmit() {
 
       if (submissions && submissions.length > 0) {
         const submission = submissions[0]
+        
+        setSubmissionStatus(submission.status)
+        setSubmittedAt(submission.submitted_at)
+        setSubmittedBy(submission.submitted_by)
         
         if (submission.status === 'rejected') {
           setRejectedSubmissionId(submission.id)
@@ -330,6 +339,10 @@ export default function MobilePayrollSubmit() {
           setRejectedSubmissionId(null)
           setRejectionNote(null)
           setLastSavedAt(new Date(submission.updated_at || submission.created_at))
+        } else if (submission.status === 'pending' || submission.status === 'approved') {
+          setDraftSubmissionId(null)
+          setRejectedSubmissionId(null)
+          setRejectionNote(null)
         }
 
         // Load employee data from entries
@@ -351,9 +364,16 @@ export default function MobilePayrollSubmit() {
         })
         
         setEmployees(updatedEmployees)
+      } else {
+        setSubmissionStatus('none')
+        setSubmittedAt(null)
+        setSubmittedBy(null)
+        setDraftSubmissionId(null)
+        setRejectedSubmissionId(null)
+        setRejectionNote(null)
       }
     } catch (error) {
-      console.error('Error loading draft/rejected:', error)
+      console.error('Error loading submission:', error)
     }
   }
 
@@ -822,6 +842,12 @@ export default function MobilePayrollSubmit() {
 
 
  async function handleSubmit() {
+  // Prevent duplicate submissions
+  if (submissionStatus === 'pending' || submissionStatus === 'approved') {
+    showAlert('error', '❌ This payroll has already been submitted and cannot be resubmitted!')
+    return
+  }
+
   if (!selectedLocationId || !userId) {
     showAlert('error', 'Missing required data')
     return
@@ -1726,6 +1752,46 @@ export default function MobilePayrollSubmit() {
           </div>
         )}
 
+        {/* PENDING Status Banner */}
+        {submissionStatus === 'pending' && (
+          <div className="bg-yellow-500/20 border border-yellow-400/40 rounded-xl p-4 mb-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-yellow-100 font-semibold text-sm">✋ Payroll Submitted - Pending Approval</p>
+                {submittedAt && (
+                  <p className="text-yellow-200/80 text-xs mt-1">
+                    Submitted {new Date(submittedAt).toLocaleString()}
+                  </p>
+                )}
+                <p className="text-yellow-200/70 text-xs mt-2">
+                  🔒 This payroll is locked and cannot be edited until approved or rejected.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* APPROVED Status Banner */}
+        {submissionStatus === 'approved' && (
+          <div className="bg-green-500/20 border border-green-400/40 rounded-xl p-4 mb-4">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="w-5 h-5 text-green-300 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-green-100 font-semibold text-sm">✅ Payroll Approved</p>
+                {submittedAt && (
+                  <p className="text-green-200/80 text-xs mt-1">
+                    Submitted {new Date(submittedAt).toLocaleString()}
+                  </p>
+                )}
+                <p className="text-green-200/70 text-xs mt-2">
+                  🔒 This payroll has been approved and is now locked.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {selectedLocationId && (
           <>
             <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
@@ -1797,8 +1863,8 @@ export default function MobilePayrollSubmit() {
                     {filteredEmployees.some(emp => emp.compensation_type === 'hourly' && emp.email) && (
                       <button
                         onClick={handleSyncConnecteam}
-                        disabled={isSyncingConnecteam}
-                        className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 rounded-lg text-purple-200 text-sm font-medium transition disabled:opacity-50"
+                        disabled={isSyncingConnecteam || submissionStatus === 'pending' || submissionStatus === 'approved'}
+                        className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 rounded-lg text-purple-200 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isSyncingConnecteam ? (
                           <>
@@ -1819,7 +1885,7 @@ export default function MobilePayrollSubmit() {
                       <div className="flex flex-col items-end">
                         <button
                           onClick={handleSyncProduction}
-                          disabled={isSyncingProduction || !hasProductionEmployeesWithEmails}
+                          disabled={isSyncingProduction || !hasProductionEmployeesWithEmails || submissionStatus === 'pending' || submissionStatus === 'approved'}
                           title={!hasProductionEmployeesWithEmails ? 'Add emails to production employees to enable syncing' : undefined}
                           className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 rounded-lg text-indigo-200 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -1972,13 +2038,23 @@ export default function MobilePayrollSubmit() {
             {/* Submit Button */}
             <button
               onClick={handleSubmit}
-              disabled={isSubmitting || totals.employees === 0}
+              disabled={isSubmitting || totals.employees === 0 || submissionStatus === 'pending' || submissionStatus === 'approved'}
               className="w-full bg-gradient-to-r from-blue-500 to-blue-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <span className="flex items-center justify-center gap-2">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
                   {rejectedSubmissionId ? 'Resubmitting...' : 'Submitting...'}
+                </span>
+              ) : submissionStatus === 'pending' ? (
+                <span className="flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-5 h-5" />
+                  Already Submitted - Pending Approval
+                </span>
+              ) : submissionStatus === 'approved' ? (
+                <span className="flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-5 h-5" />
+                  Approved ✓
                 </span>
               ) : (
                 <span>
