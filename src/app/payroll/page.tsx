@@ -315,79 +315,82 @@ export default function PayrollPage() {
   };
 
   const loadAllLocations = async () => {
-    const { data: locations } = await supabase.from('locations').select('id, name');
-    
-    const getNextFriday = () => {
-      const today = new Date();
-      const dayOfWeek = today.getDay();
-      const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
-      const nextFriday = new Date(today);
-      nextFriday.setDate(today.getDate() + daysUntilFriday);
-      return `${nextFriday.getFullYear()}-${String(nextFriday.getMonth() + 1).padStart(2, '0')}-${String(nextFriday.getDate()).padStart(2, '0')}`;
-    };
-
-    const { data: submissions } = await supabase.from('payroll_submissions').select('*').eq('pay_date', getNextFriday());
-    const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
-
-    const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
-      const submission = submissionsMap.get(location.id);
-      if (submission) {
-        return {
-          location_id: location.id,
-          location_name: location.name,
-          submission_id: submission.id,
-          status: submission.status as 'approved' | 'pending',
-          total_amount: submission.total_amount,
-          employee_count: submission.employee_count,
-          pay_date: submission.pay_date,
-          payroll_group: submission.payroll_group as 'A' | 'B',
-          submitted_at: submission.submitted_at
-        };
-      }
-      return { location_id: location.id, location_name: location.name, status: 'not_submitted' as const };
-    });
-
-    setAllLocations(locationStatuses);
+  const { data: locations } = await supabase.from('locations').select('id, name');
+  
+  const getNextFriday = () => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    const daysUntilFriday = dayOfWeek <= 5 ? 5 - dayOfWeek : 7 - dayOfWeek + 5;
+    const nextFriday = new Date(today);
+    nextFriday.setDate(today.getDate() + daysUntilFriday);
+    return `${nextFriday.getFullYear()}-${String(nextFriday.getMonth() + 1).padStart(2, '0')}-${String(nextFriday.getDate()).padStart(2, '0')}`;
   };
 
-  const handleReviewSubmission = async (submission: PendingSubmission) => {
-    setSelectedSubmission(submission);
-    const { data: details } = await supabase.from('payroll_submission_details').select('*').eq('submission_id', submission.id);
-    const employeeIds = details?.map(d => d.employee_id) || [];
-    const { data: employees } = await supabase.from('employees').select('id, first_name, last_name').in('id', employeeIds);
-    const employeesMap = new Map(employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`]));
-    const detailsWithNames = (details || []).map(d => ({ ...d, employee_name: employeesMap.get(d.employee_id) || 'Unknown' }));
-    setSubmissionDetails(detailsWithNames);
-    setShowApprovalModal(true);
-  };
+  // ✅ Get submissions for next Friday - all statuses
+  const { data: submissions } = await supabase
+    .from('payroll_submissions')
+    .select('*')
+    .eq('pay_date', getNextFriday());
+  
+  const submissionsMap = new Map(submissions?.map(s => [s.location_id, s]));
 
-  const handleApprove = async () => {
-    if (!selectedSubmission || !userId) return;
-    setIsApproving(true);
-    try {
-      const paymentsToInsert = submissionDetails.map(detail => ({
-        first_name: detail.employee_name.split(' ')[0],
-        last_name: detail.employee_name.split(' ').slice(1).join(' '),
-        department: selectedSubmission.location_name,
-        date: selectedSubmission.pay_date,
-        total_amount: detail.amount,
-        payment_method: 'Payroll'
-      }));
-      await supabase.from('payments').insert(paymentsToInsert);
-      await supabase.from('payroll_submissions').update({ status: 'approved', approved_by: userId, approved_at: new Date().toISOString() }).eq('id', selectedSubmission.id);
-      showNotification('Payroll approved successfully!', 'success');
-      setShowApprovalModal(false);
-      setSelectedSubmission(null);
-      loadPendingSubmissions();
-      loadAllLocations();
-      fetchPayments();
-    } catch (error) {
-      showNotification('Failed to approve payroll', 'error');
-    } finally {
-      setIsApproving(false);
+  const locationStatuses: LocationStatus[] = (locations || []).map((location) => {
+    const submission = submissionsMap.get(location.id);
+    if (submission) {
+      // ✅ Only show approved/pending, treat rejected as not_submitted
+      const status = submission.status === 'rejected' ? 'not_submitted' : submission.status;
+      
+      return {
+        location_id: location.id,
+        location_name: location.name,
+        submission_id: submission.id,
+        status: status as 'approved' | 'pending' | 'not_submitted',
+        total_amount: submission.total_amount,
+        employee_count: submission.employee_count,
+        pay_date: submission.pay_date,
+        payroll_group: submission.payroll_group as 'A' | 'B',
+        submitted_at: submission.submitted_at
+      };
     }
-  };
+    return { 
+      location_id: location.id, 
+      location_name: location.name, 
+      status: 'not_submitted' as const 
+    };
+  });
 
+  setAllLocations(locationStatuses);
+};
+
+// 2. handleReject is already correct, but make sure notification is clear
+const handleReject = async () => {
+  if (!selectedSubmission || !userId) return;
+  setIsApproving(true);
+  try {
+    // Update status to rejected
+    await supabase
+      .from('payroll_submissions')
+      .update({ 
+        status: 'rejected', 
+        approved_by: userId, 
+        approved_at: new Date().toISOString() 
+      })
+      .eq('id', selectedSubmission.id);
+    
+    showNotification('Payroll rejected - location can resubmit', 'warning');
+    setShowApprovalModal(false);
+    setSelectedSubmission(null);
+    
+    // Reload both lists
+    loadPendingSubmissions();
+    loadAllLocations();
+  } catch (error) {
+    console.error('Rejection error:', error);
+    showNotification('Failed to reject payroll', 'error');
+  } finally {
+    setIsApproving(false);
+  }
+};
   const handleReject = async () => {
     if (!selectedSubmission || !userId) return;
     setIsApproving(true);
