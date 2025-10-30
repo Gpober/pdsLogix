@@ -1,5 +1,5 @@
 // app/api/connecteam/hours/route.ts
-// Try all possible time-clock endpoint variations
+// Try different authentication methods
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(request: NextRequest) {
@@ -8,9 +8,6 @@ export async function POST(request: NextRequest) {
     
     const body = await request.json()
     const { periodStart, periodEnd, employeeEmails, payrollGroup } = body
-
-    console.log('📅 Period:', periodStart, 'to', periodEnd)
-    console.log('👥 Payroll Group:', payrollGroup)
 
     const connecteamApiKey = process.env.CONNECTEAM_API_KEY
     const timeClockIdA = process.env.CONNECTEAM_TIME_CLOCK_ID_A
@@ -21,146 +18,127 @@ export async function POST(request: NextRequest) {
     }
 
     const timeClockId = payrollGroup === 'A' ? timeClockIdA : timeClockIdB
-    
     if (!timeClockId) {
       return NextResponse.json({ error: 'Time clock ID not configured' }, { status: 500 })
     }
 
     console.log(`🔑 Using time clock ID ${timeClockId}`)
 
-    // Try multiple endpoint patterns
-    const baseUrls = [
-      // Pattern 1: /time-clock/clocks/{id}/entries
-      `https://api.connecteam.com/time-clock/clocks/${timeClockId}/entries`,
-      // Pattern 2: /time-clock/{id}/entries  
-      `https://api.connecteam.com/time-clock/${timeClockId}/entries`,
-      // Pattern 3: /timeclock/{id}/entries
-      `https://api.connecteam.com/timeclock/${timeClockId}/entries`,
-      // Pattern 4: /api/time-clock/{id}/entries
-      `https://api.connecteam.com/api/time-clock/${timeClockId}/entries`,
-      // Pattern 5: /v1/time-clock/{id}/entries
-      `https://api.connecteam.com/v1/time-clock/${timeClockId}/entries`,
+    // Try the most promising URL from logs
+    const connecteamUrl = `https://api.connecteam.com/time-clock/${timeClockId}/entries?from=${periodStart}&to=${periodEnd}`
+    
+    // Try different authentication header combinations
+    const authHeaders = [
+      { 'X-API-KEY': connecteamApiKey },
+      { 'X-API-Key': connecteamApiKey },
+      { 'x-api-key': connecteamApiKey },
+      { 'Authorization': `Bearer ${connecteamApiKey}` },
+      { 'Authorization': `ApiKey ${connecteamApiKey}` },
+      { 'Authorization': connecteamApiKey },
+      { 'api-key': connecteamApiKey },
+      { 'apikey': connecteamApiKey },
     ]
 
-    const queryParams = [
-      `from=${periodStart}&to=${periodEnd}`,
-      `startDate=${periodStart}&endDate=${periodEnd}`,
-      `start=${periodStart}&end=${periodEnd}`,
-    ]
+    for (let i = 0; i < authHeaders.length; i++) {
+      const authHeader = authHeaders[i]
+      const headerName = Object.keys(authHeader)[0]
+      
+      console.log(`\n🔗 Attempt ${i + 1}: ${connecteamUrl}`)
+      console.log(`🔑 Auth header: ${headerName}`)
 
-    let successResponse = null
+      const connecteamResponse = await fetch(connecteamUrl, {
+        method: 'GET',
+        headers: {
+          ...authHeader,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+      })
 
-    for (const baseUrl of baseUrls) {
-      for (const params of queryParams) {
-        const connecteamUrl = `${baseUrl}?${params}`
+      console.log('📡 Status:', connecteamResponse.status)
+      const contentType = connecteamResponse.headers.get('content-type') || ''
+      console.log('📡 Content-Type:', contentType)
+
+      const responseText = await connecteamResponse.text()
+      console.log('📄 Response preview:', responseText.substring(0, 200))
+
+      const isJson = contentType.includes('application/json') || 
+                     (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))
+
+      if (connecteamResponse.ok && isJson) {
+        console.log('✅ SUCCESS! This auth header works!')
         
-        console.log(`\n🔗 Trying: ${connecteamUrl}`)
+        let connecteamData
+        try {
+          connecteamData = JSON.parse(responseText)
+        } catch (e) {
+          console.log('❌ JSON parse failed')
+          continue
+        }
 
-        const connecteamResponse = await fetch(connecteamUrl, {
-          method: 'GET',
-          headers: {
-            'X-API-KEY': connecteamApiKey,
-            'Accept': 'application/json',
-          },
+        console.log('📊 Data:', JSON.stringify(connecteamData).substring(0, 300))
+
+        const hoursMap: Record<string, number> = {}
+        employeeEmails.forEach((email: string) => {
+          hoursMap[email.toLowerCase()] = 0
         })
 
-        console.log('📡 Status:', connecteamResponse.status)
+        const entries = Array.isArray(connecteamData) 
+          ? connecteamData 
+          : connecteamData.data || connecteamData.entries || connecteamData.results || []
 
-        const responseText = await connecteamResponse.text()
-        const contentType = connecteamResponse.headers.get('content-type') || ''
-        const isJson = contentType.includes('application/json') || 
-                       (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))
+        console.log(`📝 Processing ${entries.length} entries`)
 
-        if (connecteamResponse.ok && isJson) {
-          console.log('✅ SUCCESS! This URL works!')
+        entries.forEach((entry: any) => {
+          const userEmail = entry.user?.email?.toLowerCase() || entry.email?.toLowerCase()
           
-          let connecteamData
-          try {
-            connecteamData = JSON.parse(responseText)
-            console.log('📊 Data:', JSON.stringify(connecteamData).substring(0, 300))
+          if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
+            let hours = 0
             
-            successResponse = {
-              data: connecteamData,
-              url: connecteamUrl
+            if (entry.duration) {
+              hours = entry.duration / 60
+            } else if (entry.clockIn && entry.clockOut) {
+              hours = (new Date(entry.clockOut).getTime() - new Date(entry.clockIn).getTime()) / (1000 * 60 * 60)
+            } else if (entry.totalTime) {
+              hours = entry.totalTime / 3600
+            } else if (entry.hours) {
+              hours = parseFloat(entry.hours)
             }
-            break
-          } catch (e) {
-            console.log('❌ JSON parse failed')
+
+            if (hours > 0) {
+              hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
+            }
           }
-        } else {
-          console.log(`❌ Failed: ${connecteamResponse.status}, isJson: ${isJson}`)
-        }
+        })
+
+        Object.keys(hoursMap).forEach(email => {
+          hoursMap[email] = Math.round(hoursMap[email] * 100) / 100
+        })
+
+        console.log('✅ Final hours:', hoursMap)
+
+        return NextResponse.json({
+          success: true,
+          hours: hoursMap,
+          payrollGroup,
+          period: { start: periodStart, end: periodEnd },
+          workingAuthHeader: headerName,
+          entriesProcessed: entries.length
+        })
+      } else {
+        console.log(`❌ Failed: Status ${connecteamResponse.status}, isJson: ${isJson}`)
       }
-      
-      if (successResponse) break
     }
 
-    if (!successResponse) {
-      console.error('❌ All endpoint attempts failed')
-      return NextResponse.json({
-        error: 'Could not find working Connecteam API endpoint',
-        details: 'Tried multiple URL patterns but none returned valid JSON. Please check Connecteam API documentation or contact their support.',
-      }, { status: 502 })
-    }
-
-    console.log('✅ Using working URL:', successResponse.url)
-    const connecteamData = successResponse.data
-
-    // Process the data
-    const hoursMap: Record<string, number> = {}
-    employeeEmails.forEach((email: string) => {
-      hoursMap[email.toLowerCase()] = 0
-    })
-
-    const entries = Array.isArray(connecteamData) 
-      ? connecteamData 
-      : connecteamData.data || connecteamData.entries || connecteamData.results || []
-
-    console.log(`📝 Processing ${entries.length} entries`)
-
-    entries.forEach((entry: any) => {
-      const userEmail = entry.user?.email?.toLowerCase() || 
-                       entry.email?.toLowerCase() ||
-                       entry.userEmail?.toLowerCase()
-      
-      if (userEmail && employeeEmails.map((e: string) => e.toLowerCase()).includes(userEmail)) {
-        let hours = 0
-        
-        if (entry.duration) {
-          hours = entry.duration / 60
-        } else if (entry.clockIn && entry.clockOut) {
-          hours = (new Date(entry.clockOut).getTime() - new Date(entry.clockIn).getTime()) / (1000 * 60 * 60)
-        } else if (entry.totalTime) {
-          hours = entry.totalTime / 3600
-        } else if (entry.hours) {
-          hours = parseFloat(entry.hours)
-        }
-
-        if (hours > 0) {
-          hoursMap[userEmail] = (hoursMap[userEmail] || 0) + hours
-          console.log(`  ✅ ${userEmail}: +${hours.toFixed(2)} hours`)
-        }
-      }
-    })
-
-    Object.keys(hoursMap).forEach(email => {
-      hoursMap[email] = Math.round(hoursMap[email] * 100) / 100
-    })
-
-    console.log('✅ Final hours:', hoursMap)
-
+    // All attempts failed
     return NextResponse.json({
-      success: true,
-      hours: hoursMap,
-      payrollGroup,
-      period: { start: periodStart, end: periodEnd },
-      workingUrl: successResponse.url,
-      entriesProcessed: entries.length
-    })
+      error: 'Could not authenticate with Connecteam API',
+      details: 'Tried 8 different authentication header formats but all returned HTML. The API key may be invalid, or Connecteam may require additional authentication. Please contact Connecteam support for API documentation.',
+      url: connecteamUrl
+    }, { status: 502 })
 
   } catch (error: any) {
     console.error('❌ Error:', error.message)
-    console.error('❌ Stack:', error.stack)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }
