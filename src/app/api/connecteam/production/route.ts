@@ -197,11 +197,12 @@ export async function POST(request: NextRequest) {
       console.log(`  ✅ Loaded ${submissions.length} submissions (total: ${allSubmissions.length})`)
 
       // Check if there are more submissions
-      const nextOffset = submissionsData.paging?.offset
-      if (nextOffset && submissions.length > 0) {
-        submissionsOffset = nextOffset
-      } else {
+      // If we got fewer than the limit, we're done
+      if (submissions.length < 100) {
         hasMoreSubmissions = false
+      } else {
+        // Move to next page
+        submissionsOffset += 100
       }
     }
     
