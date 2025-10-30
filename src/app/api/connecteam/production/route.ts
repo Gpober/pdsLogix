@@ -51,19 +51,19 @@ export async function POST(request: NextRequest) {
 
     // Find form that matches the location name
     const locationForm = forms.find((form: any) => 
-      form.name && form.name.toLowerCase() === locationName.toLowerCase()
+      form.formName && form.formName.toLowerCase().includes(locationName.toLowerCase())
     )
 
     if (!locationForm) {
       console.log('❌ No form found matching location:', locationName)
-      console.log('Available forms:', forms.map((f: any) => f.name))
+      console.log('Available forms:', forms.map((f: any) => f.formName))
       return NextResponse.json({
         error: `No form found for location "${locationName}"`,
-        availableForms: forms.map((f: any) => f.name)
+        availableForms: forms.map((f: any) => f.formName)
       }, { status: 404 })
     }
 
-    console.log(`✅ Found form: "${locationForm.name}" (ID: ${locationForm.id})`)
+    console.log(`✅ Found form: "${locationForm.formName}" (ID: ${locationForm.formId})`)
 
     // STEP 2: Get all users to map emails to userIds
     console.log('\n👥 STEP 2: Getting users from Connecteam...')
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     // STEP 3: Get form submissions for the period
     console.log('\n📊 STEP 3: Getting form submissions...')
     
-    const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.id}/form-submissions?fromDate=${periodStart}&toDate=${periodEnd}`
+    const submissionsUrl = `https://api.connecteam.com/forms/v1/forms/${locationForm.formId}/form-submissions?fromDate=${periodStart}&toDate=${periodEnd}`
     
     console.log(`📅 Fetching submissions from ${periodStart} to ${periodEnd}`)
 
@@ -183,8 +183,8 @@ export async function POST(request: NextRequest) {
       success: true,
       units: unitsMap,
       locationName,
-      formName: locationForm.name,
-      formId: locationForm.id,
+      formName: locationForm.formName,
+      formId: locationForm.formId,
       period: { start: periodStart, end: periodEnd },
       employeesProcessed: relevantUserIds.length,
       totalSubmissions: submissions.length
