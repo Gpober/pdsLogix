@@ -629,7 +629,7 @@ export default function MobilePayrollSubmit() {
     console.log('👥 Payroll Group:', payrollGroup)
 
     // ✅ FIX: Get the current session token from authClient
-    const { data: { session } } = await authClient.getSession()
+    const { data: { session } } = await authClient.auth.getSession()
     
     if (!session?.access_token) {
       throw new Error('No valid session found. Please log in again.')
