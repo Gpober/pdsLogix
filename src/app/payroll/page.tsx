@@ -144,7 +144,7 @@ export default function PayrollPage() {
     type: "info" | "success" | "error" | "warning" 
   }>({ show: false, message: "", type: "info" });
   
-  const [viewMode, setViewMode] = useState<ViewMode>("approvals");
+  const [viewMode, setViewMode] = useState<ViewMode>("analytics");
   const [departmentFilter, setDepartmentFilter] = useState("All Departments");
   const [departmentDropdownOpen, setDepartmentDropdownOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -585,7 +585,6 @@ export default function PayrollPage() {
       const { data, error } = await dataClient
         .from("payments")
         .select("*")
-        .eq('organization_id', organizationId)
         .gte("date", startDate)
         .lte("date", endDate)
         .order("date", { ascending: true });
@@ -776,16 +775,6 @@ export default function PayrollPage() {
             
             <div className="flex gap-2">
               <button
-                onClick={() => setViewMode('approvals')}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                  viewMode === 'approvals' ? 'text-white' : 'bg-gray-100 text-gray-600'
-                }`}
-                style={viewMode === 'approvals' ? { backgroundColor: BRAND_COLORS.primary } : {}}
-              >
-                <ClipboardCheck size={18} className="inline mr-2" />
-                Approvals
-              </button>
-              <button
                 onClick={() => setViewMode('analytics')}
                 className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                   viewMode === 'analytics' ? 'text-white' : 'bg-gray-100 text-gray-600'
@@ -794,6 +783,16 @@ export default function PayrollPage() {
               >
                 <BarChart3 size={18} className="inline mr-2" />
                 Analytics
+              </button>
+              <button
+                onClick={() => setViewMode('approvals')}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  viewMode === 'approvals' ? 'text-white' : 'bg-gray-100 text-gray-600'
+                }`}
+                style={viewMode === 'approvals' ? { backgroundColor: BRAND_COLORS.primary } : {}}
+              >
+                <ClipboardCheck size={18} className="inline mr-2" />
+                Approvals
               </button>
             </div>
           </div>
