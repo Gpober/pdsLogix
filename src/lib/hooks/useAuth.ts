@@ -35,9 +35,9 @@ export function useAuth() {
       // Check if super admin flag is set in sessionStorage (from login transfer)
       const superAdminFlag = sessionStorage.getItem('is_super_admin') === 'true'
       
-      // Load user profile from PLATFORM Supabase (where users/profiles table exists)
+      // Load user profile from PLATFORM Supabase (where users table exists)
       const { data, error } = await authClient
-        .from('profiles')
+        .from('users')
         .select('*')
         .eq('id', userId)
         .single()
