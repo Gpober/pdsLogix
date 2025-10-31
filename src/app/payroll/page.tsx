@@ -285,7 +285,7 @@ export default function PayrollPage() {
     try {
       console.log('📥 Loading pending submissions for org:', organizationId);
 
-      const { data: submissions, error } = await dataClient
+      const { data: submissions, error } = await supabase
         .from('payroll_submissions')
         .select(`
           *,
@@ -312,14 +312,14 @@ export default function PayrollPage() {
     } catch (error) {
       console.error('❌ Error in loadPendingSubmissions:', error);
     }
-  }, [organizationId, dataClient]);
+  }, [organizationId]);
 
   // Load all locations status
   const loadAllLocationsStatus = useCallback(async () => {
     if (!organizationId) return;
 
     try {
-      const { data: locations, error: locError } = await dataClient
+      const { data: locations, error: locError } = await supabase
         .from('locations')
         .select('id, name')
         .eq('organization_id', organizationId)
@@ -330,7 +330,7 @@ export default function PayrollPage() {
         return;
       }
 
-      const { data: submissions, error: subError } = await dataClient
+      const { data: submissions, error: subError } = await supabase
         .from('payroll_submissions')
         .select('*')
         .eq('organization_id', organizationId)
@@ -369,7 +369,7 @@ export default function PayrollPage() {
     } catch (error) {
       console.error('❌ Error in loadAllLocationsStatus:', error);
     }
-  }, [organizationId, dataClient]);
+  }, [organizationId]);
 
   // Open approval modal
   const openApprovalModal = useCallback(async (submission: PendingSubmission) => {
@@ -377,7 +377,7 @@ export default function PayrollPage() {
     setRejectionNote('');
 
     try {
-      const { data: details, error } = await dataClient
+      const { data: details, error } = await supabase
         .from('payroll_entries')
         .select(`
           employee_id,
@@ -416,7 +416,7 @@ export default function PayrollPage() {
       console.error('❌ Error in openApprovalModal:', error);
       showNotification('Failed to open approval modal', 'error');
     }
-  }, [dataClient, showNotification]);
+  }, [showNotification]);
 
   // Handle approval
   const handleApprove = useCallback(async () => {
@@ -428,7 +428,7 @@ export default function PayrollPage() {
       console.log('✅ Starting approval process for submission:', selectedSubmission.id);
 
       // Step 1: Update submission status to 'approved'
-      const { error: updateError } = await dataClient
+      const { error: updateError } = await supabase
         .from('payroll_submissions')
         .update({
           status: 'approved',
@@ -442,7 +442,7 @@ export default function PayrollPage() {
       }
 
       // Step 2: Get entries and insert into payments
-      const { data: entries, error: entriesError } = await dataClient
+      const { data: entries, error: entriesError } = await supabase
         .from('payroll_entries')
         .select(`
           *,
@@ -465,7 +465,7 @@ export default function PayrollPage() {
         payment_method: 'Direct Deposit'
       }));
 
-      const { error: paymentsError } = await dataClient
+      const { error: paymentsError } = await supabase
         .from('payments')
         .insert(paymentRecords);
 
@@ -474,7 +474,7 @@ export default function PayrollPage() {
       }
 
       // Step 4: Update submission to 'posted'
-      const { error: postError } = await dataClient
+      const { error: postError } = await supabase
         .from('payroll_submissions')
         .update({ status: 'posted' })
         .eq('id', selectedSubmission.id);
@@ -484,7 +484,7 @@ export default function PayrollPage() {
       }
 
       // Step 5: Create audit log
-      const { error: auditError } = await dataClient
+      const { error: auditError } = await supabase
         .from('payroll_approvals')
         .insert({
           submission_id: selectedSubmission.id,
@@ -513,7 +513,7 @@ export default function PayrollPage() {
     } finally {
       setIsApproving(false);
     }
-  }, [selectedSubmission, userId, dataClient, organizationId, showNotification, loadPendingSubmissions]);
+  }, [selectedSubmission, userId, organizationId, showNotification, loadPendingSubmissions]);
 
   // Handle rejection
   const handleReject = useCallback(async () => {
@@ -524,7 +524,7 @@ export default function PayrollPage() {
     try {
       console.log('🚫 Rejecting submission:', selectedSubmission.id);
 
-      const { error: updateError } = await dataClient
+      const { error: updateError } = await supabase
         .from('payroll_submissions')
         .update({
           status: 'rejected',
@@ -538,7 +538,7 @@ export default function PayrollPage() {
         throw new Error(`Failed to reject submission: ${updateError.message}`);
       }
 
-      const { error: auditError } = await dataClient
+      const { error: auditError } = await supabase
         .from('payroll_approvals')
         .insert({
           submission_id: selectedSubmission.id,
@@ -568,7 +568,7 @@ export default function PayrollPage() {
     } finally {
       setIsApproving(false);
     }
-  }, [selectedSubmission, userId, rejectionNote, dataClient, organizationId, showNotification, loadPendingSubmissions]);
+  }, [selectedSubmission, userId, rejectionNote, organizationId, showNotification, loadPendingSubmissions]);
 
   // Load approvals data
   useEffect(() => {
