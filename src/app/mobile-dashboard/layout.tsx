@@ -1,6 +1,6 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { X, Send, Sparkles, Mic, MicOff, Volume2, VolumeX } from 'lucide-react'
+import { X, Send, Sparkles, Mic, MicOff, Volume2, VolumeX, DollarSign } from 'lucide-react'
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -31,11 +31,15 @@ interface Message {
   timestamp: Date
 }
 
+interface LayoutProps {
+  children: React.ReactNode
+  userRole?: string
+}
+
 export default function MobileDashboardLayout({
   children,
-}: {
-  children: React.ReactNode
-}) {
+  userRole
+}: LayoutProps) {
   const [isChatOpen, setIsChatOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -357,6 +361,44 @@ export default function MobileDashboardLayout({
   return (
     <>
       {children}
+
+      {/* Super Admin Payroll Submission Button - Bottom Left */}
+      {userRole === 'super_admin' && (
+        <a
+          href="/payroll/submit-all"
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '24px',
+            padding: '16px 24px',
+            borderRadius: '12px',
+            background: `linear-gradient(135deg, ${BRAND_COLORS.success} 0%, #1E8449 100%)`,
+            border: 'none',
+            boxShadow: '0 8px 24px rgba(39, 174, 96, 0.4)',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            zIndex: 999,
+            transition: 'all 0.3s ease',
+            textDecoration: 'none',
+            color: 'white',
+            fontWeight: '600',
+            fontSize: '14px'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)'
+            e.currentTarget.style.boxShadow = '0 12px 32px rgba(39, 174, 96, 0.6)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)'
+            e.currentTarget.style.boxShadow = '0 8px 24px rgba(39, 174, 96, 0.4)'
+          }}
+        >
+          <DollarSign size={20} />
+          <span>Submit Payroll</span>
+        </a>
+      )}
 
       {/* AI CFO Floating Button */}
       {!isChatOpen && (
