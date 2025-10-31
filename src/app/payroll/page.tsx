@@ -40,6 +40,7 @@ import {
   LineChart as RechartsLineChart,
 } from "recharts";
 import { getAuthClient, getDataClient, syncDataClientSession } from '@/lib/supabase/client';
+import { supabase } from "@/lib/supabaseClient";
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -582,7 +583,7 @@ export default function PayrollPage() {
 
     setIsLoading(true);
     try {
-      const { data, error } = await dataClient
+      const { data, error } = await supabase
         .from("payments")
         .select("*")
         .gte("date", startDate)
@@ -622,7 +623,7 @@ export default function PayrollPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [organizationId, viewMode, startDate, endDate, departmentFilter, searchTerm, dataClient, showNotification]);
+  }, [organizationId, viewMode, startDate, endDate, departmentFilter, searchTerm, showNotification]);
 
   useEffect(() => {
     if (viewMode === 'analytics') {
