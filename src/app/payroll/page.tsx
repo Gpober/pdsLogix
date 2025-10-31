@@ -39,8 +39,7 @@ import {
   BarChart as RechartsBarChart,
   LineChart as RechartsLineChart,
 } from "recharts";
-import { getAuthClient } from '@/lib/supabase/auth-client';
-import { getDataClient, syncDataClientSession } from '@/lib/supabase/client';
+import { getAuthClient, getDataClient, syncDataClientSession } from '@/lib/supabase/client';
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
