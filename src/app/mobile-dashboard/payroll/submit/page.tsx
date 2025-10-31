@@ -521,6 +521,142 @@ export default function MobilePayrollSubmit() {
     }
   }, [selectedLocationId, userId, payDate, payrollGroup, periodStart, periodEnd, draftSubmissionId, rejectedSubmissionId, dataSupabase])
 
+  // ✅ NEW: Manual Save Draft (with user feedback)
+  async function handleSaveDraft() {
+    if (!selectedLocationId || !userId) return
+
+    const employeesWithData = employees.filter(emp => {
+      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
+      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
+      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
+      return false
+    })
+
+    if (employeesWithData.length === 0) {
+      showAlert('error', 'Please enter payroll data for at least one employee before saving')
+      return
+    }
+
+    setIsAutoSaving(true)
+    try {
+      // Get organization_id
+      const { data: locationData, error: locationError } = await dataSupabase
+        .from('locations')
+        .select('organization_id')
+        .eq('id', selectedLocationId)
+        .single()
+
+      if (locationError || !locationData?.organization_id) {
+        throw new Error('Failed to get organization ID')
+      }
+
+      const organizationId = locationData.organization_id
+      const totalAmount = employeesWithData.reduce((sum, emp) => sum + emp.amount, 0)
+
+      const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
+
+      if (existingSubmissionId) {
+        // UPDATE existing submission as draft
+        const { error: updateError } = await dataSupabase
+          .from('payroll_submissions')
+          .update({
+            status: 'draft',
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            rejected_by: null,
+            rejected_at: null,
+            rejection_note: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingSubmissionId)
+
+        if (updateError) throw updateError
+
+        // Delete old entries
+        await dataSupabase
+          .from('payroll_entries')
+          .delete()
+          .eq('submission_id', existingSubmissionId)
+
+        // Insert updated entries
+        const details = employeesWithData.map(emp => ({
+          organization_id: organizationId,
+          submission_id: existingSubmissionId,
+          employee_id: emp.id,
+          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'draft',
+        }))
+
+        const { error: detailsError } = await dataSupabase
+          .from('payroll_entries')
+          .insert(details)
+
+        if (detailsError) throw detailsError
+
+        setDraftSubmissionId(existingSubmissionId)
+        setRejectedSubmissionId(null)
+        setRejectionNote(null)
+
+      } else {
+        // CREATE new draft submission
+        const { data: submission, error: submissionError } = await dataSupabase
+          .from('payroll_submissions')
+          .insert({
+            organization_id: organizationId,
+            location_id: selectedLocationId,
+            pay_date: payDate,
+            payroll_group: payrollGroup,
+            period_start: periodStart,
+            period_end: periodEnd,
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            status: 'draft',
+          })
+          .select()
+          .single()
+
+        if (submissionError) throw submissionError
+
+        const details = employeesWithData.map(emp => ({
+          organization_id: organizationId,
+          submission_id: submission.id,
+          employee_id: emp.id,
+          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'draft',
+        }))
+
+        const { error: detailsError } = await dataSupabase
+          .from('payroll_entries')
+          .insert(details)
+
+        if (detailsError) throw detailsError
+
+        setDraftSubmissionId(submission.id)
+      }
+
+      setLastSavedAt(new Date())
+      showAlert('success', '💾 Draft saved successfully!')
+      
+    } catch (error: any) {
+      console.error('Save draft error:', error)
+      showAlert('error', error.message || 'Failed to save draft')
+    } finally {
+      setIsAutoSaving(false)
+    }
+  }
+
   // ✅ NEW: Trigger auto-save with debounce
   const triggerAutoSave = useCallback(() => {
     // Clear existing timeout
@@ -1687,7 +1823,7 @@ export default function MobilePayrollSubmit() {
             onClick={handleSaveEmployee}
             className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
           >
-            Save & Continue
+            ✓ Confirm
           </button>
         </div>
       </div>
@@ -2025,52 +2161,55 @@ export default function MobilePayrollSubmit() {
       {selectedLocationId && (
         <div className="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent p-4 border-t border-white/10">
           <div className="max-w-lg mx-auto space-y-2">
-            {/* ✅ AUTO-SAVE STATUS INDICATOR (replaces Save Draft button) */}
-            {(isAutoSaving || lastSavedAt) && (
-              <div className="flex items-center justify-center gap-2 text-xs text-blue-200 mb-2">
-                {isAutoSaving ? (
-                  <>
-                    <RefreshCw className="h-3 w-3 animate-spin" />
-                    <span>Saving draft...</span>
-                  </>
-                ) : lastSavedAt ? (
-                  <>
-                    <CheckCircle2 className="h-3 w-3 text-green-300" />
-                    <span className="text-green-300">
-                      Draft saved {formatTimeAgo(lastSavedAt)}
-                    </span>
-                  </>
-                ) : null}
-              </div>
-            )}
             
-            {/* Submit Button */}
-            <button
-              onClick={handleSubmit}
-              disabled={isSubmitting || totals.employees === 0 || submissionStatus === 'pending' || submissionStatus === 'approved'}
-              className="w-full bg-gradient-to-r from-blue-500 to-blue-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isSubmitting ? (
-                <span className="flex items-center justify-center gap-2">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  {rejectedSubmissionId ? 'Resubmitting...' : 'Submitting...'}
-                </span>
-              ) : submissionStatus === 'pending' ? (
-                <span className="flex items-center justify-center gap-2">
-                  <CheckCircle2 className="w-5 h-5" />
-                  Already Submitted - Pending Approval
-                </span>
-              ) : submissionStatus === 'approved' ? (
-                <span className="flex items-center justify-center gap-2">
-                  <CheckCircle2 className="w-5 h-5" />
-                  Approved ✓
-                </span>
-              ) : (
-                <span>
-                  {rejectedSubmissionId ? '🔄 Resubmit' : draftSubmissionId ? '📋 Submit Draft' : '✅ Submit Payroll'} ({totals.employees} employees)
-                </span>
-              )}
-            </button>
+            {/* Action Buttons: Save Draft + Submit */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Save Draft Button */}
+              <button
+                onClick={handleSaveDraft}
+                disabled={isAutoSaving || totals.employees === 0 || submissionStatus === 'pending' || submissionStatus === 'approved'}
+                className="bg-white/10 hover:bg-white/20 border border-white/30 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAutoSaving ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    Saving...
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2">
+                    💾 Save Draft
+                  </span>
+                )}
+              </button>
+
+              {/* Submit Button */}
+              <button
+                onClick={handleSubmit}
+                disabled={isSubmitting || totals.employees === 0 || submissionStatus === 'pending' || submissionStatus === 'approved'}
+                className="bg-gradient-to-r from-blue-500 to-blue-600 disabled:from-gray-600 disabled:to-gray-700 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    {rejectedSubmissionId ? 'Resubmitting...' : 'Submitting...'}
+                  </span>
+                ) : submissionStatus === 'pending' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-5 h-5" />
+                    Submitted
+                  </span>
+                ) : submissionStatus === 'approved' ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-5 h-5" />
+                    Approved
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2">
+                    {rejectedSubmissionId ? '🔄 Resubmit' : '✅ Submit'}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
