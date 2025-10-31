@@ -126,11 +126,11 @@ export default function MobileDashboardLanding() {
       padding: '20px',
       paddingTop: '60px'
     }}>
-      {/* HUGE LOGO - Replaces "I AM CFO" text */}
+      {/* HUGE LOGO - Sits right on top with no extra space */}
       <div style={{
         display: 'flex',
         justifyContent: 'center',
-        marginBottom: '48px'
+        marginBottom: '16px'
       }}>
         <img 
           src="/iamcfo-logo.jpg" 
@@ -138,12 +138,14 @@ export default function MobileDashboardLanding() {
           style={{
             height: '560px',
             width: 'auto',
-            objectFit: 'contain'
+            objectFit: 'contain',
+            objectPosition: 'center',
+            margin: '-80px 0 -80px 0' // Negative margins to trim white space
           }}
         />
       </div>
 
-      {/* Subtitle only - no more "I AM CFO" text */}
+      {/* Subtitle - sits right below logo */}
       <div style={{
         marginBottom: '40px',
         textAlign: 'center'
