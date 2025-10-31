@@ -106,7 +106,7 @@ export default function MobileDashboardLanding() {
   // Add "Submit All Payroll" card for super_admin
   if (userRole === 'super_admin') {
     navCards.push({
-      title: 'Submit All Payroll',
+      title: 'Submit Payroll',
       description: 'Submit payroll for all locations',
       icon: <CheckSquare size={28} />,
       path: '/mobile-dashboard/payroll/submit/submit-all',
