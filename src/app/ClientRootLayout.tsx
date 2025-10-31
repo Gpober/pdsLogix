@@ -94,8 +94,10 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
           return
         }
         
-        // Check if already transferred this page load
-        if ((window as any).__sessionTransferred) {
+        // Check if already transferred using sessionStorage (persists on mobile!)
+        const sessionTransferred = sessionStorage.getItem('__sessionTransferred')
+        if (sessionTransferred) {
+          console.log('🔒 Session already transferred, skipping')
           setReady(true)
           return
         }
@@ -109,11 +111,13 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
           const { data: { session } } = await authClient.auth.getSession()
           
           if (session) {
+            console.log('✅ Valid session found, no transfer needed')
             setReady(true)
             return
           }
           
           // No session - redirect to platform login
+          console.log('⚠️ No session, redirecting to login')
           window.location.href = `https://iamcfo.com/login?returnTo=${encodeURIComponent(window.location.origin + window.location.pathname)}`
           return
         }
@@ -124,15 +128,31 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         const refreshToken = params.get('refresh_token')
         const isSuperAdmin = params.get('super_admin') === 'true'
 
+        console.log('📋 Hash params:', { 
+          hasAccessToken: !!accessToken, 
+          hasRefreshToken: !!refreshToken, 
+          isSuperAdmin 
+        })
+
         if (!accessToken || !refreshToken) {
+          console.log('⚠️ No tokens in hash')
           setReady(true)
           return
         }
 
-        // Mark as transferred
-        (window as any).__sessionTransferred = true
+        console.log('🔐 Processing session transfer from hash' + (isSuperAdmin ? ' (SUPER ADMIN)' : ''))
 
-        // Clean URL FIRST
+        // Mark as transferred FIRST (before any async operations)
+        sessionStorage.setItem('__sessionTransferred', 'true')
+        sessionStorage.setItem('__sessionTransferredAt', Date.now().toString())
+        
+        // Store super admin flag IMMEDIATELY
+        if (isSuperAdmin) {
+          sessionStorage.setItem('is_super_admin', 'true')
+          console.log('👑 Super admin flag set EARLY')
+        }
+
+        // Clean URL IMMEDIATELY
         window.history.replaceState({}, '', window.location.pathname + window.location.search)
 
         // Get auth client (singleton)
@@ -145,24 +165,32 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         })
 
         if (error) {
+          console.error('❌ Session transfer error:', error)
+          // Clear the flag so it can retry
+          sessionStorage.removeItem('__sessionTransferred')
+          sessionStorage.removeItem('__sessionTransferredAt')
           setReady(true)
           return
         }
 
         if (!data.session) {
+          console.error('❌ No session data returned')
+          sessionStorage.removeItem('__sessionTransferred')
+          sessionStorage.removeItem('__sessionTransferredAt')
           setReady(true)
           return
         }
 
         // Session set successfully
-        if (isSuperAdmin) {
-          sessionStorage.setItem('is_super_admin', 'true')
-        }
+        console.log('✅ Session transferred successfully')
         
         setReady(true)
 
       } catch (error) {
-        console.error('Session transfer error:', error)
+        console.error('❌ Session transfer error:', error)
+        // Clear flag on error so it can retry
+        sessionStorage.removeItem('__sessionTransferred')
+        sessionStorage.removeItem('__sessionTransferredAt')
         setReady(true)
       }
     }
