@@ -25,17 +25,7 @@ import Image from "next/image"
 import LoadingScreenSpinner from './LoadingScreen'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { handlePkceCallbackFromUrl } from '@/lib/supabase/pkce-callback-handler'
-import { createClient } from '@/lib/supabase/client'
-
-// 🚨 CAPTURE HASH IMMEDIATELY
-let CAPTURED_HASH = ''
-let HASH_CAPTURED = false
-
-if (typeof window !== 'undefined' && !HASH_CAPTURED) {
-  CAPTURED_HASH = window.location.hash.substring(1)
-  HASH_CAPTURED = true
-  console.log('🔒 CAPTURED HASH ON LOAD:', CAPTURED_HASH.substring(0, 100))
-}
+import { getAuthClient } from '@/lib/supabase/auth-client'
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -91,97 +81,136 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
   const pathname = usePathname()
   const router = useRouter()
-  const supabase = createClient()
 
   useEffect(() => {
     async function handleSessionTransfer() {
-      const justTransferred = sessionStorage.getItem('session_transferred')
-      
-      if (justTransferred) {
-        sessionStorage.removeItem('session_transferred')
-        CAPTURED_HASH = ''
-        setReady(true)
-        return
-      }
-
       try {
-        if (!CAPTURED_HASH) {
+        console.log('🔍 SessionTransferHandler: Starting...')
+        
+        // Check if already transferred this page load
+        if ((window as any).__sessionTransferred) {
+          console.log('✅ Session already transferred')
           setReady(true)
           return
         }
 
-        const params = new URLSearchParams(CAPTURED_HASH)
+        // Get hash from URL
+        const hash = window.location.hash.substring(1)
+        
+        if (!hash) {
+          console.log('✅ No hash in URL')
+          setReady(true)
+          return
+        }
+
+        console.log('📍 Found hash, parsing tokens...')
+
+        // Parse hash parameters
+        const params = new URLSearchParams(hash)
         const accessToken = params.get('access_token')
         const refreshToken = params.get('refresh_token')
         const isSuperAdmin = params.get('super_admin') === 'true'
 
-        if (accessToken && refreshToken) {
-          const { data, error } = await supabase.auth.setSession({
-            access_token: accessToken,
-            refresh_token: refreshToken,
-          })
-
-          if (error) {
-            console.error('Session set error:', error)
-            setReady(true)
-            return
-          }
-
-          window.history.replaceState({}, document.title, window.location.pathname)
-
-          const currentSubdomain = window.location.hostname.split('.')[0]
-          
-          if (isSuperAdmin) {
-            sessionStorage.setItem('session_transferred', 'true')
-            sessionStorage.setItem('super_admin_access', 'true')
-            
-            if (pathname === '/login') {
-              window.location.href = '/'
-            } else {
-              window.location.reload()
-            }
-            return
-          }
-
-          const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('organization_id, organizations(subdomain)')
-            .eq('id', data.user.id)
-            .single()
-
-          if (userError) {
-            setReady(true)
-            return
-          }
-
-          const userSubdomain = (userData as any)?.organizations?.subdomain
-
-          if (userSubdomain === currentSubdomain) {
-            sessionStorage.setItem('session_transferred', 'true')
-            
-            if (pathname === '/login') {
-              window.location.href = '/'
-            } else {
-              window.location.reload()
-            }
-            return
-          }
-
-          alert('You do not have access to this organization')
-          await supabase.auth.signOut()
-          window.location.href = 'https://iamcfo.com/login'
+        if (!accessToken || !refreshToken) {
+          console.log('⚠️ No tokens in hash')
+          setReady(true)
           return
         }
 
-        setReady(true)
+        console.log('🔑 Found tokens:', {
+          accessTokenLength: accessToken.length,
+          hasRefreshToken: !!refreshToken,
+          isSuperAdmin
+        })
+
+        // Mark as transferred
+        (window as any).__sessionTransferred = true
+
+        // Clean URL FIRST
+        console.log('🧹 Cleaning URL...')
+        window.history.replaceState({}, '', window.location.pathname + window.location.search)
+
+        // Get auth client (singleton)
+        const authClient = getAuthClient()
+
+        // Set session
+        console.log('🔄 Setting session...')
+        const { data, error } = await authClient.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        })
+
+        if (error) {
+          console.error('❌ Session error:', error)
+          setReady(true)
+          return
+        }
+
+        if (!data.session) {
+          console.error('❌ No session returned')
+          setReady(true)
+          return
+        }
+
+        console.log('✅ Session set:', {
+          userId: data.user?.id,
+          email: data.user?.email
+        })
+
+        // Store super admin flag
+        if (isSuperAdmin) {
+          console.log('🔐 Super admin access')
+          sessionStorage.setItem('is_super_admin', 'true')
+          
+          console.log('🔄 Reloading...')
+          window.location.reload()
+          return
+        }
+
+        // Regular user - verify organization access
+        const currentSubdomain = window.location.hostname.split('.')[0]
+        console.log('🌐 Current subdomain:', currentSubdomain)
+
+        // Import data client to check org
+        const { getDataClient } = await import('@/lib/supabase/client')
+        const dataClient = getDataClient()
+
+        const { data: userData, error: userError } = await dataClient
+          .from('profiles')
+          .select('organization_id, organizations(subdomain)')
+          .eq('id', data.user.id)
+          .single()
+
+        if (userError) {
+          console.error('❌ User fetch error:', userError)
+          setReady(true)
+          return
+        }
+
+        const userSubdomain = (userData as any)?.organizations?.subdomain
+        console.log('👤 User subdomain:', userSubdomain)
+
+        if (userSubdomain === currentSubdomain) {
+          console.log('✅ Access granted')
+          console.log('🔄 Reloading...')
+          window.location.reload()
+          return
+        }
+
+        // Access denied
+        console.error('❌ Access denied')
+        alert('You do not have access to this organization')
+        await authClient.auth.signOut()
+        window.location.href = 'https://iamcfo.com/login'
+
       } catch (error) {
-        console.error('Session transfer error:', error)
+        console.error('💥 Transfer error:', error)
         setReady(true)
       }
     }
 
     handleSessionTransfer()
-  }, [pathname, router, supabase])
+  }, []) // Empty deps - only run once
 
   if (!ready) {
     return (
