@@ -87,6 +87,18 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
       try {
         console.log('🔍 SessionTransferHandler: Starting...')
         
+        // ✅ CRITICAL: Only run on CLIENT subdomains, NOT on platform (iamcfo.com)
+        const hostname = window.location.hostname
+        const isPlatform = hostname === 'iamcfo.com' || hostname === 'localhost' || hostname.startsWith('localhost:')
+        
+        if (isPlatform) {
+          console.log('✅ Platform domain - skipping session transfer')
+          setReady(true)
+          return
+        }
+        
+        console.log('🌐 Client subdomain detected:', hostname)
+        
         // Check if already transferred this page load
         if ((window as any).__sessionTransferred) {
           console.log('✅ Session already transferred')
@@ -98,8 +110,8 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         const hash = window.location.hash.substring(1)
         
         if (!hash) {
-          console.log('✅ No hash in URL')
-          setReady(true)
+          console.log('⚠️ No hash in URL - redirecting to platform login')
+          window.location.href = `https://iamcfo.com/login?returnTo=${encodeURIComponent(window.location.origin + window.location.pathname)}`
           return
         }
 
