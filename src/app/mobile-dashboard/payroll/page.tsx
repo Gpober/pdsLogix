@@ -257,15 +257,42 @@ export default function PayrollDashboard() {
   useEffect(() => {
     const checkAuth = async () => {
       console.log('🔍 Starting auth check...');
-      const { data: { session }, error: authError } = await authClient.auth.getSession();
+      
+      // ✅ FIX: Check Platform Supabase session first
+      let session = null;
+      let sessionSource = '';
+      
+      const { data: { session: platformSession }, error: platformAuthError } = await authClient.auth.getSession();
+      
+      if (platformSession?.user) {
+        console.log('✅ Found session in Platform Supabase');
+        session = platformSession;
+        sessionSource = 'platform';
+      } else {
+        console.log('⚠️ No session in Platform Supabase, checking Client Supabase...');
+        
+        // ✅ FIX: Also check Client Supabase session
+        const { data: { session: clientSession }, error: clientAuthError } = await dataClient.auth.getSession();
+        
+        if (clientSession?.user) {
+          console.log('✅ Found session in Client Supabase');
+          session = clientSession;
+          sessionSource = 'client';
+        }
+      }
 
-      if (authError || !session?.user) {
-        console.log('❌ Auth error or no user:', authError);
+      if (!session?.user) {
+        console.log('❌ No session found in either Platform or Client Supabase');
         router.push('/login');
         return;
       }
 
-      await syncDataClientSession(session);
+      console.log(`✅ Using session from: ${sessionSource}`);
+
+      // ✅ Sync session to client if it came from platform
+      if (sessionSource === 'platform') {
+        await syncDataClientSession(session);
+      }
 
       const user = session.user;
 
