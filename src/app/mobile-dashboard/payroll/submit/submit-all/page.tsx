@@ -254,18 +254,19 @@ export default function MobilePayrollSubmit() {
           .eq('id', session.user.id)
           .single()
 
-        console.log('User role:', userData?.role)
+        console.log('User data:', userData)
 
         let locations: Location[] = []
 
-        // If super_admin, load ALL locations in the organization
-        if (userData?.role === 'super_admin' && userData?.organization_id) {
+        // If super_admin, load ALL locations (no org filter)
+        if (userData?.role === 'super_admin') {
           console.log('Super admin detected, loading all locations')
           const { data: allLocations, error: allLocError } = await dataSupabase
             .from('locations')
             .select('id, name')
-            .eq('organization_id', userData.organization_id)
             .order('name')
+
+          console.log('All locations query result:', { allLocations, allLocError })
 
           if (allLocError) {
             console.error('Error loading all locations:', allLocError)
