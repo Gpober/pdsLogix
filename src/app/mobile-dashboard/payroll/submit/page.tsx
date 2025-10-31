@@ -283,19 +283,13 @@ export default function MobilePayrollSubmit() {
   }, [authClient, dataSupabase, router])
 
   // Check for draft or rejected submissions when location/payDate/payrollGroup changes
-  const hasLoadedRef = useRef<string | null>(null)
-  
   const loadExistingSubmission = useCallback(async (locationId: string, currentEmployees: EmployeeRow[]) => {
-    const loadKey = `${locationId}-${payDate}-${payrollGroup}`
-    
-    // Prevent loading twice for the same combination
-    if (hasLoadedRef.current === loadKey) {
-      console.log('⏭️ Skipping duplicate load for:', loadKey)
-      return
-    }
-    
-    console.log('🔍 loadExistingSubmission called:', { locationId, payDate, employees: currentEmployees.length })
-    hasLoadedRef.current = loadKey
+    console.log('🔍 loadExistingSubmission called:', { 
+      locationId, 
+      payDate, 
+      payrollGroup,
+      employees: currentEmployees.length 
+    })
     
     try {
       // Check for ANY existing submission (not just draft/rejected)
@@ -312,7 +306,10 @@ export default function MobilePayrollSubmit() {
         throw error
       }
 
-      console.log('📦 Found submissions:', submissions)
+      console.log('📦 Query complete. Found submissions:', submissions?.length || 0)
+      if (submissions && submissions.length > 0) {
+        console.log('📦 Submission details:', JSON.stringify(submissions[0], null, 2))
+      }
 
       if (submissions && submissions.length > 0) {
         const submission = submissions[0]
@@ -341,23 +338,28 @@ export default function MobilePayrollSubmit() {
 
         // Load employee data from entries
         const entries = submission.payroll_entries || []
-        console.log('📝 Loading entries from database:', entries.length, 'entries')
+        console.log('📝 Payroll entries found:', entries.length)
+        
+        if (entries.length > 0) {
+          console.log('📝 First entry structure:', JSON.stringify(entries[0], null, 2))
+        }
+        
         const updatedEmployees = currentEmployees.map(emp => {
           const entry = entries.find((e: any) => e.employee_id === emp.id)
           if (entry) {
             console.log(`  ✓ Loading data for ${emp.first_name} ${emp.last_name}:`, {
               hours: entry.hours,
               units: entry.units,
-              count: entry.count,
-              adjustment: entry.adjustment,
+              fixed_count: entry.fixed_count,
+              adjustment_amount: entry.adjustment_amount,
               amount: entry.amount
             })
             return {
               ...emp,
               hours: entry.hours != null ? entry.hours.toString() : '',
               units: entry.units != null ? entry.units.toString() : '',
-              count: entry.count != null ? entry.count.toString() : '1',
-              adjustment: entry.adjustment != null ? entry.adjustment.toString() : '0',
+              count: entry.fixed_count != null ? entry.fixed_count.toString() : '1',
+              adjustment: entry.adjustment_amount != null ? entry.adjustment_amount.toString() : '0',
               notes: entry.notes || '',
               amount: entry.amount || 0,
             }
@@ -365,7 +367,8 @@ export default function MobilePayrollSubmit() {
           return emp
         })
         
-        console.log('✅ Updated employees with loaded data')
+        console.log('✅ Updated employees with loaded data. Employees with data:', 
+          updatedEmployees.filter(e => e.hours || e.units || parseFloat(e.count || '0') > 1).length)
         setEmployees(updatedEmployees)
       } else {
         console.log('ℹ️ No existing submission found - starting fresh')
@@ -382,15 +385,20 @@ export default function MobilePayrollSubmit() {
   }, [payDate, payrollGroup, dataSupabase])
 
   useEffect(() => {
+    console.log('🎯 useEffect triggered - checking conditions:', {
+      selectedLocationId: !!selectedLocationId,
+      payDate: !!payDate,
+      payrollGroup,
+      employeesLength: employees.length
+    })
+    
     if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
+      console.log('✅ All conditions met - calling loadExistingSubmission')
       loadExistingSubmission(selectedLocationId, employees)
+    } else {
+      console.log('⏸️ Not loading - conditions not met')
     }
   }, [selectedLocationId, payDate, payrollGroup, employees.length, loadExistingSubmission])
-  
-  // Reset the load tracking when location/date changes
-  useEffect(() => {
-    hasLoadedRef.current = null
-  }, [selectedLocationId, payDate])
 
   async function loadEmployees(locationId: string) {
     try {
@@ -487,8 +495,8 @@ export default function MobilePayrollSubmit() {
           employee_id: emp.id,
           hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
           units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          fixed_count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
           status: 'draft',
@@ -531,8 +539,8 @@ export default function MobilePayrollSubmit() {
           employee_id: emp.id,
           hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
           units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          fixed_count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
           status: 'draft',
@@ -622,8 +630,8 @@ export default function MobilePayrollSubmit() {
           employee_id: emp.id,
           hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
           units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          fixed_count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
           status: 'draft',
@@ -666,8 +674,8 @@ export default function MobilePayrollSubmit() {
           employee_id: emp.id,
           hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
           units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          fixed_count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
           status: 'draft',
@@ -1097,8 +1105,8 @@ export default function MobilePayrollSubmit() {
         employee_id: emp.id,
         hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
         units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+        fixed_count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+        adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
         amount: emp.amount,
         notes: emp.notes || null,
         status: 'pending',
@@ -1144,8 +1152,8 @@ export default function MobilePayrollSubmit() {
         employee_id: emp.id,
         hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
         units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+        fixed_count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+        adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
         amount: emp.amount,
         notes: emp.notes || null,
         status: 'pending',
