@@ -287,7 +287,7 @@ export default function MobilePayrollSubmit() {
     if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
       loadExistingSubmission(selectedLocationId)
     }
-  }, [selectedLocationId, payDate, payrollGroup])
+  }, [selectedLocationId, payDate, payrollGroup, employees.length]) // ← Added employees.length to dependencies!
 
   async function loadEmployees(locationId: string) {
     try {
@@ -311,6 +311,10 @@ export default function MobilePayrollSubmit() {
       }))
 
       setEmployees(employeeRows)
+      
+      // ✅ Load draft/rejected submission AFTER employees are loaded
+      await loadExistingSubmission(locationId)
+      
     } catch (error) {
       console.error('Error loading employees:', error)
       showAlert('error', 'Failed to load employees')
