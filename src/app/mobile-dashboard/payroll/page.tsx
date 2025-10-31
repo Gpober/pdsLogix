@@ -23,8 +23,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { getAuthClient } from '@/lib/supabase/client';
-import { getDataClient, syncDataClientSession } from '@/lib/supabase/client';
+import {getAuthClient, getDataClient, syncDataClientSession } from '@/lib/supabase/client';
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
