@@ -19,6 +19,7 @@ type Employee = {
   hourly_rate: number | null
   piece_rate: number | null
   fixed_pay: number | null
+  location_id: string | null // Added for location assignment
 }
 
 type EmployeeRow = Employee & {
@@ -1289,6 +1290,7 @@ export default function MobilePayrollSubmit() {
           hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
           piece_rate: editingEmployee.compensation_type === 'production' ? editingEmployee.piece_rate : null,
           fixed_pay: editingEmployee.compensation_type === 'fixed' ? editingEmployee.fixed_pay : null,
+          location_id: editingEmployee.location_id, // Update location assignment
         })
         .eq('id', editingEmployee.id)
 
@@ -1482,6 +1484,28 @@ export default function MobilePayrollSubmit() {
                 <option value="production" className="bg-slate-900">Production</option>
                 <option value="fixed" className="bg-slate-900">Fixed Pay</option>
               </select>
+            </div>
+
+            <div>
+              <label className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
+                <MapPin size={16} />
+                Location Assignment
+              </label>
+              <select
+                value={editingEmployee.location_id || ''}
+                onChange={(e) => setEditingEmployee({ ...editingEmployee, location_id: e.target.value || null })}
+                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
+              >
+                <option value="" className="bg-slate-900">No Location Assigned</option>
+                {availableLocations.map((loc) => (
+                  <option key={loc.id} value={loc.id} className="bg-slate-900">
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-blue-300/70 text-xs mt-2">
+                Employee will only appear in the selected location's payroll submission
+              </p>
             </div>
 
             {editingEmployee.compensation_type === 'hourly' ? (
