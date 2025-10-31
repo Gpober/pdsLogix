@@ -283,45 +283,8 @@ export default function MobilePayrollSubmit() {
   }, [authClient, dataSupabase, router])
 
   // Check for draft or rejected submissions when location/payDate/payrollGroup changes
-  useEffect(() => {
-    if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
-      loadExistingSubmission(selectedLocationId)
-    }
-  }, [selectedLocationId, payDate, payrollGroup, employees.length]) // ← Added employees.length to dependencies!
-
-  async function loadEmployees(locationId: string) {
-    try {
-      const { data, error } = await dataSupabase
-        .from('employees')
-        .select('*')
-        .eq('location_id', locationId)
-        .eq('is_active', true)
-        .order('first_name')
-
-      if (error) throw error
-
-      const employeeRows: EmployeeRow[] = (data || []).map((emp: Employee) => ({
-        ...emp,
-        hours: '',
-        units: '',
-        count: '1',
-        adjustment: '0',
-        notes: '',
-        amount: 0,
-      }))
-
-      setEmployees(employeeRows)
-      
-      // ✅ Load draft/rejected submission AFTER employees are loaded
-      await loadExistingSubmission(locationId)
-      
-    } catch (error) {
-      console.error('Error loading employees:', error)
-      showAlert('error', 'Failed to load employees')
-    }
-  }
-
-  async function loadExistingSubmission(locationId: string) {
+  const loadExistingSubmission = useCallback(async (locationId: string) => {
+    console.log('🔍 loadExistingSubmission called:', { locationId, payDate, employees: employees.length })
     try {
       // Check for ANY existing submission (not just draft/rejected)
       const { data: submissions, error } = await dataSupabase
@@ -332,10 +295,16 @@ export default function MobilePayrollSubmit() {
         .order('created_at', { ascending: false })
         .limit(1)
 
-      if (error) throw error
+      if (error) {
+        console.error('❌ Error querying submissions:', error)
+        throw error
+      }
+
+      console.log('📦 Found submissions:', submissions)
 
       if (submissions && submissions.length > 0) {
         const submission = submissions[0]
+        console.log('✅ Loading submission:', submission.status, submission.id)
         
         setSubmissionStatus(submission.status)
         setSubmittedAt(submission.submitted_at)
@@ -360,15 +329,23 @@ export default function MobilePayrollSubmit() {
 
         // Load employee data from entries
         const entries = submission.payroll_entries || []
+        console.log('📝 Loading entries from database:', entries.length, 'entries')
         const updatedEmployees = employees.map(emp => {
           const entry = entries.find((e: any) => e.employee_id === emp.id)
           if (entry) {
+            console.log(`  ✓ Loading data for ${emp.first_name} ${emp.last_name}:`, {
+              hours: entry.hours,
+              units: entry.units,
+              count: entry.count,
+              adjustment: entry.adjustment,
+              amount: entry.amount
+            })
             return {
               ...emp,
-              hours: entry.hours?.toString() || '',
-              units: entry.units?.toString() || '',
-              count: entry.count?.toString() || '1',
-              adjustment: entry.adjustment?.toString() || '0',
+              hours: entry.hours != null ? entry.hours.toString() : '',
+              units: entry.units != null ? entry.units.toString() : '',
+              count: entry.count != null ? entry.count.toString() : '1',
+              adjustment: entry.adjustment != null ? entry.adjustment.toString() : '0',
               notes: entry.notes || '',
               amount: entry.amount || 0,
             }
@@ -376,8 +353,10 @@ export default function MobilePayrollSubmit() {
           return emp
         })
         
+        console.log('✅ Updated employees with loaded data')
         setEmployees(updatedEmployees)
       } else {
+        console.log('ℹ️ No existing submission found - starting fresh')
         setSubmissionStatus('none')
         setSubmittedAt(null)
         setSubmittedBy(null)
@@ -386,7 +365,43 @@ export default function MobilePayrollSubmit() {
         setRejectionNote(null)
       }
     } catch (error) {
-      console.error('Error loading submission:', error)
+      console.error('❌ Error loading submission:', error)
+    }
+  }, [payDate, employees, dataSupabase])
+
+  useEffect(() => {
+    if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
+      loadExistingSubmission(selectedLocationId)
+    }
+  }, [selectedLocationId, payDate, payrollGroup, employees.length, loadExistingSubmission])
+
+  async function loadEmployees(locationId: string) {
+    try {
+      const { data, error } = await dataSupabase
+        .from('employees')
+        .select('*')
+        .eq('location_id', locationId)
+        .eq('is_active', true)
+        .order('first_name')
+
+      if (error) throw error
+
+      const employeeRows: EmployeeRow[] = (data || []).map((emp: Employee) => ({
+        ...emp,
+        hours: '',
+        units: '',
+        count: '1',
+        adjustment: '0',
+        notes: '',
+        amount: 0,
+      }))
+
+      setEmployees(employeeRows)
+      // ✅ Don't call loadExistingSubmission here - the useEffect will handle it
+      
+    } catch (error) {
+      console.error('Error loading employees:', error)
+      showAlert('error', 'Failed to load employees')
     }
   }
 
