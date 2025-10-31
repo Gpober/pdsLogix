@@ -25,7 +25,7 @@ import Image from "next/image"
 import LoadingScreenSpinner from './LoadingScreen'
 import { useAuth } from '@/lib/hooks/useAuth'
 import { handlePkceCallbackFromUrl } from '@/lib/supabase/pkce-callback-handler'
-import { getAuthClient } from '@/lib/supabase/auth-client'
+import { getAuthClient } from '@/lib/supabase/client'
 
 const inter = Inter({ subsets: ["latin"] })
 
