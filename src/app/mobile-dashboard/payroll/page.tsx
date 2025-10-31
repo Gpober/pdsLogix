@@ -493,48 +493,57 @@ export default function PayrollDashboard() {
 
   // ✅ FIXED: Fetch organization_id early and include in submissionDetails
   const handleReviewSubmission = async (submission: PendingSubmission) => {
+    console.log('🔍 Opening submission for review:', submission);
     setSelectedSubmission(submission);
-    setRejectionNote(''); // ✅ NEW: Reset rejection note
+    setRejectionNote('');
 
-    // ✅ Step 1: Get organization_id from location FIRST
-    const { data: locationData, error: locationError } = await supabase
-      .from('locations')
-      .select('organization_id')
-      .eq('id', submission.location_id)
-      .single();
-
-    if (locationError || !locationData) {
-      console.error('Error fetching location:', locationError);
-      showNotification('Failed to load location details', 'error');
-      return;
-    }
-
-    console.log('🏢 Organization ID for submission:', locationData.organization_id);
-
-    // Step 2: Fetch payroll entries (names already in table!)
-    const { data: entries, error: entriesError } = await supabase
+    // Step 1: Fetch payroll entries
+    console.log('📥 Fetching entries for submission:', submission.id);
+    const { data: entries, error: entriesError, count } = await dataClient
       .from('payroll_entries')
-      .select('*')
+      .select('*', { count: 'exact' })
       .eq('submission_id', submission.id);
 
+    console.log('📊 Query result:', {
+      entriesCount: count,
+      entriesData: entries,
+      error: entriesError
+    });
+
     if (entriesError) {
-      console.error('Error fetching payroll entries:', entriesError);
-      showNotification('Failed to load submission details', 'error');
+      console.error('❌ Error fetching payroll entries:', entriesError);
+      showNotification(`Failed to load submission details: ${entriesError.message}`, 'error');
       return;
     }
 
-    // ✅ Names are already in payroll_entries - just format for display
-    const detailsWithNames: SubmissionDetail[] = (entries || []).map(entry => ({
-      employee_id: entry.employee_id,
-      employee_name: `${entry.employee_first_name} ${entry.employee_last_name}`,
-      hours: entry.hours,
-      units: entry.units,
-      amount: entry.amount,
-      notes: entry.notes,
-      organization_id: locationData.organization_id,
-    }));
+    if (!entries || entries.length === 0) {
+      console.warn('⚠️ No entries found for submission:', submission.id);
+      showNotification('This submission has no employee entries', 'error');
+      // Still show modal but with empty list
+      setSubmissionDetails([]);
+      setShowApprovalModal(true);
+      return;
+    }
 
-    console.log('✅ Submission details:', detailsWithNames);
+    // Format entries for display
+    const detailsWithNames: SubmissionDetail[] = entries.map(entry => {
+      console.log('👤 Processing entry:', entry);
+      return {
+        employee_id: entry.employee_id,
+        employee_name: `${entry.employee_first_name || 'Unknown'} ${entry.employee_last_name || ''}`.trim(),
+        hours: entry.hours,
+        units: entry.units,
+        amount: entry.amount,
+        notes: entry.notes,
+        organization_id: submission.location_id // Using location_id as fallback
+      };
+    });
+
+    console.log('✅ Processed submission details:', {
+      count: detailsWithNames.length,
+      details: detailsWithNames
+    });
+    
     setSubmissionDetails(detailsWithNames);
     setShowApprovalModal(true);
   };
