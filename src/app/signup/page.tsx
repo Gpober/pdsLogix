@@ -2,8 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAuthClient } from '@/lib/supabase/auth-client'
-import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
+import { getAuthClient, getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 
 export default function ClientSignupPage() {
   const [name, setName] = useState('')
