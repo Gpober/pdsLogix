@@ -189,7 +189,7 @@ export default function MobilePayrollSubmit() {
   const [isSyncingProduction, setIsSyncingProduction] = useState(false)
   const [showAddEmployee, setShowAddEmployee] = useState(false)
   
-  // ✅ NEW: Auto-save states (replacing manual draft button)
+  // ✅ Auto-save states
   const [draftSubmissionId, setDraftSubmissionId] = useState<string | null>(null)
   const [rejectedSubmissionId, setRejectedSubmissionId] = useState<string | null>(null)
   const [rejectionNote, setRejectionNote] = useState<string | null>(null)
@@ -282,12 +282,13 @@ export default function MobilePayrollSubmit() {
     checkSession()
   }, [authClient, dataSupabase, router])
 
-  // Check for draft or rejected submissions when location/payDate/payrollGroup changes
+  // ✅ FIXED: Check for draft/rejected submissions ONLY when pay date or payroll group changes
+  // Removed employees.length from dependencies to prevent race condition
   useEffect(() => {
     if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
       loadExistingSubmission(selectedLocationId)
     }
-  }, [selectedLocationId, payDate, payrollGroup, employees.length]) // ← Added employees.length to dependencies!
+  }, [selectedLocationId, payDate, payrollGroup]) // ← Removed employees.length!
 
   async function loadEmployees(locationId: string) {
     try {
@@ -313,7 +314,9 @@ export default function MobilePayrollSubmit() {
       setEmployees(employeeRows)
       
       // ✅ Load draft/rejected submission AFTER employees are loaded
-      await loadExistingSubmission(locationId)
+      if (payDate) {
+        await loadExistingSubmission(locationId)
+      }
       
     } catch (error) {
       console.error('Error loading employees:', error)
@@ -323,6 +326,8 @@ export default function MobilePayrollSubmit() {
 
   async function loadExistingSubmission(locationId: string) {
     try {
+      console.log('🔍 Loading existing submission for:', { locationId, payDate, payrollGroup })
+      
       // Check for ANY existing submission (not just draft/rejected)
       const { data: submissions, error } = await dataSupabase
         .from('payroll_submissions')
@@ -336,6 +341,7 @@ export default function MobilePayrollSubmit() {
 
       if (submissions && submissions.length > 0) {
         const submission = submissions[0]
+        console.log('✅ Found submission:', submission.status, submission.id)
         
         setSubmissionStatus(submission.status)
         setSubmittedAt(submission.submitted_at)
@@ -352,6 +358,7 @@ export default function MobilePayrollSubmit() {
           setRejectedSubmissionId(null)
           setRejectionNote(null)
           setLastSavedAt(new Date(submission.updated_at || submission.created_at))
+          console.log('📝 Draft loaded, ID:', submission.id)
         } else if (submission.status === 'pending' || submission.status === 'approved') {
           setDraftSubmissionId(null)
           setRejectedSubmissionId(null)
@@ -360,24 +367,28 @@ export default function MobilePayrollSubmit() {
 
         // Load employee data from entries
         const entries = submission.payroll_entries || []
-        const updatedEmployees = employees.map(emp => {
-          const entry = entries.find((e: any) => e.employee_id === emp.id)
-          if (entry) {
-            return {
-              ...emp,
-              hours: entry.hours?.toString() || '',
-              units: entry.units?.toString() || '',
-              count: entry.count?.toString() || '1',
-              adjustment: entry.adjustment?.toString() || '0',
-              notes: entry.notes || '',
-              amount: entry.amount || 0,
-            }
-          }
-          return emp
-        })
+        console.log('📊 Loading', entries.length, 'entries for', employees.length, 'employees')
         
-        setEmployees(updatedEmployees)
+        setEmployees(prevEmployees => {
+          return prevEmployees.map(emp => {
+            const entry = entries.find((e: any) => e.employee_id === emp.id)
+            if (entry) {
+              console.log('✅ Restored data for:', emp.first_name, emp.last_name, { hours: entry.hours, units: entry.units })
+              return {
+                ...emp,
+                hours: entry.hours?.toString() || '',
+                units: entry.units?.toString() || '',
+                count: entry.count?.toString() || '1',
+                adjustment: entry.adjustment?.toString() || '0',
+                notes: entry.notes || '',
+                amount: entry.amount || 0,
+              }
+            }
+            return emp
+          })
+        })
       } else {
+        console.log('ℹ️ No existing submission found')
         setSubmissionStatus('none')
         setSubmittedAt(null)
         setSubmittedBy(null)
@@ -390,7 +401,7 @@ export default function MobilePayrollSubmit() {
     }
   }
 
-  // ✅ NEW: Auto-save function (debounced)
+  // ✅ Auto-save function (debounced)
   const autoSaveDraft = useCallback(async (employeesData: EmployeeRow[]) => {
     if (!selectedLocationId || !userId) return
 
@@ -525,7 +536,7 @@ export default function MobilePayrollSubmit() {
     }
   }, [selectedLocationId, userId, payDate, payrollGroup, periodStart, periodEnd, draftSubmissionId, rejectedSubmissionId, dataSupabase])
 
-  // ✅ NEW: Manual Save Draft (with user feedback)
+  // ✅ Manual Save Draft (with user feedback)
   async function handleSaveDraft() {
     if (!selectedLocationId || !userId) return
 
@@ -661,7 +672,7 @@ export default function MobilePayrollSubmit() {
     }
   }
 
-  // ✅ NEW: Trigger auto-save with debounce
+  // ✅ Trigger auto-save with debounce
   const triggerAutoSave = useCallback(() => {
     // Clear existing timeout
     if (autoSaveTimeoutRef.current) {
@@ -698,1244 +709,1004 @@ export default function MobilePayrollSubmit() {
 
   const hasProductionEmployeesWithEmails = useMemo(() => {
     return filteredEmployees.some(
-      emp => emp.compensation_type === 'production' && Boolean(emp.email),
+      emp => emp.compensation_type === 'production' && emp.email
     )
   }, [filteredEmployees])
 
   const totals = useMemo(() => {
-    const employeesWithData = filteredEmployees.filter(emp => {
+    const employeesWithHours = filteredEmployees.filter(emp => {
       if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
       if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
       if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
       return false
     })
-
-    const totalHours = employeesWithData
-      .filter(emp => emp.compensation_type === 'hourly')
-      .reduce((sum, emp) => sum + parseFloat(emp.hours || '0'), 0)
-
-    const totalAmount = employeesWithData.reduce((sum, emp) => sum + emp.amount, 0)
-
+    const total = employeesWithHours.reduce((sum, emp) => sum + emp.amount, 0)
     return {
-      employees: employeesWithData.length,
-      totalHours,
-      totalAmount,
+      employees: employeesWithHours.length,
+      total,
     }
   }, [filteredEmployees])
 
-  const selectedEmployeeAdjustment = useMemo(() => {
-    return parseFloat(selectedEmployee?.adjustment || '0')
-  }, [selectedEmployee])
+  function calculateAmount(emp: Partial<EmployeeRow>): number {
+    const hours = parseFloat(emp.hours || '0')
+    const units = parseFloat(emp.units || '0')
+    const count = parseFloat(emp.count || '0')
+    const adjustment = parseFloat(emp.adjustment || '0')
 
-  function handlePayDateChange(newPayDate: string) {
-    setPayDate(newPayDate)
-    const info = calculatePayrollInfo(newPayDate)
-    setPayrollGroup(info.payrollGroup)
-    setPeriodStart(info.periodStart)
-    setPeriodEnd(info.periodEnd)
+    if (emp.compensation_type === 'hourly') {
+      return hours * (emp.hourly_rate || 0)
+    } else if (emp.compensation_type === 'production') {
+      return units * (emp.piece_rate || 0)
+    } else if (emp.compensation_type === 'fixed') {
+      return count * (emp.fixed_pay || 0) + adjustment
+    }
+    return 0
+  }
+
+  function handleEmployeeChange(employeeId: string, field: keyof EmployeeRow, value: string) {
+    setEmployees((prev) => {
+      const updated = prev.map((emp) => {
+        if (emp.id === employeeId) {
+          const updatedEmp = { ...emp, [field]: value }
+          updatedEmp.amount = calculateAmount(updatedEmp)
+          return updatedEmp
+        }
+        return emp
+      })
+      return updated
+    })
+    
+    // Trigger auto-save
+    triggerAutoSave()
   }
 
   function handleEmployeeSelect(employee: EmployeeRow) {
     setSelectedEmployee(employee)
   }
 
-  function handleInputChange(field: 'hours' | 'units' | 'count' | 'adjustment' | 'notes', value: string) {
-    if (!selectedEmployee) return
-
-    const updated = { ...selectedEmployee, [field]: value }
-
-    // Calculate amount based on compensation type
-    if (selectedEmployee.compensation_type === 'hourly') {
-      const hours = parseFloat(field === 'hours' ? value : updated.hours) || 0
-      updated.amount = hours * (selectedEmployee.hourly_rate || 0)
-    } else if (selectedEmployee.compensation_type === 'production') {
-      const units = parseFloat(field === 'units' ? value : updated.units) || 0
-      updated.amount = units * (selectedEmployee.piece_rate || 0)
-    } else if (selectedEmployee.compensation_type === 'fixed') {
-      const count = parseFloat(field === 'count' ? value : updated.count) || 0
-      const adjustment = parseFloat(field === 'adjustment' ? value : updated.adjustment) || 0
-      const baseAmount = count * (selectedEmployee.fixed_pay || 0)
-      updated.amount = baseAmount + adjustment
-    }
-
-    setSelectedEmployee(updated)
-  }
-
-  // ✅ MODIFIED: handleSaveEmployee now triggers auto-save
-  function handleSaveEmployee() {
-    if (!selectedEmployee) return
-
-    // Validate input based on compensation type
-    if (selectedEmployee.compensation_type === 'hourly' && parseFloat(selectedEmployee.hours || '0') <= 0) {
-      showAlert('error', 'Please enter hours worked')
-      return
-    }
-    if (selectedEmployee.compensation_type === 'production' && parseFloat(selectedEmployee.units || '0') <= 0) {
-      showAlert('error', 'Please enter units produced')
-      return
-    }
-    if (selectedEmployee.compensation_type === 'fixed' && parseFloat(selectedEmployee.count || '0') <= 0) {
-      showAlert('error', 'Please enter count (at least 1)')
-      return
-    }
-
-    const updatedEmployees = employees.map(emp =>
-      emp.id === selectedEmployee.id ? selectedEmployee : emp
-    )
-    setEmployees(updatedEmployees)
+  function closeEmployeeModal() {
     setSelectedEmployee(null)
-    
-    // ✅ Trigger auto-save after updating employee
-    triggerAutoSave()
   }
 
-  async function handleSyncConnecteam() {
-  if (!selectedLocationId) return
+  function handleTouchStart(e: React.TouchEvent, employeeId: string) {
+    const touch = e.touches[0]
+    setTouchStart({ x: touch.clientX, y: touch.clientY })
+    setSwipedEmployeeId(employeeId)
+    setTouchOffset(0)
+  }
 
-  setIsSyncingConnecteam(true)
-  try {
-    const employeeEmails = filteredEmployees
-      .filter(emp => emp.email && emp.compensation_type === 'hourly')
-      .map(emp => emp.email?.toLowerCase())
-      .filter(Boolean) as string[]
+  function handleTouchMove(e: React.TouchEvent) {
+    if (!touchStart) return
+    const touch = e.touches[0]
+    const deltaX = touchStart.x - touch.clientX
+    const deltaY = Math.abs(touchStart.y - touch.clientY)
+    
+    if (deltaY > 30) return
+    if (deltaX > 0 && deltaX < 150) {
+      setTouchOffset(-deltaX)
+    }
+  }
 
-    if (employeeEmails.length === 0) {
-      showAlert('error', 'No hourly employees with emails found for Connecteam sync')
+  function handleTouchEnd() {
+    if (Math.abs(touchOffset) < 75) {
+      setTouchOffset(0)
+      setSwipedEmployeeId(null)
+    } else {
+      setTouchOffset(-150)
+    }
+    setTouchStart(null)
+  }
+
+  async function handleArchiveEmployee(employeeId: string) {
+    if (!confirm('Are you sure you want to archive this employee?')) return
+    
+    try {
+      const { error } = await dataSupabase
+        .from('employees')
+        .update({ is_active: false })
+        .eq('id', employeeId)
+      
+      if (error) throw error
+      
+      setEmployees(prev => prev.filter(emp => emp.id !== employeeId))
+      setSwipedEmployeeId(null)
+      setTouchOffset(0)
+      showAlert('success', 'Employee archived')
+    } catch (error: any) {
+      showAlert('error', error.message || 'Failed to archive employee')
+    }
+  }
+
+  async function handleAddEmployee() {
+    if (!selectedLocationId) return
+    if (!newEmployee.first_name || !newEmployee.last_name) {
+      showAlert('error', 'Please enter first and last name')
       return
     }
 
-    console.log('🔄 Syncing hours for employees:', employeeEmails)
-    console.log('📅 Period:', periodStart, 'to', periodEnd)
-    console.log('👥 Payroll Group:', payrollGroup)
-
-    // ✅ FIX: Get the current session token from authClient
-    const { data: { session } } = await authClient.auth.getSession()
-    
-    if (!session?.access_token) {
-      throw new Error('No valid session found. Please log in again.')
-    }
-
-    console.log('🔑 Sending request with auth token')
-
-    const response = await fetch('/api/connecteam/hours', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}` // ✅ ADD AUTH HEADER
-      },
-      body: JSON.stringify({
-        periodStart: periodStart,
-        periodEnd: periodEnd,
-        employeeEmails: employeeEmails,
-        payrollGroup: payrollGroup,
-      }),
-    })
-
-    console.log('📥 Response status:', response.status)
-
-    if (!response.ok) {
-      const error = await response.json()
-      console.error('❌ API Error:', error)
-      throw new Error(error.error || 'Failed to sync from Connecteam')
-    }
-
-    const result = await response.json()
-    console.log('✅ Connecteam sync result:', result)
-    
-    if (result.hours && Object.keys(result.hours).length > 0) {
-      let syncedCount = 0
-      
-      const updatedEmployees = employees.map(emp => {
-        if (emp.compensation_type !== 'hourly' || !emp.email) return emp
-        
-        const email = emp.email.toLowerCase()
-        const syncedHours = result.hours[email]
-        
-        if (syncedHours !== undefined && syncedHours > 0) {
-          syncedCount++
-          const hoursStr = syncedHours.toString()
-          return {
-            ...emp,
-            hours: hoursStr,
-            amount: syncedHours * (emp.hourly_rate || 0)
-          }
-        }
-        return emp
-      })
-      
-      setEmployees(updatedEmployees)
-      
-      if (syncedCount > 0) {
-        showAlert('success', `✓ Synced hours for ${syncedCount} employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`)
-        // ✅ Trigger auto-save after syncing
-        triggerAutoSave()
-      } else {
-        showAlert('error', 'No hours found in Connecteam for this period')
-      }
-    } else {
-      showAlert('error', 'No hours returned from Connecteam')
-    }
-  } catch (error: any) {
-    console.error('❌ Connecteam sync error:', error)
-    showAlert('error', error.message || 'Failed to sync from Connecteam')
-  } finally {
-    setIsSyncingConnecteam(false)
-  }
-}
-
-  async function handleSyncProduction() {
-    if (!selectedLocationId) return
-
-    setIsSyncingProduction(true)
     try {
-      // Get the location name
-      const { data: locationData, error: locationError } = await dataSupabase
+      const { data: locationData } = await dataSupabase
         .from('locations')
-        .select('name')
+        .select('organization_id')
         .eq('id', selectedLocationId)
         .single()
 
-      if (locationError || !locationData?.name) {
-        throw new Error('Failed to get location name')
-      }
+      if (!locationData) throw new Error('Location not found')
 
-      const locationName = locationData.name
-
-      // Get production employees with emails
-      const productionEmployees = filteredEmployees
-        .filter(emp => emp.email && emp.compensation_type === 'production')
-        .map(emp => emp.email?.toLowerCase())
-        .filter(Boolean) as string[]
-
-      if (productionEmployees.length === 0) {
-        showAlert('error', 'No production employees with emails found for sync')
-        return
-      }
-
-      console.log('🔄 Syncing production for employees:', productionEmployees)
-      console.log('📅 Period:', periodStart, 'to', periodEnd)
-      console.log('📍 Location:', locationName)
-
-      // Get auth token
-      const { data: { session } } = await authClient.auth.getSession()
-      
-      if (!session?.access_token) {
-        throw new Error('No valid session found. Please log in again.')
-      }
-
-      const response = await fetch('/api/connecteam/production', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({
-          locationName: locationName,
-          periodStart: periodStart,
-          periodEnd: periodEnd,
-          employeeEmails: productionEmployees,
-        }),
-      })
-
-      console.log('📥 Response status:', response.status)
-
-      if (!response.ok) {
-        const error = await response.json()
-        console.error('❌ API Error:', error)
-        throw new Error(error.error || 'Failed to sync production from Connecteam')
-      }
-
-      const result = await response.json()
-      console.log('✅ Production sync result:', result)
-      
-      if (result.units && Object.keys(result.units).length > 0) {
-        let syncedCount = 0
-        
-        const updatedEmployees = employees.map(emp => {
-          if (emp.compensation_type !== 'production' || !emp.email) return emp
-          
-          const email = emp.email.toLowerCase()
-          const syncedUnits = result.units[email]
-          
-          if (syncedUnits !== undefined && syncedUnits > 0) {
-            syncedCount++
-            const unitsStr = syncedUnits.toString()
-            return {
-              ...emp,
-              units: unitsStr,
-              amount: syncedUnits * (emp.piece_rate || 0)
-            }
-          }
-          return emp
-        })
-        
-        setEmployees(updatedEmployees)
-        
-        if (syncedCount > 0) {
-          showAlert('success', `✓ Synced units for ${syncedCount} production employee${syncedCount !== 1 ? 's' : ''} from Connecteam!`)
-          // Trigger auto-save after syncing
-          triggerAutoSave()
-        } else {
-          showAlert('error', 'No production units found in Connecteam for this period')
-        }
-      } else {
-        showAlert('error', 'No production units returned from Connecteam')
-      }
-    } catch (error: any) {
-      console.error('❌ Production sync error:', error)
-      showAlert('error', error.message || 'Failed to sync production from Connecteam')
-    } finally {
-      setIsSyncingProduction(false)
-    }
-  }
-
-
- async function handleSubmit() {
-  // Prevent duplicate submissions
-  if (submissionStatus === 'pending' || submissionStatus === 'approved') {
-    showAlert('error', '❌ This payroll has already been submitted and cannot be resubmitted!')
-    return
-  }
-
-  if (!selectedLocationId || !userId) {
-    showAlert('error', 'Missing required data')
-    return
-  }
-
-  const employeesToSubmit = filteredEmployees.filter(emp => {
-    if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
-    if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
-    if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
-    return false
-  })
-
-  if (employeesToSubmit.length === 0) {
-    showAlert('error', 'Please enter payroll data for at least one employee')
-    return
-  }
-
-  setIsSubmitting(true)
-  try {
-    const { data: locationData, error: locationError } = await dataSupabase
-      .from('locations')
-      .select('organization_id')
-      .eq('id', selectedLocationId)
-      .single()
-
-    if (locationError || !locationData?.organization_id) {
-      throw new Error('Failed to get organization ID from location')
-    }
-
-    const organizationId = locationData.organization_id
-    console.log('🏢 Organization ID:', organizationId)
-
-    const totalAmount = employeesToSubmit.reduce((sum, emp) => sum + emp.amount, 0)
-
-    const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
-
-    if (existingSubmissionId) {
-      console.log(`🔄 Updating existing submission (${rejectedSubmissionId ? 'REJECTED' : 'DRAFT'}):`, existingSubmissionId)
-      
-      const { error: updateError } = await dataSupabase
-        .from('payroll_submissions')
-        .update({
-          status: 'pending',
-          total_amount: totalAmount,
-          employee_count: employeesToSubmit.length,
-          submitted_at: new Date().toISOString(),
-          submitted_by: userId,
-          rejected_by: null,
-          rejected_at: null,
-          rejection_note: null,
-        })
-        .eq('id', existingSubmissionId)
-
-      if (updateError) throw updateError
-
-      const { error: deleteError } = await dataSupabase
-        .from('payroll_entries')
-        .delete()
-        .eq('submission_id', existingSubmissionId)
-
-      if (deleteError) throw deleteError
-
-      const details = employeesToSubmit.map(emp => ({
-        organization_id: organizationId,
-        submission_id: existingSubmissionId,
-        employee_id: emp.id,
-        hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-        status: 'pending',
-      }))
-
-      const { error: detailsError } = await dataSupabase
-        .from('payroll_entries')
-        .insert(details)
-
-      if (detailsError) throw detailsError
-
-      showAlert('success', rejectedSubmissionId ? '✅ Payroll resubmitted for approval!' : '✅ Draft submitted for approval!')
-      
-      setDraftSubmissionId(null)
-      setRejectedSubmissionId(null)
-      setRejectionNote(null)
-
-    } else {
-      console.log('✨ Creating NEW submission')
-      
-      const { data: submission, error: submissionError } = await dataSupabase
-        .from('payroll_submissions')
-        .insert({
-          organization_id: organizationId,
-          location_id: selectedLocationId,
-          pay_date: payDate,
-          payroll_group: payrollGroup,
-          period_start: periodStart,
-          period_end: periodEnd,
-          total_amount: totalAmount,
-          employee_count: employeesToSubmit.length,
-          submitted_by: userId,
-          status: 'pending',
-        })
-        .select()
-        .single()
-
-      if (submissionError) throw submissionError
-
-      const details = employeesToSubmit.map(emp => ({
-        organization_id: organizationId,
-        submission_id: submission.id,
-        employee_id: emp.id,
-        hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
-        units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
-        count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
-        adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
-        amount: emp.amount,
-        notes: emp.notes || null,
-        status: 'pending',
-      }))
-
-      const { error: detailsError } = await dataSupabase
-        .from('payroll_entries')
-        .insert(details)
-
-      if (detailsError) throw detailsError
-
-      showAlert('success', '✅ Payroll submitted successfully!')
-    }
-    
-    await loadEmployees(selectedLocationId)
-    
-  } catch (error: any) {
-    console.error('Submit error:', error)
-    showAlert('error', error.message || 'Failed to submit payroll')
-  } finally {
-    setIsSubmitting(false)
-  }
-}
-  async function handleSignOut() {
-    await authClient.auth.signOut()
-    await syncDataClientSession(null)
-    router.push('/login')
-  }
-
- async function handleAddEmployee() {
-  if (!selectedLocationId) {
-    showAlert('error', 'Please select a location first')
-    return
-  }
-
-  if (!newEmployee.first_name || !newEmployee.last_name) {
-    showAlert('error', 'Please fill in all required fields')
-    return
-  }
-
-  if (newEmployee.compensation_type === 'hourly' && !newEmployee.hourly_rate) {
-    showAlert('error', 'Please enter hourly rate')
-    return
-  }
-
-  if (newEmployee.compensation_type === 'production' && !newEmployee.piece_rate) {
-    showAlert('error', 'Please enter piece rate')
-    return
-  }
-
-  if (newEmployee.compensation_type === 'fixed' && !newEmployee.fixed_pay) {
-    showAlert('error', 'Please enter fixed pay amount')
-    return
-  }
-
-  try {
-    // ✅ GET ORGANIZATION_ID DYNAMICALLY
-    const { data: locationData, error: locationError } = await dataSupabase
-      .from('locations')
-      .select('organization_id')
-      .eq('id', selectedLocationId)
-      .single()
-
-    if (locationError || !locationData?.organization_id) {
-      throw new Error('Failed to get organization ID from location')
-    }
-
-    const organizationId = locationData.organization_id
-
-    const { data, error } = await dataSupabase
-      .from('employees')
-      .insert({
-        organization_id: organizationId,  // ✅ NOW CORRECT
+      const employeeData: any = {
+        organization_id: locationData.organization_id,
         location_id: selectedLocationId,
         first_name: newEmployee.first_name,
         last_name: newEmployee.last_name,
         email: newEmployee.email || null,
         payroll_group: newEmployee.payroll_group,
         compensation_type: newEmployee.compensation_type,
-        hourly_rate: newEmployee.compensation_type === 'hourly' ? parseFloat(newEmployee.hourly_rate) : null,
-        piece_rate: newEmployee.compensation_type === 'production' ? parseFloat(newEmployee.piece_rate) : null,
-        fixed_pay: newEmployee.compensation_type === 'fixed' ? parseFloat(newEmployee.fixed_pay) : null,
         is_active: true,
+      }
+
+      if (newEmployee.compensation_type === 'hourly') {
+        employeeData.hourly_rate = parseFloat(newEmployee.hourly_rate) || 0
+      } else if (newEmployee.compensation_type === 'production') {
+        employeeData.piece_rate = parseFloat(newEmployee.piece_rate) || 0
+      } else if (newEmployee.compensation_type === 'fixed') {
+        employeeData.fixed_pay = parseFloat(newEmployee.fixed_pay) || 0
+      }
+
+      const { data, error } = await dataSupabase
+        .from('employees')
+        .insert(employeeData)
+        .select()
+        .single()
+
+      if (error) throw error
+
+      const newEmployeeRow: EmployeeRow = {
+        ...data,
+        hours: '',
+        units: '',
+        count: '1',
+        adjustment: '0',
+        notes: '',
+        amount: 0,
+      }
+
+      setEmployees((prev) => [...prev, newEmployeeRow])
+      setShowAddEmployee(false)
+      setNewEmployee({
+        first_name: '',
+        last_name: '',
+        email: '',
+        payroll_group: 'A',
+        compensation_type: 'hourly',
+        hourly_rate: '',
+        piece_rate: '',
+        fixed_pay: '',
       })
-      .select()
-      .single()
-
-    if (error) throw error
-
-    showAlert('success', '✓ Employee added!')
-    setShowAddEmployee(false)
-    setNewEmployee({
-      first_name: '',
-      last_name: '',
-      email: '',
-      payroll_group: 'A',
-      compensation_type: 'hourly',
-      hourly_rate: '',
-      piece_rate: '',
-      fixed_pay: '',
-    })
-    
-    await loadEmployees(selectedLocationId)
-  } catch (error: any) {
-    console.error('Error adding employee:', error)
-    showAlert('error', error.message || 'Failed to add employee')
+      showAlert('success', 'Employee added successfully')
+    } catch (error: any) {
+      showAlert('error', error.message || 'Failed to add employee')
+    }
   }
-}
+
+  async function handleSyncConnecteam() {
+    if (!selectedLocationId) return
+    
+    setIsSyncingConnecteam(true)
+    try {
+      const employeeEmails = filteredEmployees
+        .filter(emp => emp.email)
+        .map(emp => emp.email as string)
+
+      if (employeeEmails.length === 0) {
+        showAlert('error', 'No employees with email addresses to sync')
+        return
+      }
+
+      const startDate = periodStart
+      const endDate = periodEnd
+
+      const response = await fetch('/api/connecteam/time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeEmails,
+          startDate,
+          endDate,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Sync failed')
+      }
+
+      const data = await response.json()
+      const hoursMap = data.hoursMap as { [email: string]: number }
+
+      setEmployees(prev =>
+        prev.map(emp => {
+          if (emp.email && hoursMap[emp.email] !== undefined) {
+            const hours = hoursMap[emp.email].toString()
+            const updatedEmp = { ...emp, hours }
+            updatedEmp.amount = calculateAmount(updatedEmp)
+            return updatedEmp
+          }
+          return emp
+        })
+      )
+
+      showAlert('success', `✅ Synced hours for ${Object.keys(hoursMap).length} employees`)
+      triggerAutoSave()
+    } catch (error: any) {
+      console.error('Sync error:', error)
+      showAlert('error', error.message || 'Failed to sync with Connecteam')
+    } finally {
+      setIsSyncingConnecteam(false)
+    }
+  }
+
+  async function handleSyncProduction() {
+    if (!selectedLocationId) return
+    
+    setIsSyncingProduction(true)
+    try {
+      const employeeEmails = filteredEmployees
+        .filter(emp => emp.email && emp.compensation_type === 'production')
+        .map(emp => emp.email as string)
+
+      if (employeeEmails.length === 0) {
+        showAlert('error', 'No production employees with email addresses to sync')
+        return
+      }
+
+      const location = availableLocations.find(loc => loc.id === selectedLocationId)
+      const locationName = location?.name
+
+      if (!locationName) {
+        showAlert('error', 'Location name not found')
+        return
+      }
+
+      const startDate = periodStart
+      const endDate = periodEnd
+
+      const response = await fetch('/api/connecteam/production', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          employeeEmails,
+          locationName,
+          startDate,
+          endDate,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Production sync failed')
+      }
+
+      const data = await response.json()
+      const unitsMap = data.unitsMap as { [email: string]: number }
+
+      setEmployees(prev =>
+        prev.map(emp => {
+          if (emp.email && unitsMap[emp.email] !== undefined) {
+            const units = unitsMap[emp.email].toString()
+            const updatedEmp = { ...emp, units }
+            updatedEmp.amount = calculateAmount(updatedEmp)
+            return updatedEmp
+          }
+          return emp
+        })
+      )
+
+      showAlert('success', `✅ Synced production for ${Object.keys(unitsMap).length} employees`)
+      triggerAutoSave()
+    } catch (error: any) {
+      console.error('Production sync error:', error)
+      showAlert('error', error.message || 'Failed to sync production data')
+    } finally {
+      setIsSyncingProduction(false)
+    }
+  }
+
+  async function handleSubmit() {
+    if (!selectedLocationId || !userId) return
+
+    const employeesWithData = employees.filter(emp => {
+      if (emp.compensation_type === 'hourly') return parseFloat(emp.hours || '0') > 0
+      if (emp.compensation_type === 'production') return parseFloat(emp.units || '0') > 0
+      if (emp.compensation_type === 'fixed') return parseFloat(emp.count || '0') > 0
+      return false
+    })
+
+    if (employeesWithData.length === 0) {
+      showAlert('error', 'Please enter payroll data for at least one employee')
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      const { data: locationData, error: locationError } = await dataSupabase
+        .from('locations')
+        .select('organization_id')
+        .eq('id', selectedLocationId)
+        .single()
+
+      if (locationError || !locationData?.organization_id) {
+        throw new Error('Failed to get organization ID')
+      }
+
+      const organizationId = locationData.organization_id
+      const totalAmount = employeesWithData.reduce((sum, emp) => sum + emp.amount, 0)
+
+      const existingSubmissionId = draftSubmissionId || rejectedSubmissionId
+
+      if (existingSubmissionId) {
+        const { error: updateError } = await dataSupabase
+          .from('payroll_submissions')
+          .update({
+            status: 'pending',
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            submitted_at: new Date().toISOString(),
+            rejected_by: null,
+            rejected_at: null,
+            rejection_note: null,
+          })
+          .eq('id', existingSubmissionId)
+
+        if (updateError) throw updateError
+
+        await dataSupabase
+          .from('payroll_entries')
+          .delete()
+          .eq('submission_id', existingSubmissionId)
+
+        const details = employeesWithData.map(emp => ({
+          organization_id: organizationId,
+          submission_id: existingSubmissionId,
+          employee_id: emp.id,
+          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'pending',
+        }))
+
+        const { error: detailsError } = await dataSupabase
+          .from('payroll_entries')
+          .insert(details)
+
+        if (detailsError) throw detailsError
+      } else {
+        const { data: submission, error: submissionError } = await dataSupabase
+          .from('payroll_submissions')
+          .insert({
+            organization_id: organizationId,
+            location_id: selectedLocationId,
+            pay_date: payDate,
+            payroll_group: payrollGroup,
+            period_start: periodStart,
+            period_end: periodEnd,
+            total_amount: totalAmount,
+            employee_count: employeesWithData.length,
+            submitted_by: userId,
+            submitted_at: new Date().toISOString(),
+            status: 'pending',
+          })
+          .select()
+          .single()
+
+        if (submissionError) throw submissionError
+
+        const details = employeesWithData.map(emp => ({
+          organization_id: organizationId,
+          submission_id: submission.id,
+          employee_id: emp.id,
+          hours: emp.compensation_type === 'hourly' ? parseFloat(emp.hours) : null,
+          units: emp.compensation_type === 'production' ? parseFloat(emp.units) : null,
+          count: emp.compensation_type === 'fixed' ? parseFloat(emp.count) : null,
+          adjustment: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
+          amount: emp.amount,
+          notes: emp.notes || null,
+          status: 'pending',
+        }))
+
+        const { error: detailsError } = await dataSupabase
+          .from('payroll_entries')
+          .insert(details)
+
+        if (detailsError) throw detailsError
+      }
+
+      setSubmissionStatus('pending')
+      setSubmittedAt(new Date().toISOString())
+      setSubmittedBy(userId)
+      setDraftSubmissionId(null)
+      setRejectedSubmissionId(null)
+      setRejectionNote(null)
+
+      showAlert('success', '✅ Payroll submitted for approval!')
+    } catch (error: any) {
+      console.error('Submit error:', error)
+      showAlert('error', error.message || 'Failed to submit payroll')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   async function handleUpdateEmployee() {
-    if (!editingEmployee) return
-
+    if (!editingEmployee || !selectedLocationId) return
+    
     try {
+      const updateData: any = {
+        first_name: editingEmployee.first_name,
+        last_name: editingEmployee.last_name,
+        email: editingEmployee.email || null,
+        payroll_group: editingEmployee.payroll_group,
+        compensation_type: editingEmployee.compensation_type,
+      }
+
+      if (editingEmployee.compensation_type === 'hourly') {
+        updateData.hourly_rate = editingEmployee.hourly_rate
+        updateData.piece_rate = null
+        updateData.fixed_pay = null
+      } else if (editingEmployee.compensation_type === 'production') {
+        updateData.piece_rate = editingEmployee.piece_rate
+        updateData.hourly_rate = null
+        updateData.fixed_pay = null
+      } else if (editingEmployee.compensation_type === 'fixed') {
+        updateData.fixed_pay = editingEmployee.fixed_pay
+        updateData.hourly_rate = null
+        updateData.piece_rate = null
+      }
+
       const { error } = await dataSupabase
         .from('employees')
-        .update({
-          first_name: editingEmployee.first_name,
-          last_name: editingEmployee.last_name,
-          email: editingEmployee.email || null,
-          payroll_group: editingEmployee.payroll_group,
-          compensation_type: editingEmployee.compensation_type,
-          hourly_rate: editingEmployee.compensation_type === 'hourly' ? editingEmployee.hourly_rate : null,
-          piece_rate: editingEmployee.compensation_type === 'production' ? editingEmployee.piece_rate : null,
-          fixed_pay: editingEmployee.compensation_type === 'fixed' ? editingEmployee.fixed_pay : null,
-        })
+        .update(updateData)
         .eq('id', editingEmployee.id)
 
       if (error) throw error
 
-      showAlert('success', '✓ Employee updated!')
+      setEmployees(prev =>
+        prev.map(emp => {
+          if (emp.id === editingEmployee.id) {
+            const updated = { ...emp, ...updateData }
+            updated.amount = calculateAmount(updated)
+            return updated
+          }
+          return emp
+        })
+      )
+
       setShowEditEmployee(false)
       setEditingEmployee(null)
-      
-      if (selectedLocationId) {
-        await loadEmployees(selectedLocationId)
-      }
+      showAlert('success', 'Employee updated successfully')
+      triggerAutoSave()
     } catch (error: any) {
-      console.error('Error updating employee:', error)
       showAlert('error', error.message || 'Failed to update employee')
     }
   }
 
-  async function handleArchiveEmployee(empId: string) {
-    try {
-      const { error } = await dataSupabase
-        .from('employees')
-        .update({ is_active: false })
-        .eq('id', empId)
-
-      if (error) throw error
-
-      showAlert('success', '✓ Employee archived!')
-      setSwipedEmployeeId(null)
-      
-      if (selectedLocationId) {
-        await loadEmployees(selectedLocationId)
-      }
-    } catch (error: any) {
-      console.error('Error archiving employee:', error)
-      showAlert('error', error.message || 'Failed to archive employee')
-    }
+  async function handleLogout() {
+    await authClient.auth.signOut()
+    router.push('/login')
   }
-
-  function handleTouchStart(e: React.TouchEvent, empId: string) {
-    setTouchStart({
-      x: e.touches[0].clientX,
-      y: e.touches[0].clientY,
-    })
-    setSwipedEmployeeId(empId)
-  }
-
-  function handleTouchMove(e: React.TouchEvent) {
-    if (!touchStart) return
-
-    const currentX = e.touches[0].clientX
-    const currentY = e.touches[0].clientY
-    const deltaX = currentX - touchStart.x
-    const deltaY = currentY - touchStart.y
-
-    if (Math.abs(deltaX) > Math.abs(deltaY)) {
-      e.preventDefault()
-      const offset = Math.max(-150, Math.min(0, deltaX))
-      setTouchOffset(offset)
-    }
-  }
-
-  function handleTouchEnd() {
-    if (touchOffset < -75) {
-      setTouchOffset(-150)
-    } else {
-      setTouchOffset(0)
-      setSwipedEmployeeId(null)
-    }
-    setTouchStart(null)
-  }
-
-  const selectedLocationName = useMemo(() => {
-    const location = availableLocations.find(loc => loc.id === selectedLocationId)
-    return location?.name || 'Select Location'
-  }, [availableLocations, selectedLocationId])
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400"></div>
-          <p className="mt-4 text-blue-100">Loading...</p>
-        </div>
+        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-white"></div>
       </div>
     )
   }
 
-  if (showLocationPicker && availableLocations.length > 1) {
+  if (showLocationPicker) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4 flex items-center justify-center">
-        <div className="w-full max-w-md">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-            <div className="text-center mb-6">
-              <MapPin className="w-12 h-12 text-blue-300 mx-auto mb-4" />
-              <h2 className="text-white text-2xl font-bold mb-2">Select Location</h2>
-              <p className="text-blue-200 text-sm">Choose which location to submit payroll for</p>
-            </div>
-
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-8 max-w-md w-full border border-white/20">
+          <h2 className="text-2xl font-bold text-white mb-6 text-center">Select Location</h2>
+          {availableLocations.length === 0 ? (
+            <p className="text-white/70 text-center">No locations available</p>
+          ) : (
             <div className="space-y-3">
-              {availableLocations.map((location) => (
+              {availableLocations.map((loc) => (
                 <button
-                  key={location.id}
+                  key={loc.id}
                   onClick={async () => {
-                    setSelectedLocationId(location.id)
+                    setSelectedLocationId(loc.id)
                     setShowLocationPicker(false)
-                    await loadEmployees(location.id)
+                    await loadEmployees(loc.id)
                   }}
-                  className="w-full bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl p-4 text-white font-medium transition text-left"
+                  className="w-full bg-white/5 hover:bg-white/20 border border-white/20 text-white font-semibold py-4 px-6 rounded-xl transition text-left"
                 >
-                  {location.name}
+                  <MapPin className="w-5 h-5 inline mr-2" />
+                  {loc.name}
                 </button>
               ))}
             </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (showEditEmployee && editingEmployee) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
-        <div className="max-w-lg mx-auto pt-6">
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={() => {
-                setShowEditEmployee(false)
-                setEditingEmployee(null)
-              }}
-              className="text-blue-100 text-sm font-medium"
-            >
-              ← Back
-            </button>
-            <h2 className="text-white text-lg font-semibold">Edit Employee</h2>
-            <div className="w-12" />
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20 space-y-4">
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">First Name</label>
-              <input
-                type="text"
-                value={editingEmployee.first_name}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, first_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Last Name</label>
-              <input
-                type="text"
-                value={editingEmployee.last_name}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, last_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Email</label>
-              <input
-                type="email"
-                value={editingEmployee.email || ''}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, email: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="employee@example.com"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group</label>
-              <select
-                value={editingEmployee.payroll_group}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, payroll_group: e.target.value as PayrollGroup })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="A" className="bg-slate-900">Group A</option>
-                <option value="B" className="bg-slate-900">Group B</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Compensation Type</label>
-              <select
-                value={editingEmployee.compensation_type}
-                onChange={(e) => setEditingEmployee({ ...editingEmployee, compensation_type: e.target.value as CompensationType })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="hourly" className="bg-slate-900">Hourly</option>
-                <option value="production" className="bg-slate-900">Production</option>
-                <option value="fixed" className="bg-slate-900">Fixed Pay</option>
-              </select>
-            </div>
-
-            {editingEmployee.compensation_type === 'hourly' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Hourly Rate ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editingEmployee.hourly_rate || ''}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, hourly_rate: parseFloat(e.target.value) || null })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                />
-              </div>
-            ) : editingEmployee.compensation_type === 'production' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editingEmployee.piece_rate || ''}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, piece_rate: parseFloat(e.target.value) || null })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Fixed Pay Amount ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editingEmployee.fixed_pay || ''}
-                  onChange={(e) => setEditingEmployee({ ...editingEmployee, fixed_pay: parseFloat(e.target.value) || null })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                />
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={handleUpdateEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
-          >
-            Save Changes
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (showAddEmployee) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
-        <div className="max-w-lg mx-auto pt-6">
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={() => setShowAddEmployee(false)}
-              className="text-blue-100 text-sm font-medium"
-            >
-              ← Back
-            </button>
-            <h2 className="text-white text-lg font-semibold">Add New Employee</h2>
-            <div className="w-12" />
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20 space-y-4">
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">First Name *</label>
-              <input
-                type="text"
-                value={newEmployee.first_name}
-                onChange={(e) => setNewEmployee({ ...newEmployee, first_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="John"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Last Name *</label>
-              <input
-                type="text"
-                value={newEmployee.last_name}
-                onChange={(e) => setNewEmployee({ ...newEmployee, last_name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="Doe"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Email (for Connecteam sync)</label>
-              <input
-                type="email"
-                value={newEmployee.email}
-                onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                placeholder="john.doe@example.com"
-              />
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Payroll Group *</label>
-              <select
-                value={newEmployee.payroll_group}
-                onChange={(e) => setNewEmployee({ ...newEmployee, payroll_group: e.target.value as PayrollGroup })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="A" className="bg-slate-900">Group A</option>
-                <option value="B" className="bg-slate-900">Group B</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-blue-200 text-sm font-medium mb-2 block">Compensation Type *</label>
-              <select
-                value={newEmployee.compensation_type}
-                onChange={(e) => setNewEmployee({ ...newEmployee, compensation_type: e.target.value as CompensationType })}
-                className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-              >
-                <option value="hourly" className="bg-slate-900">Hourly</option>
-                <option value="production" className="bg-slate-900">Production</option>
-                <option value="fixed" className="bg-slate-900">Fixed Pay</option>
-              </select>
-            </div>
-
-            {newEmployee.compensation_type === 'hourly' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Hourly Rate * ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newEmployee.hourly_rate}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, hourly_rate: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                  placeholder="25.00"
-                />
-              </div>
-            ) : newEmployee.compensation_type === 'production' ? (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Piece Rate * ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newEmployee.piece_rate}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, piece_rate: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                  placeholder="5.00"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="text-blue-200 text-sm font-medium mb-2 block">Fixed Pay Amount * ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newEmployee.fixed_pay}
-                  onChange={(e) => setNewEmployee({ ...newEmployee, fixed_pay: e.target.value })}
-                  className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                  placeholder="750.00"
-                />
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={handleAddEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
-          >
-            Add Employee
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (selectedEmployee) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
-        <div className="max-w-lg mx-auto pt-6">
-          <div className="flex items-center justify-between mb-6">
-            <button
-              onClick={() => setSelectedEmployee(null)}
-              className="text-blue-100 text-sm font-medium"
-            >
-              ← Back
-            </button>
-            <h2 className="text-white text-lg font-semibold">Enter Payroll</h2>
-            <div className="w-12" />
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-white text-xl font-bold">
-                  {selectedEmployee.first_name} {selectedEmployee.last_name}
-                </h3>
-                {selectedEmployee.email && (
-                  <p className="text-blue-300 text-sm mt-1">{selectedEmployee.email}</p>
-                )}
-              </div>
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  selectedEmployee.compensation_type === 'hourly'
-                    ? 'bg-blue-500/20 text-blue-200'
-                    : selectedEmployee.compensation_type === 'production'
-                    ? 'bg-purple-500/20 text-purple-200'
-                    : 'bg-green-500/20 text-green-200'
-                }`}
-              >
-                {selectedEmployee.compensation_type === 'hourly' ? 'Hourly' : selectedEmployee.compensation_type === 'production' ? 'Production' : 'Fixed Pay'}
-              </span>
-            </div>
-
-            <div className="bg-white/5 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">
-                {selectedEmployee.compensation_type === 'fixed' ? 'Fixed Amount' : 'Rate'}
-              </p>
-              <p className="text-white text-2xl font-bold">
-                {formatCurrency(
-                  selectedEmployee.compensation_type === 'fixed'
-                    ? selectedEmployee.fixed_pay
-                    : selectedEmployee.compensation_type === 'hourly'
-                    ? selectedEmployee.hourly_rate
-                    : selectedEmployee.piece_rate,
-                )}
-                {selectedEmployee.compensation_type !== 'fixed' && (
-                  <span className="text-blue-200 text-sm font-normal ml-2">
-                    {selectedEmployee.compensation_type === 'hourly' ? '/ hour' : '/ unit'}
-                  </span>
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
-            {selectedEmployee.compensation_type === 'hourly' && (
-              <>
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    Hours Worked
-                  </span>
-                  <input
-                    type="number"
-                    step="0.25"
-                    value={selectedEmployee.hours}
-                    onChange={(e) => handleInputChange('hours', e.target.value)}
-                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="0"
-                    autoFocus
-                  />
-                </label>
-
-                <label className="block mb-6">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
-                  <textarea
-                    value={selectedEmployee.notes}
-                    onChange={(e) => handleInputChange('notes', e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
-                    placeholder="Add any notes..."
-                  />
-                </label>
-              </>
-            )}
-
-            {selectedEmployee.compensation_type === 'production' && (
-              <>
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block flex items-center gap-2">
-                    <Hash className="w-4 h-4" />
-                    Units Produced
-                  </span>
-                  <input
-                    type="number"
-                    step="1"
-                    value={selectedEmployee.units}
-                    onChange={(e) => handleInputChange('units', e.target.value)}
-                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="0"
-                    autoFocus
-                  />
-                </label>
-
-                <label className="block mb-6">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
-                  <textarea
-                    value={selectedEmployee.notes}
-                    onChange={(e) => handleInputChange('notes', e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
-                    placeholder="Add any notes..."
-                  />
-                </label>
-              </>
-            )}
-
-            {selectedEmployee.compensation_type === 'fixed' && (
-              <>
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Count (usually 1)</span>
-                  <input
-                    type="number"
-                    step="1"
-                    value={selectedEmployee.count}
-                    onChange={(e) => handleInputChange('count', e.target.value)}
-                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="1"
-                  />
-                </label>
-
-                <label className="block mb-4">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Adjustment (+/-)</span>
-                  <input
-                    type="number"
-                    step="50"
-                    value={selectedEmployee.adjustment}
-                    onChange={(e) => handleInputChange('adjustment', e.target.value)}
-                    className="w-full px-4 py-4 text-2xl font-bold bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                    placeholder="0"
-                  />
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '-100')}
-                      className="flex-1 px-3 py-2 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-sm hover:bg-red-500/30 transition"
-                    >
-                      -$100 (1 Day)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '-200')}
-                      className="flex-1 px-3 py-2 bg-red-500/20 border border-red-400/30 rounded-lg text-red-200 text-sm hover:bg-red-500/30 transition"
-                    >
-                      -$200 (2 Days)
-                    </button>
-                  </div>
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '100')}
-                      className="flex-1 px-3 py-2 bg-green-500/20 border border-green-400/30 rounded-lg text-green-200 text-sm hover:bg-green-500/30 transition"
-                    >
-                      +$100 (Bonus)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleInputChange('adjustment', '0')}
-                      className="flex-1 px-3 py-2 bg-blue-500/20 border border-blue-400/30 rounded-lg text-blue-200 text-sm hover:bg-blue-500/30 transition"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </label>
-
-                <label className="block mb-6">
-                  <span className="text-blue-200 text-sm font-medium mb-2 block">Notes (optional)</span>
-                  <textarea
-                    value={selectedEmployee.notes}
-                    onChange={(e) => handleInputChange('notes', e.target.value)}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-white/5 border-2 border-white/20 rounded-xl text-white placeholder-blue-300/50 focus:outline-none focus:border-blue-400 focus:bg-white/10 transition resize-none"
-                    placeholder="e.g., Missed Monday due to illness"
-                  />
-                </label>
-              </>
-            )}
-
-            <div className="bg-gradient-to-r from-blue-500/20 to-purple-500/20 rounded-xl p-4">
-              <p className="text-blue-200 text-sm mb-1">Total Amount</p>
-              <p className="text-white text-3xl font-bold">
-                {formatCurrency(selectedEmployee.amount)}
-              </p>
-              {selectedEmployee.compensation_type === 'fixed' && (
-                <div className="text-blue-300 text-xs mt-2 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Base Pay:</span>
-                    <span>{formatCurrency(selectedEmployee.fixed_pay)}</span>
-                  </div>
-                  {parseFloat(selectedEmployee.adjustment || '0') !== 0 && (
-                    <div className="flex justify-between">
-                      <span>Adjustment:</span>
-                      <span className={parseFloat(selectedEmployee.adjustment) > 0 ? 'text-green-300' : 'text-red-300'}>
-                        {`${selectedEmployeeAdjustment > 0 ? '+' : ''}${formatCurrency(
-                          selectedEmployeeAdjustment,
-                        )}`}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <button
-            onClick={handleSaveEmployee}
-            className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all"
-          >
-            ✓ Confirm
-          </button>
+          )}
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-      <div className="bg-white/10 backdrop-blur-md border-b border-white/20 sticky top-0 z-50">
-        <div className="max-w-lg mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <img 
-                src="/apple-touch-icon.png" 
-                alt="I AM CFO Logo" 
-                className="w-10 h-10 object-contain"
-              />
-              <div className="flex-1">
-                <h1 className="text-white text-xl font-bold">Payroll Submit</h1>
-              {availableLocations.length > 1 ? (
-                <button
-                  onClick={() => {
-                    setShowLocationPicker(true)
-                    setSelectedLocationId(null)
-                    setEmployees([])
-                  }}
-                  className="flex items-center gap-2 text-blue-200 text-sm hover:text-blue-100 transition"
-                >
-                  <MapPin className="w-4 h-4" />
-                  <span>{selectedLocationName}</span>
-                  <ChevronDown className="w-4 h-4" />
-                </button>
-              ) : (
-                <p className="text-blue-200 text-sm">{selectedLocationName}</p>
-              )}
-              </div>
-            </div>
-            <button
-              onClick={handleSignOut}
-              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
-            >
-              <LogOut className="w-5 h-5 text-blue-200" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 pb-32">
+      {alert && (
+        <div
+          className={`fixed top-4 left-4 right-4 z-50 p-4 rounded-xl shadow-lg backdrop-blur-md ${
+            alert.type === 'success'
+              ? 'bg-green-500/90 text-white'
+              : 'bg-red-500/90 text-white'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            {alert.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+            )}
+            <p className="flex-1 whitespace-pre-line">{alert.message}</p>
+            <button onClick={() => setAlert(null)}>
+              <X className="w-5 h-5" />
             </button>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="max-w-lg mx-auto p-4 pb-32">
-        {alert && (
-          <div
-            className={`mb-4 p-4 rounded-xl flex items-start gap-3 ${
-              alert.type === 'success'
-                ? 'bg-green-500/20 border border-green-400/30'
-                : 'bg-red-500/20 border border-red-400/30'
-            }`}
-          >
-            {alert.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-green-300 flex-shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
-            )}
-            <p className={`flex-1 text-sm ${alert.type === 'success' ? 'text-green-100' : 'text-red-100'}`}>
-              {alert.message}
-            </p>
-            <button
-              onClick={() => setAlert(null)}
-              className="text-white/50 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+      {selectedEmployee && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 flex items-end justify-center">
+          <div className="bg-gradient-to-b from-slate-800 to-slate-900 rounded-t-3xl w-full max-w-lg border-t border-white/20 max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-slate-800/95 backdrop-blur-sm border-b border-white/10 p-4 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-white">
+                {selectedEmployee.first_name} {selectedEmployee.last_name}
+              </h3>
+              <button
+                onClick={closeEmployeeModal}
+                className="p-2 hover:bg-white/10 rounded-full transition"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
 
-        {/* PENDING Status Banner */}
-        {submissionStatus === 'pending' && (
-          <div className="bg-yellow-500/20 border border-yellow-400/40 rounded-xl p-4 mb-4">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-yellow-100 font-semibold text-sm">✋ Payroll Submitted - Pending Approval</p>
-                {submittedAt && (
-                  <p className="text-yellow-200/80 text-xs mt-1">
-                    Submitted {new Date(submittedAt).toLocaleString()}
+            <div className="p-6 space-y-6">
+              <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                <div className="flex items-center gap-3 mb-3">
+                  <Users className="w-5 h-5 text-blue-300" />
+                  <span className="text-white font-semibold">Employee Info</span>
+                </div>
+                <div className="space-y-2 text-sm">
+                  {selectedEmployee.email && (
+                    <p className="text-blue-200">{selectedEmployee.email}</p>
+                  )}
+                  <p className="text-white/70">
+                    Group: <span className="text-white font-medium">{selectedEmployee.payroll_group}</span>
                   </p>
-                )}
-                <p className="text-yellow-200/70 text-xs mt-2">
-                  🔒 This payroll is locked and cannot be edited until approved or rejected.
+                  <p className="text-white/70">
+                    Type: <span className="text-white font-medium capitalize">{selectedEmployee.compensation_type}</span>
+                  </p>
+                  {selectedEmployee.compensation_type === 'hourly' && (
+                    <p className="text-white/70">
+                      Rate: <span className="text-white font-medium">{formatCurrency(selectedEmployee.hourly_rate)}/hr</span>
+                    </p>
+                  )}
+                  {selectedEmployee.compensation_type === 'production' && (
+                    <p className="text-white/70">
+                      Rate: <span className="text-white font-medium">{formatCurrency(selectedEmployee.piece_rate)}/unit</span>
+                    </p>
+                  )}
+                  {selectedEmployee.compensation_type === 'fixed' && (
+                    <p className="text-white/70">
+                      Pay: <span className="text-white font-medium">{formatCurrency(selectedEmployee.fixed_pay)}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {selectedEmployee.compensation_type === 'hourly' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Hours Worked</label>
+                  <input
+                    type="number"
+                    step="0.25"
+                    value={selectedEmployee.hours}
+                    onChange={(e) => handleEmployeeChange(selectedEmployee.id, 'hours', e.target.value)}
+                    disabled={submissionStatus === 'pending' || submissionStatus === 'approved'}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white text-lg focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder="0"
+                  />
+                </div>
+              )}
+
+              {selectedEmployee.compensation_type === 'production' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Units Completed</label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={selectedEmployee.units}
+                    onChange={(e) => handleEmployeeChange(selectedEmployee.id, 'units', e.target.value)}
+                    disabled={submissionStatus === 'pending' || submissionStatus === 'approved'}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white text-lg focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    placeholder="0"
+                  />
+                </div>
+              )}
+
+              {selectedEmployee.compensation_type === 'fixed' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-white/70 mb-2 font-medium">Count</label>
+                    <input
+                      type="number"
+                      step="1"
+                      value={selectedEmployee.count}
+                      onChange={(e) => handleEmployeeChange(selectedEmployee.id, 'count', e.target.value)}
+                      disabled={submissionStatus === 'pending' || submissionStatus === 'approved'}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white text-lg focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                      placeholder="1"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-white/70 mb-2 font-medium">Adjustment</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={selectedEmployee.adjustment}
+                      onChange={(e) => handleEmployeeChange(selectedEmployee.id, 'adjustment', e.target.value)}
+                      disabled={submissionStatus === 'pending' || submissionStatus === 'approved'}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white text-lg focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Notes (Optional)</label>
+                <textarea
+                  value={selectedEmployee.notes}
+                  onChange={(e) => handleEmployeeChange(selectedEmployee.id, 'notes', e.target.value)}
+                  disabled={submissionStatus === 'pending' || submissionStatus === 'approved'}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400 min-h-[100px] disabled:opacity-50 disabled:cursor-not-allowed"
+                  placeholder="Add any notes about this payroll entry..."
+                />
+              </div>
+
+              <div className="bg-blue-500/20 rounded-xl p-4 border border-blue-400/30">
+                <div className="flex items-center justify-between">
+                  <span className="text-blue-200 font-medium">Total Amount:</span>
+                  <span className="text-2xl font-bold text-white">
+                    {formatCurrency(selectedEmployee.amount)}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={closeEmployeeModal}
+                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl hover:from-blue-600 hover:to-blue-700 transition"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddEmployee && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 flex items-end justify-center">
+          <div className="bg-gradient-to-b from-slate-800 to-slate-900 rounded-t-3xl w-full max-w-lg border-t border-white/20 max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-slate-800/95 backdrop-blur-sm border-b border-white/10 p-4 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-white">Add New Employee</h3>
+              <button
+                onClick={() => {
+                  setShowAddEmployee(false)
+                  setNewEmployee({
+                    first_name: '',
+                    last_name: '',
+                    email: '',
+                    payroll_group: 'A',
+                    compensation_type: 'hourly',
+                    hourly_rate: '',
+                    piece_rate: '',
+                    fixed_pay: '',
+                  })
+                }}
+                className="p-2 hover:bg-white/10 rounded-full transition"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">First Name *</label>
+                <input
+                  type="text"
+                  value={newEmployee.first_name}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, first_name: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="John"
+                />
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Last Name *</label>
+                <input
+                  type="text"
+                  value={newEmployee.last_name}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, last_name: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="Doe"
+                />
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Email</label>
+                <input
+                  type="email"
+                  value={newEmployee.email}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  placeholder="john.doe@example.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Payroll Group</label>
+                <select
+                  value={newEmployee.payroll_group}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, payroll_group: e.target.value as PayrollGroup })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  <option value="A">Group A</option>
+                  <option value="B">Group B</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Compensation Type</label>
+                <select
+                  value={newEmployee.compensation_type}
+                  onChange={(e) => setNewEmployee({ ...newEmployee, compensation_type: e.target.value as CompensationType })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  <option value="hourly">Hourly</option>
+                  <option value="production">Production</option>
+                  <option value="fixed">Fixed</option>
+                </select>
+              </div>
+
+              {newEmployee.compensation_type === 'hourly' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Hourly Rate ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newEmployee.hourly_rate}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, hourly_rate: e.target.value })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="15.00"
+                  />
+                </div>
+              )}
+
+              {newEmployee.compensation_type === 'production' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Piece Rate ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newEmployee.piece_rate}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, piece_rate: e.target.value })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="2.50"
+                  />
+                </div>
+              )}
+
+              {newEmployee.compensation_type === 'fixed' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Fixed Pay ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={newEmployee.fixed_pay}
+                    onChange={(e) => setNewEmployee({ ...newEmployee, fixed_pay: e.target.value })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    placeholder="1000.00"
+                  />
+                </div>
+              )}
+
+              <button
+                onClick={handleAddEmployee}
+                className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white font-semibold py-4 rounded-xl hover:from-green-600 hover:to-green-700 transition"
+              >
+                Add Employee
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditEmployee && editingEmployee && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 flex items-end justify-center">
+          <div className="bg-gradient-to-b from-slate-800 to-slate-900 rounded-t-3xl w-full max-w-lg border-t border-white/20 max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-slate-800/95 backdrop-blur-sm border-b border-white/10 p-4 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-white">Edit Employee</h3>
+              <button
+                onClick={() => {
+                  setShowEditEmployee(false)
+                  setEditingEmployee(null)
+                }}
+                className="p-2 hover:bg-white/10 rounded-full transition"
+              >
+                <X className="w-6 h-6 text-white" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">First Name</label>
+                <input
+                  type="text"
+                  value={editingEmployee.first_name}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, first_name: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Last Name</label>
+                <input
+                  type="text"
+                  value={editingEmployee.last_name}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, last_name: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Email</label>
+                <input
+                  type="email"
+                  value={editingEmployee.email || ''}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, email: e.target.value })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Payroll Group</label>
+                <select
+                  value={editingEmployee.payroll_group}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, payroll_group: e.target.value as PayrollGroup })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  <option value="A">Group A</option>
+                  <option value="B">Group B</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-white/70 mb-2 font-medium">Compensation Type</label>
+                <select
+                  value={editingEmployee.compensation_type}
+                  onChange={(e) => setEditingEmployee({ ...editingEmployee, compensation_type: e.target.value as CompensationType })}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  <option value="hourly">Hourly</option>
+                  <option value="production">Production</option>
+                  <option value="fixed">Fixed</option>
+                </select>
+              </div>
+
+              {editingEmployee.compensation_type === 'hourly' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Hourly Rate ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingEmployee.hourly_rate || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, hourly_rate: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+              )}
+
+              {editingEmployee.compensation_type === 'production' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Piece Rate ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingEmployee.piece_rate || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, piece_rate: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+              )}
+
+              {editingEmployee.compensation_type === 'fixed' && (
+                <div>
+                  <label className="block text-white/70 mb-2 font-medium">Fixed Pay ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingEmployee.fixed_pay || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, fixed_pay: parseFloat(e.target.value) || 0 })}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                </div>
+              )}
+
+              <button
+                onClick={handleUpdateEmployee}
+                className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold py-4 rounded-xl hover:from-blue-600 hover:to-blue-700 transition"
+              >
+                Update Employee
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="p-4 max-w-2xl mx-auto space-y-4">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Payroll Submission</h1>
+            <p className="text-blue-200 text-sm mt-1">{userName}</p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="p-3 bg-white/10 hover:bg-white/20 rounded-full transition"
+          >
+            <LogOut className="w-5 h-5 text-white" />
+          </button>
+        </div>
+
+        {submissionStatus === 'pending' && (
+          <div className="bg-yellow-500/20 border border-yellow-500/40 rounded-xl p-4 mb-4">
+            <div className="flex items-start gap-3">
+              <Clock className="w-5 h-5 text-yellow-300 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-yellow-100 font-semibold">Pending Approval</p>
+                <p className="text-yellow-200/80 text-sm mt-1">
+                  Your payroll submission is awaiting approval. You cannot make changes until it is approved or rejected.
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* APPROVED Status Banner */}
         {submissionStatus === 'approved' && (
-          <div className="bg-green-500/20 border border-green-400/40 rounded-xl p-4 mb-4">
+          <div className="bg-green-500/20 border border-green-500/40 rounded-xl p-4 mb-4">
             <div className="flex items-start gap-3">
               <CheckCircle2 className="w-5 h-5 text-green-300 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-green-100 font-semibold text-sm">✅ Payroll Approved</p>
-                {submittedAt && (
-                  <p className="text-green-200/80 text-xs mt-1">
-                    Submitted {new Date(submittedAt).toLocaleString()}
-                  </p>
-                )}
-                <p className="text-green-200/70 text-xs mt-2">
-                  🔒 This payroll has been approved and is now locked.
+              <div>
+                <p className="text-green-100 font-semibold">Approved ✓</p>
+                <p className="text-green-200/80 text-sm mt-1">
+                  This payroll has been approved and can no longer be edited.
                 </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {rejectionNote && (
+          <div className="bg-red-500/20 border border-red-500/40 rounded-xl p-4 mb-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-300 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-red-100 font-semibold">Rejected - Please Correct</p>
+                <p className="text-red-200/80 text-sm mt-1">{rejectionNote}</p>
               </div>
             </div>
           </div>
@@ -1943,100 +1714,103 @@ export default function MobilePayrollSubmit() {
 
         {selectedLocationId && (
           <>
-            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 mb-6 border border-white/20">
-              <div className="space-y-4 mb-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <Calendar className="w-4 h-4 text-blue-300" />
-                  <span className="text-blue-200 text-sm font-medium">Select Pay Date (Friday)</span>
-                </div>
-                <select
-                  value={payDate}
-                  onChange={(e) => handlePayDateChange(e.target.value)}
-                  className="w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white focus:outline-none focus:border-blue-400 focus:bg-white/10 transition"
-                >
-                  {fridayOptions.map((option) => (
-                    <option key={option.value} value={option.value} className="bg-slate-900 text-white">
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+            <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
+              <div className="flex items-center gap-2 mb-4">
+                <MapPin className="w-5 h-5 text-blue-300" />
+                <h2 className="text-white font-semibold">
+                  {availableLocations.find((loc) => loc.id === selectedLocationId)?.name}
+                </h2>
               </div>
 
-              <div className="space-y-3 mb-4">
+              <div className="space-y-3">
                 <div>
-                  <span className="text-blue-200 text-xs font-medium uppercase tracking-wide block text-center">
-                    Payroll Type
-                  </span>
-                  <div className="mt-1 w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white text-center">
-                    Payroll Group {payrollGroup}
+                  <label className="block text-white/70 mb-2 text-sm">Pay Date (Friday)</label>
+                  <div className="relative">
+                    <select
+                      value={payDate}
+                      onChange={(e) => {
+                        const newPayDate = e.target.value
+                        setPayDate(newPayDate)
+                        const info = calculatePayrollInfo(newPayDate)
+                        setPayrollGroup(info.payrollGroup)
+                        setPeriodStart(info.periodStart)
+                        setPeriodEnd(info.periodEnd)
+                      }}
+                      disabled={submissionStatus === 'pending' || submissionStatus === 'approved'}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl p-3 text-white appearance-none focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {fridayOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/50 pointer-events-none" />
                   </div>
-                  <p className="text-blue-200 text-xs mt-1 text-center">Auto-calculated from pay date</p>
                 </div>
-                <div>
-                  <span className="text-blue-200 text-xs font-medium uppercase tracking-wide block text-center">
-                    Payroll Period
-                  </span>
-                  <div className="mt-1 w-full px-4 py-2 text-base font-semibold bg-white/5 border border-white/20 rounded-xl text-white text-center">
-                    {periodStart && periodEnd ? formatDateRange(periodStart, periodEnd) : '-'}
-                  </div>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <div className="bg-white/5 rounded-lg p-3 text-center">
-                  <Users className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-                  <p className="text-white text-lg font-bold">{totals.employees}</p>
-                  <p className="text-blue-200 text-xs">Employees</p>
-                </div>
-                <div className="bg-white/5 rounded-lg p-3 text-center">
-                  <Clock className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-                  <p className="text-white text-lg font-bold">{totals.totalHours.toFixed(1)}</p>
-                  <p className="text-blue-200 text-xs">Hours</p>
-                </div>
-                <div className="bg-white/5 rounded-lg p-3 text-center">
-                  <DollarSign className="w-4 h-4 text-blue-300 mx-auto mb-1" />
-                  <p className="text-white text-lg font-bold">{formatCurrency(totals.totalAmount, 0)}</p>
-                  <p className="text-blue-200 text-xs">Total</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                    <p className="text-white/70 text-xs mb-1">Payroll Group</p>
+                    <p className="text-white font-semibold text-lg">{payrollGroup}</p>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                    <p className="text-white/70 text-xs mb-1">Pay Period</p>
+                    <p className="text-white font-semibold text-sm">
+                      {formatDateRange(periodStart, periodEnd)}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {filteredEmployees.length > 0 && (
-              <div className="space-y-3 mb-6">
+            <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/20">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="w-5 h-5 text-green-300" />
+                  <h2 className="text-white font-semibold">Summary</h2>
+                </div>
+                {lastSavedAt && (
+                  <div className="flex items-center gap-2 text-xs text-blue-300">
+                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></div>
+                    Saved {formatTimeAgo(lastSavedAt)}
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                  <p className="text-white/70 text-xs mb-1">Employees</p>
+                  <p className="text-white font-bold text-2xl">{totals.employees}</p>
+                </div>
+                <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                  <p className="text-white/70 text-xs mb-1">Total Payroll</p>
+                  <p className="text-white font-bold text-2xl">{formatCurrency(totals.total)}</p>
+                </div>
+              </div>
+            </div>
+
+            {filteredEmployees.length === 0 ? (
+              <div className="text-center py-12">
+                <Users className="w-16 h-16 text-white/30 mx-auto mb-4" />
+                <p className="text-white/70">No employees in Group {payrollGroup}</p>
+                <p className="text-white/50 text-sm mt-2">
+                  Add employees or check the other payroll group
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-white text-lg font-semibold">
-                    Employees ({filteredEmployees.length})
-                  </h2>
                   <div className="flex items-center gap-2">
-                    {/* Sync Hours button - only show if there are hourly employees */}
-                    {filteredEmployees.some(emp => emp.compensation_type === 'hourly' && emp.email) && (
-                      <button
-                        onClick={handleSyncConnecteam}
-                        disabled={isSyncingConnecteam || submissionStatus === 'pending' || submissionStatus === 'approved'}
-                        className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 rounded-lg text-purple-200 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isSyncingConnecteam ? (
-                          <>
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                            Syncing...
-                          </>
-                        ) : (
-                          <>
-                            <Clock className="w-4 h-4" />
-                            Sync Hours
-                          </>
-                        )}
-                      </button>
-                    )}
-                    
-                    {/* Sync Production button */}
+                    <Users className="w-5 h-5 text-blue-300" />
+                    <h2 className="text-white font-semibold">Employees (Group {payrollGroup})</h2>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
                     {hasProductionEmployees && (
-                      <div className="flex flex-col items-end">
+                      <div className="flex flex-col items-end gap-1">
                         <button
                           onClick={handleSyncProduction}
                           disabled={isSyncingProduction || !hasProductionEmployeesWithEmails || submissionStatus === 'pending' || submissionStatus === 'approved'}
-                          title={!hasProductionEmployeesWithEmails ? 'Add emails to production employees to enable syncing' : undefined}
-                          className="flex items-center gap-2 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 rounded-lg text-indigo-200 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 disabled:bg-purple-500/10 text-purple-200 disabled:text-purple-300/50 text-xs font-medium rounded-lg border border-purple-400/30 disabled:border-purple-400/10 transition disabled:cursor-not-allowed"
                         >
                           {isSyncingProduction ? (
                             <>
