@@ -110,7 +110,19 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         const hash = window.location.hash.substring(1)
         
         if (!hash) {
-          console.log('⚠️ No hash in URL - redirecting to platform login')
+          console.log('⚠️ No hash in URL - checking for existing session...')
+          
+          // Check if we already have a valid session
+          const authClient = getAuthClient()
+          const { data: { session } } = await authClient.auth.getSession()
+          
+          if (session) {
+            console.log('✅ Found existing session')
+            setReady(true)
+            return
+          }
+          
+          console.log('❌ No session found - redirecting to platform login')
           window.location.href = `https://iamcfo.com/login?returnTo=${encodeURIComponent(window.location.origin + window.location.pathname)}`
           return
         }
@@ -164,12 +176,13 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
           return
         }
 
-        // Session set successfully - just reload
+        // Session set successfully
         if (isSuperAdmin) {
           sessionStorage.setItem('is_super_admin', 'true')
         }
         
-        window.location.reload()
+        console.log('✅ Session transferred successfully')
+        setReady(true)
 
       } catch (error) {
         console.error('💥 Transfer error:', error)
