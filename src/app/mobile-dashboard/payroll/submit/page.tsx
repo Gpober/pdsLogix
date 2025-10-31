@@ -283,8 +283,20 @@ export default function MobilePayrollSubmit() {
   }, [authClient, dataSupabase, router])
 
   // Check for draft or rejected submissions when location/payDate/payrollGroup changes
-  const loadExistingSubmission = useCallback(async (locationId: string) => {
-    console.log('🔍 loadExistingSubmission called:', { locationId, payDate, employees: employees.length })
+  const hasLoadedRef = useRef<string | null>(null)
+  
+  const loadExistingSubmission = useCallback(async (locationId: string, currentEmployees: EmployeeRow[]) => {
+    const loadKey = `${locationId}-${payDate}-${payrollGroup}`
+    
+    // Prevent loading twice for the same combination
+    if (hasLoadedRef.current === loadKey) {
+      console.log('⏭️ Skipping duplicate load for:', loadKey)
+      return
+    }
+    
+    console.log('🔍 loadExistingSubmission called:', { locationId, payDate, employees: currentEmployees.length })
+    hasLoadedRef.current = loadKey
+    
     try {
       // Check for ANY existing submission (not just draft/rejected)
       const { data: submissions, error } = await dataSupabase
@@ -330,7 +342,7 @@ export default function MobilePayrollSubmit() {
         // Load employee data from entries
         const entries = submission.payroll_entries || []
         console.log('📝 Loading entries from database:', entries.length, 'entries')
-        const updatedEmployees = employees.map(emp => {
+        const updatedEmployees = currentEmployees.map(emp => {
           const entry = entries.find((e: any) => e.employee_id === emp.id)
           if (entry) {
             console.log(`  ✓ Loading data for ${emp.first_name} ${emp.last_name}:`, {
@@ -367,13 +379,18 @@ export default function MobilePayrollSubmit() {
     } catch (error) {
       console.error('❌ Error loading submission:', error)
     }
-  }, [payDate, employees, dataSupabase])
+  }, [payDate, payrollGroup, dataSupabase])
 
   useEffect(() => {
     if (selectedLocationId && payDate && payrollGroup && employees.length > 0) {
-      loadExistingSubmission(selectedLocationId)
+      loadExistingSubmission(selectedLocationId, employees)
     }
   }, [selectedLocationId, payDate, payrollGroup, employees.length, loadExistingSubmission])
+  
+  // Reset the load tracking when location/date changes
+  useEffect(() => {
+    hasLoadedRef.current = null
+  }, [selectedLocationId, payDate])
 
   async function loadEmployees(locationId: string) {
     try {
