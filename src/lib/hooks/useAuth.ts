@@ -47,11 +47,8 @@ export function useAuth() {
         throw error
       }
 
-      console.log('✅ Profile loaded:', {
-        email: data.email,
-        role: data.role,
-        superAdminFlag
-      })
+      // Simplified console.log to avoid minification issues
+      console.log('✅ Profile loaded:', data.email, data.role, 'Super admin:', superAdminFlag)
 
       // Set super admin flag based on role OR sessionStorage flag
       const isSuper = data.role === 'super_admin' || superAdminFlag
