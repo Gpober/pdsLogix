@@ -247,18 +247,46 @@ export default function MobilePayrollSubmit() {
         setUserId(session.user.id)
         setUserName(session.user.email || 'User')
 
-        const { data: locationManagers, error: locError } = await dataSupabase
-          .from('location_managers')
-          .select('location_id, locations(id, name)')
-          .eq('user_id', session.user.id)
+        // Check if user is super_admin
+        const { data: userData } = await authClient
+          .from('users')
+          .select('role, organization_id')
+          .eq('id', session.user.id)
+          .single()
 
-        if (locError) {
-          console.error('Error loading locations:', locError)
+        console.log('User role:', userData?.role)
+
+        let locations: Location[] = []
+
+        // If super_admin, load ALL locations in the organization
+        if (userData?.role === 'super_admin' && userData?.organization_id) {
+          console.log('Super admin detected, loading all locations')
+          const { data: allLocations, error: allLocError } = await dataSupabase
+            .from('locations')
+            .select('id, name')
+            .eq('organization_id', userData.organization_id)
+            .order('name')
+
+          if (allLocError) {
+            console.error('Error loading all locations:', allLocError)
+          } else {
+            locations = allLocations || []
+          }
+        } else {
+          // Regular user - load only their assigned locations
+          const { data: locationManagers, error: locError } = await dataSupabase
+            .from('location_managers')
+            .select('location_id, locations(id, name)')
+            .eq('user_id', session.user.id)
+
+          if (locError) {
+            console.error('Error loading locations:', locError)
+          }
+
+          locations = locationManagers
+            ?.map((lm: any) => lm.locations)
+            .filter(Boolean) as Location[]
         }
-
-        const locations = locationManagers
-          ?.map((lm: any) => lm.locations)
-          .filter(Boolean) as Location[]
 
         console.log('Loaded locations for user:', locations)
         setAvailableLocations(locations || [])
