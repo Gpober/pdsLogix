@@ -85,23 +85,17 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     async function handleSessionTransfer() {
       try {
-        console.log('🔍 SessionTransferHandler: Starting...')
-        
-        // ✅ CRITICAL: Only run on CLIENT subdomains, NOT on platform (iamcfo.com)
+        // Only run on CLIENT subdomains, NOT on platform (iamcfo.com)
         const hostname = window.location.hostname
         const isPlatform = hostname === 'iamcfo.com' || hostname === 'localhost' || hostname.startsWith('localhost:')
         
         if (isPlatform) {
-          console.log('✅ Platform domain - skipping session transfer')
           setReady(true)
           return
         }
         
-        console.log('🌐 Client subdomain detected:', hostname)
-        
         // Check if already transferred this page load
         if ((window as any).__sessionTransferred) {
-          console.log('✅ Session already transferred')
           setReady(true)
           return
         }
@@ -110,24 +104,19 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         const hash = window.location.hash.substring(1)
         
         if (!hash) {
-          console.log('⚠️ No hash in URL - checking for existing session...')
-          
           // Check if we already have a valid session
           const authClient = getAuthClient()
           const { data: { session } } = await authClient.auth.getSession()
           
           if (session) {
-            console.log('✅ Found existing session')
             setReady(true)
             return
           }
           
-          console.log('❌ No session found - redirecting to platform login')
+          // No session - redirect to platform login
           window.location.href = `https://iamcfo.com/login?returnTo=${encodeURIComponent(window.location.origin + window.location.pathname)}`
           return
         }
-
-        console.log('📍 Found hash, parsing tokens...')
 
         // Parse hash parameters
         const params = new URLSearchParams(hash)
@@ -136,42 +125,31 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
         const isSuperAdmin = params.get('super_admin') === 'true'
 
         if (!accessToken || !refreshToken) {
-          console.log('⚠️ No tokens in hash')
           setReady(true)
           return
         }
-
-        console.log('🔑 Found tokens:', {
-          accessTokenLength: accessToken.length,
-          hasRefreshToken: !!refreshToken,
-          isSuperAdmin
-        })
 
         // Mark as transferred
         (window as any).__sessionTransferred = true
 
         // Clean URL FIRST
-        console.log('🧹 Cleaning URL...')
         window.history.replaceState({}, '', window.location.pathname + window.location.search)
 
         // Get auth client (singleton)
         const authClient = getAuthClient()
 
         // Set session
-        console.log('🔄 Setting session...')
         const { data, error } = await authClient.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken,
         })
 
         if (error) {
-          console.error('❌ Session error:', error)
           setReady(true)
           return
         }
 
         if (!data.session) {
-          console.error('❌ No session returned')
           setReady(true)
           return
         }
@@ -181,11 +159,10 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
           sessionStorage.setItem('is_super_admin', 'true')
         }
         
-        console.log('✅ Session transferred successfully')
         setReady(true)
 
       } catch (error) {
-        console.error('💥 Transfer error:', error)
+        console.error('Session transfer error:', error)
         setReady(true)
       }
     }
