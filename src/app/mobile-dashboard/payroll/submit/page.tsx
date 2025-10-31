@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAuthClient } from '@/lib/supabase/client'
-import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
+import { getAuthClient, getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 import { LogOut, DollarSign, Clock, Users, CheckCircle2, AlertCircle, X, Calendar, MapPin, ChevronDown, RefreshCw, Hash } from 'lucide-react'
 
 // Types
