@@ -1967,12 +1967,34 @@ export default function MobilePayrollSubmit() {
               )}
               </div>
             </div>
-            <button
-              onClick={handleSignOut}
-              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
-            >
-              <LogOut className="w-5 h-5 text-blue-200" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => router.push('/mobile-dashboard')}
+                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
+                title="Return to Dashboard"
+              >
+                <svg 
+                  className="w-5 h-5 text-blue-200" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" 
+                  />
+                </svg>
+              </button>
+              <button
+                onClick={handleSignOut}
+                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition"
+                title="Sign Out"
+              >
+                <LogOut className="w-5 h-5 text-blue-200" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
