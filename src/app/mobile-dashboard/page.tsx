@@ -122,10 +122,27 @@ export default function MobileDashboardLanding() {
   return (
     <div style={{
       minHeight: '100vh',
-      background: `linear-gradient(135deg, ${BRAND_COLORS.primary} 0%, ${BRAND_COLORS.secondary} 100%)`,
+      background: 'white',
       padding: '20px',
-      paddingTop: '80px'
+      paddingTop: '40px'
     }}>
+      {/* Logo */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        marginBottom: '24px'
+      }}>
+        <img 
+          src="/iamcfo-logo.jpg" 
+          alt="I AM CFO Logo"
+          style={{
+            height: '80px',
+            width: 'auto',
+            objectFit: 'contain'
+          }}
+        />
+      </div>
+
       {/* Header */}
       <div style={{
         marginBottom: '32px',
@@ -135,8 +152,7 @@ export default function MobileDashboardLanding() {
           margin: 0,
           fontSize: '32px',
           fontWeight: 'bold',
-          color: 'white',
-          textShadow: '0 2px 10px rgba(0,0,0,0.2)',
+          color: BRAND_COLORS.primary,
           marginBottom: '8px'
         }}>
           I AM CFO
@@ -144,8 +160,7 @@ export default function MobileDashboardLanding() {
         <p style={{
           margin: 0,
           fontSize: '16px',
-          color: 'rgba(255, 255, 255, 0.9)',
-          textShadow: '0 1px 3px rgba(0,0,0,0.1)'
+          color: BRAND_COLORS.gray[600]
         }}>
           Your Financial Command Center
         </p>
@@ -165,7 +180,7 @@ export default function MobileDashboardLanding() {
             onClick={() => handleCardClick(card.path)}
             style={{
               background: 'white',
-              border: 'none',
+              border: `2px solid ${BRAND_COLORS.gray[200]}`,
               borderRadius: '20px',
               padding: '24px',
               textAlign: 'left',
@@ -254,9 +269,8 @@ export default function MobileDashboardLanding() {
       <div style={{
         marginTop: '40px',
         textAlign: 'center',
-        color: 'rgba(255, 255, 255, 0.8)',
-        fontSize: '14px',
-        textShadow: '0 1px 2px rgba(0,0,0,0.1)'
+        color: BRAND_COLORS.gray[500],
+        fontSize: '14px'
       }}>
         <p style={{ margin: 0 }}>
           Select a report to view detailed insights
