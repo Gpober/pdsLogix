@@ -95,7 +95,6 @@ interface SubmissionDetail {
   units: number | null;
   amount: number;
   notes: string | null;
-  organization_id: string; // ✅ ADDED - Required for payments insert
 }
 
 type ViewMode = "overview" | "summary" | "report" | "detail" | "approvals";
@@ -497,7 +496,7 @@ export default function PayrollDashboard() {
     setSelectedSubmission(submission);
     setRejectionNote('');
 
-    // Step 1: Fetch payroll entries
+    // Fetch payroll entries
     console.log('📥 Fetching entries for submission:', submission.id);
     const { data: entries, error: entriesError, count } = await dataClient
       .from('payroll_entries')
@@ -519,7 +518,6 @@ export default function PayrollDashboard() {
     if (!entries || entries.length === 0) {
       console.warn('⚠️ No entries found for submission:', submission.id);
       showNotification('This submission has no employee entries', 'error');
-      // Still show modal but with empty list
       setSubmissionDetails([]);
       setShowApprovalModal(true);
       return;
@@ -534,8 +532,7 @@ export default function PayrollDashboard() {
         hours: entry.hours,
         units: entry.units,
         amount: entry.amount,
-        notes: entry.notes,
-        organization_id: submission.location_id // Using location_id as fallback
+        notes: entry.notes
       };
     });
 
