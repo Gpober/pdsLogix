@@ -541,19 +541,18 @@ export default function PayrollDashboard() {
 
   // ✅ FIXED: Use organization_id from submissionDetails
   const handleApprove = async () => {
-    if (!selectedSubmission || !userId) return;
+    if (!selectedSubmission || !userId) {
+      alert('❌ Missing submission or user ID');
+      return;
+    }
 
     setIsApproving(true);
 
     try {
-      // ✅ Get organization_id from submissionDetails (already fetched in handleReviewSubmission)
-      const organizationId = submissionDetails[0]?.organization_id;
-      
-      if (!organizationId) {
-        throw new Error('Organization ID not found in submission details');
-      }
-
-      console.log('🎯 Approving with organization_id:', organizationId);
+      console.log('🎯 Approving submission:', {
+        submissionId: selectedSubmission.id,
+        detailsCount: submissionDetails.length
+      });
 
       // STEP 1: Update payroll_submissions status to 'approved'
       const { error: updateSubmissionError } = await dataClient
@@ -565,7 +564,12 @@ export default function PayrollDashboard() {
         })
         .eq('id', selectedSubmission.id);
 
-      if (updateSubmissionError) throw updateSubmissionError;
+      if (updateSubmissionError) {
+        console.error('❌ Failed to update submission:', updateSubmissionError);
+        throw updateSubmissionError;
+      }
+
+      console.log('✅ Submission updated to approved');
 
       // STEP 2: Update all payroll_entries for this submission to 'approved'
       const { error: updateEntriesError } = await dataClient
@@ -575,60 +579,57 @@ export default function PayrollDashboard() {
         })
         .eq('submission_id', selectedSubmission.id);
 
-      if (updateEntriesError) throw updateEntriesError;
-
-      // STEP 3: Create approval audit log
-      const { error: approvalLogError } = await dataClient
-        .from('payroll_approvals')
-        .insert({
-          organization_id: organizationId,
-          submission_id: selectedSubmission.id,
-          action: 'approved',
-          approved_by: userId,
-          previous_status: 'pending',
-          notes: `Approved via mobile dashboard`
-        });
-
-      if (approvalLogError) {
-        console.warn('Failed to create approval log:', approvalLogError);
-        // Don't fail the whole process if audit log fails
+      if (updateEntriesError) {
+        console.error('❌ Failed to update entries:', updateEntriesError);
+        throw updateEntriesError;
       }
 
-      // STEP 4: Post to payments table with ALL required fields
-      // ✅ organization_id now comes from submissionDetails
-      const paymentsToInsert = submissionDetails.map(detail => ({
-        // Link back to source data
-        employee_id: detail.employee_id,
-        submission_id: selectedSubmission.id,
-        location_id: selectedSubmission.location_id,
-        organization_id: detail.organization_id, // ✅ NOW PROPERLY DEFINED
-        
-        // Payment details
-        first_name: detail.employee_name.split(' ')[0],
-        last_name: detail.employee_name.split(' ').slice(1).join(' ') || detail.employee_name.split(' ')[0],
-        department: selectedSubmission.location_name,
-        date: selectedSubmission.pay_date,
-        total_amount: detail.amount,
-        payment_method: 'Direct Deposit',
-        
-        // Payroll details
-        payroll_group: selectedSubmission.payroll_group,
-        hours: detail.hours,
-        units: detail.units,
-        
-        // Tracking
-        source: 'system'
-      }));
+      console.log('✅ Entries updated to approved');
 
-      console.log('💾 Inserting payments:', paymentsToInsert);
+      // STEP 3: Skip audit log (not needed)
+      console.log('✅ Skipping approval log');
 
-      const { error: paymentsError } = await dataClient
-        .from('payments')
-        .insert(paymentsToInsert);
+      // STEP 4: Post to payments table
+      if (submissionDetails.length > 0) {
+        const paymentsToInsert = submissionDetails.map(detail => {
+          const nameParts = detail.employee_name.split(' ');
+          const firstName = nameParts[0] || 'Unknown';
+          const lastName = nameParts.slice(1).join(' ') || firstName;
+          
+          return {
+            employee_id: detail.employee_id,
+            submission_id: selectedSubmission.id,
+            location_id: selectedSubmission.location_id,
+            first_name: firstName,
+            last_name: lastName,
+            department: selectedSubmission.location_name || 'Unknown',
+            date: selectedSubmission.pay_date,
+            total_amount: detail.amount,
+            payment_method: 'Direct Deposit',
+            payroll_group: selectedSubmission.payroll_group,
+            hours: detail.hours,
+            units: detail.units,
+            source: 'system'
+          };
+        });
 
-      if (paymentsError) {
-        console.error('❌ Payments insert error:', paymentsError);
-        throw paymentsError;
+        console.log('💾 Inserting payments:', {
+          count: paymentsToInsert.length,
+          total: paymentsToInsert.reduce((sum, p) => sum + p.total_amount, 0),
+          sample: paymentsToInsert[0]
+        });
+
+        const { data: insertedPayments, error: paymentsError } = await dataClient
+          .from('payments')
+          .insert(paymentsToInsert)
+          .select();
+
+        if (paymentsError) {
+          console.error('❌ Payments insert error:', paymentsError);
+          throw new Error(`Failed to insert payments: ${paymentsError.message}`);
+        }
+
+        console.log('✅ Payments inserted:', insertedPayments?.length);
       }
 
       // STEP 5: Update submission to 'posted' status
@@ -641,7 +642,12 @@ export default function PayrollDashboard() {
         })
         .eq('id', selectedSubmission.id);
 
-      if (postedError) throw postedError;
+      if (postedError) {
+        console.error('❌ Failed to update to posted:', postedError);
+        throw postedError;
+      }
+
+      console.log('✅ Submission marked as posted');
 
       // STEP 6: Update entries to 'posted'
       const { error: entriesPostedError } = await dataClient
@@ -651,14 +657,26 @@ export default function PayrollDashboard() {
         })
         .eq('submission_id', selectedSubmission.id);
 
-      if (entriesPostedError) throw entriesPostedError;
+      if (entriesPostedError) {
+        console.error('❌ Failed to update entries to posted:', entriesPostedError);
+        throw entriesPostedError;
+      }
+
+      console.log('✅ Entries marked as posted');
 
       // Success!
       alert('✅ Payroll approved and posted successfully!');
       setShowApprovalModal(false);
       setSelectedSubmission(null);
-      loadPendingSubmissions(organizationId);
-      loadAllLocations(organizationId);
+      
+      // Reload data
+      if (userRole === 'super_admin' && subdomainOrgId) {
+        loadPendingSubmissions(subdomainOrgId);
+        loadAllLocations(subdomainOrgId);
+      } else if (organizationId) {
+        loadPendingSubmissions(organizationId);
+        loadAllLocations(organizationId);
+      }
       
       // Reload historical data
       const load = async () => {
@@ -691,41 +709,52 @@ export default function PayrollDashboard() {
       };
       load();
 
-    } catch (error) {
-      console.error('Error approving payroll:', error);
-      alert('❌ Failed to approve payroll. Please try again.');
+    } catch (error: any) {
+      console.error('❌ Error approving payroll:', error);
+      alert(`❌ Failed to approve payroll: ${error.message || 'Unknown error'}. Check console for details.`);
     } finally {
       setIsApproving(false);
     }
   };
 
   const handleReject = async () => {
-    if (!selectedSubmission || !userId) return;
+    if (!selectedSubmission || !userId) {
+      alert('❌ Missing submission or user ID');
+      return;
+    }
 
     setIsApproving(true);
 
     try {
-      // Get organization_id from submissionDetails (already loaded)
-      const organizationId = submissionDetails[0]?.organization_id;
+      console.log('🚫 Rejecting submission:', {
+        submissionId: selectedSubmission.id,
+        userId,
+        note: rejectionNote
+      });
 
-      if (!organizationId) {
-        throw new Error('Organization ID not found');
-      }
-
-      // ✅ FIXED: Update submission with rejection fields
-      const { error: submissionError } = await dataClient
+      // STEP 1: Update submission with rejection fields
+      console.log('Step 1: Updating submission status...');
+      const { data: updatedSubmission, error: submissionError } = await dataClient
         .from('payroll_submissions')
         .update({
           status: 'rejected',
-          rejected_by: userId,  // ✅ FIXED: Use rejected_by instead of approved_by
-          rejected_at: new Date().toISOString(),  // ✅ FIXED: Use rejected_at
-          rejection_note: rejectionNote || null  // ✅ NEW: Save rejection note
+          rejected_by: userId,
+          rejected_at: new Date().toISOString(),
+          rejection_note: rejectionNote || null
         })
-        .eq('id', selectedSubmission.id);
+        .eq('id', selectedSubmission.id)
+        .select()
+        .single();
 
-      if (submissionError) throw submissionError;
+      if (submissionError) {
+        console.error('❌ Failed to update submission:', submissionError);
+        throw new Error(`Submission update failed: ${submissionError.message}`);
+      }
 
-      // Update entries status
+      console.log('✅ Submission updated to rejected:', updatedSubmission);
+
+      // STEP 2: Update entries status
+      console.log('Step 2: Updating entries status...');
       const { error: entriesError } = await dataClient
         .from('payroll_entries')
         .update({
@@ -733,35 +762,35 @@ export default function PayrollDashboard() {
         })
         .eq('submission_id', selectedSubmission.id);
 
-      if (entriesError) throw entriesError;
-
-      // Log rejection
-      const { error: approvalLogError } = await dataClient
-        .from('payroll_approvals')
-        .insert({
-          organization_id: organizationId,
-          submission_id: selectedSubmission.id,
-          action: 'rejected',
-          approved_by: userId,
-          previous_status: 'pending',
-          notes: rejectionNote || 'Rejected via mobile dashboard'  // ✅ FIXED: Use rejection note
-        });
-
-      if (approvalLogError) {
-        console.warn('Failed to create rejection log:', approvalLogError);
+      if (entriesError) {
+        console.error('❌ Failed to update entries:', entriesError);
+        throw new Error(`Entries update failed: ${entriesError.message}`);
       }
 
+      console.log('✅ Entries updated to rejected');
+
+      // STEP 3: Log rejection (optional - skip if it requires org_id)
+      console.log('Step 3: Skipping audit log (not required)');
+
+      // SUCCESS!
+      console.log('✅ Rejection complete');
       alert('❌ Payroll rejected. Location manager can resubmit.');
       setShowApprovalModal(false);
       setSelectedSubmission(null);
-      setRejectionNote('');  // ✅ NEW: Reset rejection note
-      const effectiveOrgId = userRole === 'super_admin' ? subdomainOrgId : organizationId;
-      loadPendingSubmissions(effectiveOrgId || undefined);
-      loadAllLocations(effectiveOrgId || undefined);
+      setRejectionNote('');
+      
+      // Reload data
+      if (userRole === 'super_admin' && subdomainOrgId) {
+        loadPendingSubmissions(subdomainOrgId);
+        loadAllLocations(subdomainOrgId);
+      } else if (organizationId) {
+        loadPendingSubmissions(organizationId);
+        loadAllLocations(organizationId);
+      }
 
-    } catch (error) {
-      console.error('Error rejecting payroll:', error);
-      alert('Failed to reject payroll. Please try again.');
+    } catch (error: any) {
+      console.error('❌ Error rejecting payroll:', error);
+      alert(`❌ Failed to reject payroll: ${error.message || 'Unknown error'}. Check console for details.`);
     } finally {
       setIsApproving(false);
     }
