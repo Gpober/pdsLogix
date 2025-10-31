@@ -126,11 +126,11 @@ export default function MobileDashboardLanding() {
       padding: '20px',
       paddingTop: '60px'
     }}>
-      {/* HUGE LOGO - Sits right on top with no extra space */}
+      {/* HUGE LOGO - Maximum crop, minimal white space */}
       <div style={{
         display: 'flex',
         justifyContent: 'center',
-        marginBottom: '8px'
+        marginBottom: '4px'
       }}>
         <img 
           src="/iamcfo-logo.jpg" 
@@ -140,7 +140,7 @@ export default function MobileDashboardLanding() {
             width: 'auto',
             objectFit: 'contain',
             objectPosition: 'center',
-            margin: '-140px 0 -140px 0' // More aggressive crop to remove white space
+            margin: '-200px 0 -200px 0' // Maximum crop - removes almost all white space
           }}
         />
       </div>
