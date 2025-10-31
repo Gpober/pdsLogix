@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAuthClient } from '@/lib/supabase/auth-client'
+import { getAuthClient } from '@/lib/supabase/client'
 import { getDataClient, syncDataClientSession } from '@/lib/supabase/client'
 import { ChevronDown, DollarSign, Users, Calendar, MapPin, CheckCircle2, AlertCircle, RefreshCw, ArrowLeft } from 'lucide-react'
 
