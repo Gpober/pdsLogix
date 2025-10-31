@@ -1,6 +1,8 @@
 'use client'
 import { useRouter } from 'next/navigation'
-import { FileText, TrendingUp, Clock, CreditCard, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { FileText, TrendingUp, Clock, CreditCard, Users, CheckSquare } from 'lucide-react'
+import { getAuthClient } from '@/lib/supabase/client'
 
 // I AM CFO Brand Colors
 const BRAND_COLORS = {
@@ -36,6 +38,27 @@ interface NavCard {
 
 export default function MobileDashboardLanding() {
   const router = useRouter()
+  const [userRole, setUserRole] = useState<string | null>(null)
+  const authClient = getAuthClient()
+
+  // Check user role on mount
+  useEffect(() => {
+    const checkRole = async () => {
+      const { data: { session } } = await authClient.auth.getSession()
+      if (session?.user) {
+        const { data: userData } = await authClient
+          .from('users')
+          .select('role')
+          .eq('id', session.user.id)
+          .single()
+        
+        if (userData) {
+          setUserRole(userData.role)
+        }
+      }
+    }
+    checkRole()
+  }, [])
 
   const navCards: NavCard[] = [
     {
@@ -79,6 +102,18 @@ export default function MobileDashboardLanding() {
       bgGradient: `linear-gradient(135deg, ${BRAND_COLORS.accent} 0%, ${BRAND_COLORS.tertiary} 100%)`
     }
   ]
+
+  // Add "Submit All Payroll" card for super_admin
+  if (userRole === 'super_admin') {
+    navCards.push({
+      title: 'Submit All Payroll',
+      description: 'Submit payroll for all locations',
+      icon: <CheckSquare size={28} />,
+      path: '/mobile-dashboard/payroll/submit/submit-all',
+      color: '#9B59B6', // Purple for admin feature
+      bgGradient: 'linear-gradient(135deg, #9B59B6 0%, #8E44AD 100%)'
+    })
+  }
 
   const handleCardClick = (path: string) => {
     router.push(path)
