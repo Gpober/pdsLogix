@@ -1805,6 +1805,26 @@ export default function MobilePayrollSubmit() {
                     <h2 className="text-white font-semibold">Employees (Group {payrollGroup})</h2>
                   </div>
                   <div className="flex flex-col items-end gap-2">
+                    {/* Sync Hours Button for ALL employees */}
+                    <button
+                      onClick={handleSyncConnecteam}
+                      disabled={isSyncingConnecteam || filteredEmployees.filter(emp => emp.email).length === 0 || submissionStatus === 'pending' || submissionStatus === 'approved'}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/20 hover:bg-blue-500/30 disabled:bg-blue-500/10 text-blue-200 disabled:text-blue-300/50 text-xs font-medium rounded-lg border border-blue-400/30 disabled:border-blue-400/10 transition disabled:cursor-not-allowed"
+                    >
+                      {isSyncingConnecteam ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <Clock className="w-4 h-4" />
+                          Sync Hours
+                        </>
+                      )}
+                    </button>
+
+                    {/* Sync Production Button for production employees */}
                     {hasProductionEmployees && (
                       <div className="flex flex-col items-end gap-1">
                         <button
