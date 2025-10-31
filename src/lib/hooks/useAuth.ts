@@ -25,8 +25,6 @@ export function useAuth() {
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
   const router = useRouter()
   const pathname = usePathname()
-  const authClient = getAuthClient()
-  const dataClient = getDataClient()
 
   const loadUserProfile = useCallback(async (userId: string) => {
     try {
@@ -34,6 +32,9 @@ export function useAuth() {
       
       // Check if super admin flag is set in sessionStorage (from login transfer)
       const superAdminFlag = sessionStorage.getItem('is_super_admin') === 'true'
+      
+      // Get auth client inside the function
+      const authClient = getAuthClient()
       
       // Load user profile from PLATFORM Supabase (where users table exists)
       const { data, error } = await authClient
@@ -64,7 +65,7 @@ export function useAuth() {
       console.error('❌ Error loading user profile:', error)
       return null
     }
-  }, [authClient])
+  }, []) // Remove authClient from dependencies
 
   const handleAuthStateChange = useCallback(async (session: Session | null) => {
     if (session?.user) {
@@ -103,9 +104,11 @@ export function useAuth() {
       await syncDataClientSession(null)
     }
     setLoading(false)
-  }, [loadUserProfile, router, pathname, authClient])
+  }, [loadUserProfile, router, pathname]) // Remove authClient from dependencies
 
   useEffect(() => {
+    const authClient = getAuthClient()
+    
     // Get initial session
     authClient.auth.getSession().then(({ data: { session } }) => {
       handleAuthStateChange(session)
@@ -117,9 +120,10 @@ export function useAuth() {
     })
 
     return () => subscription.unsubscribe()
-  }, [authClient, handleAuthStateChange])
+  }, [handleAuthStateChange])
 
   const signOut = async () => {
+    const authClient = getAuthClient()
     await authClient.auth.signOut()
     await syncDataClientSession(null)
     sessionStorage.removeItem('is_super_admin')
