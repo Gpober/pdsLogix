@@ -26,14 +26,14 @@ export function getAuthClient(): SupabaseClient {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: false, // ⚠️ CRITICAL: Must be false to prevent JWT corruption
+      detectSessionInUrl: false, // CRITICAL: Must be false to prevent JWT corruption
       flowType: "pkce",
       storage: typeof window !== "undefined" ? window.localStorage : undefined,
       storageKey: "iamcfo-platform-auth",
     },
   })
 
-  console.log('✅ Auth client initialized')
+  console.log('Auth client initialized')
   return authClientInstance
 }
 
@@ -63,7 +63,7 @@ export function getDataClient(): SupabaseClient {
     },
   })
 
-  console.log('✅ Data client initialized')
+  console.log('Data client initialized')
   return dataClientInstance
 }
 
@@ -85,10 +85,10 @@ export async function syncDataClientSession(session: Session | null): Promise<vo
         access_token: session.access_token,
         refresh_token: session.refresh_token,
       })
-      console.log('✅ Session synced to data client')
+      console.log('Session synced to data client')
     }
   } catch (error) {
-    console.error("❌ Failed to sync session with data client:", error)
+    console.error("Failed to sync session with data client:", error)
   }
 }
 
