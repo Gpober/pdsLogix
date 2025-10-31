@@ -18,12 +18,13 @@ export function getAuthClient(): SupabaseClient {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false, // ⚠️ CRITICAL: Must be false to prevent JWT corruption
       flowType: "pkce",
       storage: typeof window !== "undefined" ? window.localStorage : undefined,
       storageKey: "iamcfo-platform-auth",
     },
   })
 
+  console.log('✅ Auth client initialized')
   return authClientInstance
 }
