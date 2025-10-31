@@ -124,49 +124,41 @@ export default function MobileDashboardLanding() {
       minHeight: '100vh',
       background: 'white',
       padding: '20px',
-      paddingTop: '40px'
+      paddingTop: '60px'
     }}>
-      {/* Logo */}
+      {/* HUGE LOGO - Replaces "I AM CFO" text */}
       <div style={{
         display: 'flex',
         justifyContent: 'center',
-        marginBottom: '24px'
+        marginBottom: '48px'
       }}>
         <img 
           src="/iamcfo-logo.jpg" 
-          alt="I AM CFO Logo"
+          alt="I AM CFO"
           style={{
-            height: '80px',
+            height: '560px',
             width: 'auto',
             objectFit: 'contain'
           }}
         />
       </div>
 
-      {/* Header */}
+      {/* Subtitle only - no more "I AM CFO" text */}
       <div style={{
-        marginBottom: '32px',
+        marginBottom: '40px',
         textAlign: 'center'
       }}>
-        <h1 style={{
-          margin: 0,
-          fontSize: '32px',
-          fontWeight: 'bold',
-          color: BRAND_COLORS.primary,
-          marginBottom: '8px'
-        }}>
-          I AM CFO
-        </h1>
         <p style={{
           margin: 0,
-          fontSize: '16px',
-          color: BRAND_COLORS.gray[600]
+          fontSize: '18px',
+          color: BRAND_COLORS.gray[600],
+          fontWeight: '500'
         }}>
           Your Financial Command Center
         </p>
       </div>
 
-      {/* Navigation Cards */}
+      {/* Navigation Cards - Beautiful Gradient Buttons */}
       <div style={{
         display: 'flex',
         flexDirection: 'column',
@@ -179,44 +171,36 @@ export default function MobileDashboardLanding() {
             key={index}
             onClick={() => handleCardClick(card.path)}
             style={{
-              background: 'white',
-              border: `2px solid ${BRAND_COLORS.gray[200]}`,
+              background: card.bgGradient,
+              border: 'none',
               borderRadius: '20px',
               padding: '24px',
               textAlign: 'left',
               cursor: 'pointer',
-              boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+              boxShadow: `0 8px 30px ${card.color}30`,
               transition: 'all 0.3s ease',
               position: 'relative',
               overflow: 'hidden'
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'translateY(-8px)'
-              e.currentTarget.style.boxShadow = '0 12px 40px rgba(0,0,0,0.2)'
+              e.currentTarget.style.boxShadow = `0 12px 40px ${card.color}50`
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = '0 8px 30px rgba(0,0,0,0.12)'
+              e.currentTarget.style.boxShadow = `0 8px 30px ${card.color}30`
             }}
           >
-            {/* Gradient accent bar */}
-            <div style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              height: '6px',
-              background: card.bgGradient
-            }} />
-
             <div style={{
               display: 'flex',
               alignItems: 'center',
               gap: '20px'
             }}>
-              {/* Icon */}
+              {/* Icon - White circle on gradient */}
               <div style={{
-                background: card.bgGradient,
+                background: 'rgba(255, 255, 255, 0.25)',
+                backdropFilter: 'blur(10px)',
+                border: '2px solid rgba(255, 255, 255, 0.4)',
                 borderRadius: '16px',
                 width: '64px',
                 height: '64px',
@@ -225,38 +209,41 @@ export default function MobileDashboardLanding() {
                 justifyContent: 'center',
                 color: 'white',
                 flexShrink: 0,
-                boxShadow: `0 4px 12px ${card.color}40`
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
               }}>
                 {card.icon}
               </div>
 
-              {/* Text Content */}
+              {/* Text Content - White text on gradient */}
               <div style={{ flex: 1 }}>
                 <h3 style={{
                   margin: 0,
                   fontSize: '20px',
                   fontWeight: '700',
-                  color: BRAND_COLORS.gray[900],
-                  marginBottom: '4px'
+                  color: 'white',
+                  marginBottom: '4px',
+                  textShadow: '0 2px 4px rgba(0,0,0,0.1)'
                 }}>
                   {card.title}
                 </h3>
                 <p style={{
                   margin: 0,
                   fontSize: '14px',
-                  color: BRAND_COLORS.gray[600],
-                  fontWeight: '500'
+                  color: 'rgba(255, 255, 255, 0.9)',
+                  fontWeight: '500',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.1)'
                 }}>
                   {card.description}
                 </p>
               </div>
 
-              {/* Arrow Indicator */}
+              {/* Arrow Indicator - White on gradient */}
               <div style={{
-                color: card.color,
+                color: 'white',
                 fontSize: '24px',
                 fontWeight: 'bold',
-                flexShrink: 0
+                flexShrink: 0,
+                textShadow: '0 2px 4px rgba(0,0,0,0.1)'
               }}>
                 →
               </div>
