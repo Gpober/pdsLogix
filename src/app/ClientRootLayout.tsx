@@ -164,56 +164,12 @@ function SessionTransferHandler({ children }: { children: React.ReactNode }) {
           return
         }
 
-        console.log('✅ Session set:', {
-          userId: data.user?.id,
-          email: data.user?.email
-        })
-
-        // Store super admin flag
+        // Session set successfully - just reload
         if (isSuperAdmin) {
-          console.log('🔐 Super admin access')
           sessionStorage.setItem('is_super_admin', 'true')
-          
-          console.log('🔄 Reloading...')
-          window.location.reload()
-          return
         }
-
-        // Regular user - verify organization access
-        const currentSubdomain = window.location.hostname.split('.')[0]
-        console.log('🌐 Current subdomain:', currentSubdomain)
-
-        // Import data client to check org
-        const { getDataClient } = await import('@/lib/supabase/client')
-        const dataClient = getDataClient()
-
-        const { data: userData, error: userError } = await dataClient
-          .from('profiles')
-          .select('organization_id, organizations(subdomain)')
-          .eq('id', data.user.id)
-          .single()
-
-        if (userError) {
-          console.error('❌ User fetch error:', userError)
-          setReady(true)
-          return
-        }
-
-        const userSubdomain = (userData as any)?.organizations?.subdomain
-        console.log('👤 User subdomain:', userSubdomain)
-
-        if (userSubdomain === currentSubdomain) {
-          console.log('✅ Access granted')
-          console.log('🔄 Reloading...')
-          window.location.reload()
-          return
-        }
-
-        // Access denied
-        console.error('❌ Access denied')
-        alert('You do not have access to this organization')
-        await authClient.auth.signOut()
-        window.location.href = 'https://iamcfo.com/login'
+        
+        window.location.reload()
 
       } catch (error) {
         console.error('💥 Transfer error:', error)
