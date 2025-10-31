@@ -1,8 +1,15 @@
+"use client"
+
+import type { ReactNode } from "react"
+import { useEffect } from "react"
+
+import "./globals.css"
+
 import { getAuthClient, syncDataClientSession } from "@/lib/supabase/client"
 
 // Use sessionStorage instead of in-memory flag for mobile persistence
-const PKCE_PROCESSED_KEY = 'pkce_callback_processed'
-const PKCE_TIMESTAMP_KEY = 'pkce_callback_timestamp'
+const PKCE_PROCESSED_KEY = "pkce_callback_processed"
+const PKCE_TIMESTAMP_KEY = "pkce_callback_timestamp"
 
 function hasRecentlyProcessedCallback(): boolean {
   if (typeof window === 'undefined') return false
@@ -32,7 +39,7 @@ function clearUrlHash() {
 export function handlePkceCallbackFromUrl() {
   // Check if already processed recently
   if (hasRecentlyProcessedCallback()) {
-    console.log('🔒 PKCE callback already processed recently, skipping')
+    console.log("🔒 PKCE callback already processed recently, skipping")
     clearUrlHash() // Still clear the hash
     return
   }
@@ -54,7 +61,7 @@ export function handlePkceCallbackFromUrl() {
     return
   }
 
-  console.log('🔐 Processing PKCE callback from URL hash')
+  console.log("🔐 Processing PKCE callback from URL hash")
   markCallbackAsProcessed()
 
   const authClient = getAuthClient()
@@ -70,13 +77,13 @@ export function handlePkceCallbackFromUrl() {
         throw error
       }
 
-      console.log('✅ PKCE session set successfully')
+      console.log("✅ PKCE session set successfully")
       const session = data.session ?? null
-      
+
       // Sync to data client
       await syncDataClientSession(session)
-      console.log('✅ Session synced to data client')
-      
+      console.log("✅ Session synced to data client")
+
     } catch (error) {
       console.error("❌ Failed to process PKCE callback from URL hash", error)
       // Clear the processed flag so it can retry
@@ -93,4 +100,36 @@ export function resetPkceCallbackFlag() {
   if (typeof window === 'undefined') return
   sessionStorage.removeItem(PKCE_PROCESSED_KEY)
   sessionStorage.removeItem(PKCE_TIMESTAMP_KEY)
+}
+
+type ClientRootLayoutProps = {
+  children: ReactNode
+}
+
+export default function ClientRootLayout({ children }: ClientRootLayoutProps) {
+  useEffect(() => {
+    handlePkceCallbackFromUrl()
+
+    const authClient = getAuthClient()
+
+    void authClient.auth.getSession().then(async ({ data }) => {
+      await syncDataClientSession(data.session ?? null)
+    })
+
+    const {
+      data: { subscription },
+    } = authClient.auth.onAuthStateChange((_event, session) => {
+      void syncDataClientSession(session ?? null)
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  )
 }
