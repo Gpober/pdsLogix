@@ -512,7 +512,7 @@ export default function PayrollDashboard() {
 
     console.log('🏢 Organization ID for submission:', locationData.organization_id);
 
-    // Step 2: Fetch payroll entries
+    // Step 2: Fetch payroll entries (names already in table!)
     const { data: entries, error: entriesError } = await supabase
       .from('payroll_entries')
       .select('*')
@@ -524,38 +524,18 @@ export default function PayrollDashboard() {
       return;
     }
 
-    // Get employee IDs from entries
-    const employeeIds = entries?.map(e => e.employee_id) || [];
-
-    // Fetch employee names
-    const { data: employees, error: employeesError } = await supabase
-      .from('employees')
-      .select('id, first_name, last_name')
-      .in('id', employeeIds);
-
-    if (employeesError) {
-      console.error('Error fetching employees:', employeesError);
-      showNotification('Failed to load employee details', 'error');
-      return;
-    }
-
-    // Create map of employee IDs to names
-    const employeesMap = new Map(
-      employees?.map(e => [e.id, `${e.first_name} ${e.last_name}`]) || []
-    );
-
-    // ✅ Step 3: Combine entries with employee names AND organization_id
+    // ✅ Names are already in payroll_entries - just format for display
     const detailsWithNames: SubmissionDetail[] = (entries || []).map(entry => ({
       employee_id: entry.employee_id,
-      employee_name: employeesMap.get(entry.employee_id) || 'Unknown',
+      employee_name: `${entry.employee_first_name} ${entry.employee_last_name}`,
       hours: entry.hours,
       units: entry.units,
       amount: entry.amount,
       notes: entry.notes,
-      organization_id: locationData.organization_id, // ✅ CRITICAL FIX
+      organization_id: locationData.organization_id,
     }));
 
-    console.log('✅ Submission details with org_id:', detailsWithNames);
+    console.log('✅ Submission details:', detailsWithNames);
     setSubmissionDetails(detailsWithNames);
     setShowApprovalModal(true);
   };
