@@ -130,7 +130,7 @@ export default function MobileDashboardLanding() {
       <div style={{
         display: 'flex',
         justifyContent: 'center',
-        marginBottom: '16px'
+        marginBottom: '8px'
       }}>
         <img 
           src="/iamcfo-logo.jpg" 
@@ -140,7 +140,7 @@ export default function MobileDashboardLanding() {
             width: 'auto',
             objectFit: 'contain',
             objectPosition: 'center',
-            margin: '-80px 0 -80px 0' // Negative margins to trim white space
+            margin: '-140px 0 -140px 0' // More aggressive crop to remove white space
           }}
         />
       </div>
