@@ -469,7 +469,7 @@ export default function MobilePayrollSubmit() {
         const { error: updateError } = await dataSupabase
           .from('payroll_submissions')
           .update({
-            status: 'draft',
+            // status removed - inherited from submission
             total_amount: totalAmount,
             employee_count: employeesWithData.length,
             submitted_by: userId,
@@ -499,7 +499,7 @@ export default function MobilePayrollSubmit() {
           adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
-          status: 'draft',
+          // status removed - inherited from submission
         }))
 
         const { error: detailsError } = await dataSupabase
@@ -526,7 +526,7 @@ export default function MobilePayrollSubmit() {
             total_amount: totalAmount,
             employee_count: employeesWithData.length,
             submitted_by: userId,
-            status: 'draft',
+            // status removed - inherited from submission
           })
           .select()
           .single()
@@ -543,7 +543,7 @@ export default function MobilePayrollSubmit() {
           adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
-          status: 'draft',
+          // status removed - inherited from submission
         }))
 
         const { error: detailsError } = await dataSupabase
@@ -604,7 +604,7 @@ export default function MobilePayrollSubmit() {
         const { error: updateError } = await dataSupabase
           .from('payroll_submissions')
           .update({
-            status: 'draft',
+            // status removed - inherited from submission
             total_amount: totalAmount,
             employee_count: employeesWithData.length,
             submitted_by: userId,
@@ -634,7 +634,7 @@ export default function MobilePayrollSubmit() {
           adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
-          status: 'draft',
+          // status removed - inherited from submission
         }))
 
         const { error: detailsError } = await dataSupabase
@@ -661,7 +661,7 @@ export default function MobilePayrollSubmit() {
             total_amount: totalAmount,
             employee_count: employeesWithData.length,
             submitted_by: userId,
-            status: 'draft',
+            // status removed - inherited from submission
           })
           .select()
           .single()
@@ -678,7 +678,7 @@ export default function MobilePayrollSubmit() {
           adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
           amount: emp.amount,
           notes: emp.notes || null,
-          status: 'draft',
+          // status removed - inherited from submission
         }))
 
         const { error: detailsError } = await dataSupabase
@@ -1079,7 +1079,7 @@ export default function MobilePayrollSubmit() {
       const { error: updateError } = await dataSupabase
         .from('payroll_submissions')
         .update({
-          status: 'pending',
+          // status removed - inherited from submission
           total_amount: totalAmount,
           employee_count: employeesToSubmit.length,
           submitted_at: new Date().toISOString(),
@@ -1109,7 +1109,7 @@ export default function MobilePayrollSubmit() {
         adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
         amount: emp.amount,
         notes: emp.notes || null,
-        status: 'pending',
+        // status removed - inherited from submission
       }))
 
       const { error: detailsError } = await dataSupabase
@@ -1139,7 +1139,7 @@ export default function MobilePayrollSubmit() {
           total_amount: totalAmount,
           employee_count: employeesToSubmit.length,
           submitted_by: userId,
-          status: 'pending',
+          // status removed - inherited from submission
         })
         .select()
         .single()
@@ -1156,7 +1156,7 @@ export default function MobilePayrollSubmit() {
         adjustment_amount: emp.compensation_type === 'fixed' ? parseFloat(emp.adjustment) : null,
         amount: emp.amount,
         notes: emp.notes || null,
-        status: 'pending',
+        // status removed - inherited from submission
       }))
 
       const { error: detailsError } = await dataSupabase
